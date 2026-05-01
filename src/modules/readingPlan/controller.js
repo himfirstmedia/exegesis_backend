@@ -394,3 +394,18 @@ export const dayQuizAnswers = async (req, res) => {
     );
   }
 };
+
+export const adminStats = async (req, res) => {
+  try {
+    const result = await readingPlanService.getAdminPlanStatistics(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Get admin stats error:", error);
+    return res.status(500).json(
+      formatApiResponse({
+        status: 500,
+        message: "Error retrieving admin statistics: " + error.message,
+      }),
+    );
+  }
+};

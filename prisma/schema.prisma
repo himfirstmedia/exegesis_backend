@@ -50,6 +50,7 @@ model SystemUser {
   userQuizAnswers    UserQuizAnswer[]
   verifications      Verification[]
   messages           Message[]
+  dailyVersesCreated DailyVerse[]       @relation("DailyVerseCreator")
 
   @@map("system_users")
 }
@@ -120,6 +121,8 @@ model DailyVerse {
   updatedBy   String?   @map("updated_by")
   updatedOn   DateTime  @updatedAt @map("updated_on")
   isPublished Boolean   @default(false) @map("is_published")
+
+  user SystemUser? @relation("DailyVerseCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@map("daily_verse")
 }

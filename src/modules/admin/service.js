@@ -142,6 +142,7 @@ export const deleteUser = async (data, adminId) => {
   await prisma.userPlanProgress.deleteMany({ where: { userId: user.id } });
   await prisma.verification.deleteMany({ where: { createdBy: user.id } });
   await prisma.message.deleteMany({ where: { createdBy: user.id } });
+  await prisma.dailyVerse.deleteMany({ where: { createdBy: user.id } });
 
   await prisma.systemUser.delete({ where: { id: user.id } });
 
@@ -451,6 +452,15 @@ export const getAllDailyVerses = async (data) => {
       orderBy: { displayDate: "desc" },
       skip: offset,
       take: pageSize,
+      include: {
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+            username: true
+          }
+        }
+      }
     }),
     prisma.dailyVerse.count({ where: whereClause }),
   ]);
@@ -458,6 +468,7 @@ export const getAllDailyVerses = async (data) => {
   const serializeBigInt = (val) => {
     if (val === null || val === undefined) return val;
     if (typeof val === "bigint") return Number(val);
+    if (val instanceof Date) return val.toISOString(); // Handle Date objects
     if (Array.isArray(val)) return val.map(serializeBigInt);
     if (typeof val === "object") {
       return Object.fromEntries(
@@ -468,7 +479,16 @@ export const getAllDailyVerses = async (data) => {
   };
 
   const totalPages = Math.ceil(totalElements / pageSize);
-  const content = serializeBigInt(dailyVerses);
+  const rawContent = dailyVerses.map(dv => {
+    const { user, ...rest } = dv;
+    return {
+      ...rest,
+      creatorName: user 
+        ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username
+        : 'System'
+    };
+  });
+  const content = serializeBigInt(rawContent);
 
   return {
     status: 200,

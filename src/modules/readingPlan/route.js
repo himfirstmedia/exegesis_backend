@@ -90,5 +90,11 @@ router.post(
   authenticate,
   readingPlanController.dayQuizAnswers,
 );
+router.post(
+  "/admin-stats",
+  authenticate,
+  requireAdmin,
+  readingPlanController.adminStats,
+);
 
 export default router;
