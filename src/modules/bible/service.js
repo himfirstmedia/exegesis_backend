@@ -391,6 +391,7 @@ export const addVerseExplanation = async (data, userId) => {
     explanation,
     learnMore,
     bibleVersion,
+    promptIds,
     id,
   } = data;
   if (!bookName || !chapter || !verseNumber)
@@ -398,6 +399,10 @@ export const addVerseExplanation = async (data, userId) => {
       status: 400,
       message: "bookName, chapter, and verseNumber are required",
     };
+
+  const promptIdsJson = promptIds && Array.isArray(promptIds) 
+    ? JSON.stringify(promptIds) 
+    : promptIds;
 
   let verseExplanation;
   if (id) {
@@ -410,6 +415,7 @@ export const addVerseExplanation = async (data, userId) => {
         explanation,
         learnMore,
         bibleVersion,
+        promptIds: promptIdsJson,
         updatedBy: userId,
       },
     });
@@ -422,7 +428,7 @@ export const addVerseExplanation = async (data, userId) => {
           verseNumber: BigInt(verseNumber),
         },
       },
-      update: { explanation, learnMore, bibleVersion, updatedBy: userId },
+      update: { explanation, learnMore, bibleVersion, promptIds: promptIdsJson, updatedBy: userId },
       create: {
         bookName,
         chapter: BigInt(chapter),
@@ -430,6 +436,7 @@ export const addVerseExplanation = async (data, userId) => {
         explanation,
         learnMore,
         bibleVersion,
+        promptIds: promptIdsJson,
         createdBy: userId,
       },
     });

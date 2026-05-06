@@ -6,6 +6,7 @@ import authRouter from "./modules/auth/route.js";
 import adminRouter from "./modules/admin/route.js";
 import bibleRouter from "./modules/bible/route.js";
 import readingPlanRouter from "./modules/readingPlan/route.js";
+import journalRouter from "./modules/journal/route.js";
 import { formatApiResponse } from "./utils/helpers.js";
 import { startEmailScheduler } from "./services/emailScheduler.js";
 
@@ -50,6 +51,7 @@ app.use("/auth", authRouter);
 app.use("/admin", adminRouter);
 app.use("/bible", bibleRouter);
 app.use("/reading-plans", readingPlanRouter);
+app.use("/journal", journalRouter);
 
 app.get("/health", (req, res) => {
   res.send(

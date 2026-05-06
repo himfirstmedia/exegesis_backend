@@ -51,6 +51,7 @@ model SystemUser {
   verifications      Verification[]
   messages           Message[]
   dailyVersesCreated DailyVerse[]       @relation("DailyVerseCreator")
+  journalEntries     JournalEntry[]
 
   @@map("system_users")
 }
@@ -203,6 +204,7 @@ model VerseExplanation {
   explanation  String?
   learnMore    String?   @map("learn_more")
   bibleVersion String?   @map("bible_version")
+  promptIds    String?   @map("prompt_ids")
   createdBy    String?   @map("created_by")
   createdOn    DateTime? @map("created_on")
   updatedBy    String?   @map("updated_by")
@@ -338,4 +340,74 @@ model UserQuizAnswer {
   @@index([userId])
   @@index([planId])
   @@map("user_quiz_answers")
+}
+
+model JournalEntry {
+  id            BigInt    @id @default(autoincrement())
+  userId        String    @map("user_id")
+  title         String?
+  content       String    @db.Text
+  bookName      String?   @map("book_name")
+  chapter       BigInt?   @map("chapter")
+  verseNumber   BigInt?   @map("verse_number")
+  category      String?   @default("general")
+  mood          String?
+  prayers       String?   @db.Text
+  gratitude     String?   @db.Text
+  learnings     String?   @db.Text
+  application   String?   @db.Text
+  isPublished   Boolean   @default(false) @map("is_published")
+  isFavorite    Boolean   @default(false) @map("is_favorite")
+  tags          String?   @map("tags")
+  createdOn     DateTime  @default(now()) @map("created_on")
+  updatedOn     DateTime  @updatedAt @map("updated_on")
+  createdBy     String?   @map("created_by")
+  updatedBy     String?   @map("updated_by")
+
+  user SystemUser? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, createdOn])
+  @@index([bookName, chapter])
+  @@index([category])
+  @@map("journal_entries")
+}
+
+model JournalPrompt {
+  id            BigInt    @id @default(autoincrement())
+  prompt        String    @db.Text
+  category      String    @default("general")
+  description   String?
+  order         Int       @default(0)
+  isActive      Boolean   @default(true) @map("is_active")
+  bookName      String?   @map("book_name")
+  chapter       BigInt?   @map("chapter")
+  verseNumber   BigInt?   @map("verse_number")
+  createdBy     String?   @map("created_by")
+  createdOn     DateTime  @default(now()) @map("created_on")
+  updatedBy     String?   @map("updated_by")
+  updatedOn     DateTime  @updatedAt @map("updated_on")
+
+  @@index([category])
+  @@index([isActive])
+  @@index([bookName])
+  @@map("journal_prompts")
+}
+
+model JournalTemplate {
+  id            BigInt    @id @default(autoincrement())
+  name          String
+  description   String?
+  category      String    @default("general")
+  promptsJson   String    @map("prompts_json")
+  isActive      Boolean   @default(true) @map("is_active")
+  isDefault     Boolean   @default(false) @map("is_default")
+  createdBy     String?   @map("created_by")
+  createdOn     DateTime  @default(now()) @map("created_on")
+  updatedBy     String?   @map("updated_by")
+  updatedOn     DateTime  @updatedAt @map("updated_on")
+
+  @@index([category])
+  @@index([isActive])
+  @@map("journal_templates")
 }
