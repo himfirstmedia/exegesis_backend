@@ -2,10 +2,66 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { parseString } from 'xml2js';
+import Redis from 'ioredis';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const XML_DIR = path.join(__dirname, 'Holy-Bible-XML-Format');
+
+const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
+const REDIS_PORT = parseInt(process.env.REDIS_PORT) || 6379;
+const CACHE_TTL = parseInt(process.env.REDIS_CACHE_TTL) || 86400; // 24 hours default
+
+let redisClient = null;
+
+const getRedisClient = () => {
+  if (!redisClient) {
+    try {
+      redisClient = new Redis({
+        host: REDIS_HOST,
+        port: REDIS_PORT,
+        maxRetriesPerRequest: 3,
+        retryDelayOnFailover: 100,
+        lazyConnect: true,
+        enableOfflineQueue: false,
+      });
+
+      redisClient.on('error', (err) => {
+        console.log('Redis connection error (will use file cache):', err.message);
+      });
+
+      redisClient.on('connect', () => {
+        console.log('Bible translations Redis connected');
+      });
+    } catch (err) {
+      console.log('Redis init failed:', err.message);
+      return null;
+    }
+  }
+  return redisClient;
+};
+
+const cacheGet = async (key) => {
+  try {
+    const client = getRedisClient();
+    if (!client) return null;
+    const data = await client.get(`bible:${key}`);
+    if (data) return JSON.parse(data);
+  } catch (err) {
+    console.log('Cache get error:', err.message);
+  }
+  return null;
+};
+
+const cacheSet = async (key, data, ttl = CACHE_TTL) => {
+  try {
+    const client = getRedisClient();
+    if (!client) return;
+    await client.setex(`bible:${key}`, ttl, JSON.stringify(data));
+  } catch (err) {
+    console.log('Cache set error:', err.message);
+  }
+};
 
 export const BOOK_NAMES = {
   1: 'Genesis', 2: 'Exodus', 3: 'Leviticus', 4: 'Numbers', 5: 'Deuteronomy',
@@ -58,6 +114,45 @@ export const SHORT_IDS = {
   'TL': 'EnglishTLBible',
   'Tyndale': 'EnglishTyndale1537Bible',
   'YLT': 'EnglishYLTBible'
+};
+
+export const TRANSLATION_DISPLAY_NAMES = {
+  'ASV': { name: 'American Standard Version', year: '1901' },
+  'Amplified': { name: 'Amplified Bible', year: '2015' },
+  'AmplifiedClassic': { name: 'Amplified Classic', year: '1987' },
+  'Berean': { name: 'Berean Standard Bible', year: '2016' },
+  'CSB': { name: 'Christian Standard Bible', year: '2017' },
+  'Darby': { name: "Darby Translation", year: '1890' },
+  'EASY': { name: 'Easy-to-Read Version', year: '2024' },
+  'ERV': { name: 'English Revised Version', year: '2006' },
+  'ESV': { name: 'English Standard Version', year: '2016' },
+  'GNT': { name: 'Good News Translation', year: '1992' },
+  'GW': { name: "God's Word", year: '1995' },
+  'HCSB': { name: 'Holman Christian Standard', year: '2004' },
+  'KJV': { name: 'King James Version', year: '1769' },
+  'LSB': { name: 'Legacy Standard Bible', year: '2021' },
+  'MEV': { name: 'Modern English Version', year: '2014' },
+  'NASB': { name: 'New American Standard Bible', year: '1995' },
+  'NASU': { name: 'New American Standard Update', year: '1989' },
+  'NET': { name: 'NET Bible', year: '2005' },
+  'NIRV': { name: 'New International Reader\'s Version', year: '1996' },
+  'NIV': { name: 'New International Version', year: '2011' },
+  'NKJ': { name: 'New King James Version', year: '1982' },
+  'NLT': { name: 'New Living Translation', year: '2004' },
+  'NRSV': { name: 'New Revised Standard Version', year: '1989' },
+  'Passion': { name: 'The Passion Translation', year: '2020' },
+  'RSV': { name: 'Revised Standard Version', year: '1971' },
+  'TL': { name: 'The Living Bible', year: '1971' },
+  'Tyndale': { name: 'Tyndale Bible', year: '1537' },
+  'YLT': { name: "Young's Literal Translation", year: '1898' }
+};
+
+export const getTranslationDisplayName = (id) => {
+  const display = TRANSLATION_DISPLAY_NAMES[id];
+  if (display) {
+    return display.name;
+  }
+  return id;
 };
 
 const toShortId = (fileName) => {
@@ -134,6 +229,10 @@ const findChapter = (book, chapterNumber) => {
 };
 
 export const getAllTranslations = async () => {
+  const cacheKey = 'translations:all:v2';
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+
   const files = fs.readdirSync(XML_DIR).filter(f => f.endsWith('.xml'));
   const translations = [];
 
@@ -142,26 +241,33 @@ export const getAllTranslations = async () => {
     const parsed = await parseXml(xmlContent);
     const bible = parsed.bible;
     const shortId = toShortId(file);
+    const displayInfo = TRANSLATION_DISPLAY_NAMES[shortId];
     
     translations.push({
       id: shortId,
-      name: bible.$.translation || bible.$.name || shortId,
+      name: displayInfo ? displayInfo.name : (bible.$.translation || bible.$.name || shortId),
       shortName: shortId,
+      year: displayInfo?.year || null,
       description: bible.$.title || null,
       copyright: bible.$.status || null,
       link: bible.$.link || null
     });
   }
 
+  await cacheSet(cacheKey, translations);
   return translations;
 };
 
 export const getTranslationInfo = async (id) => {
+  const cacheKey = `translation:${id}`;
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+
   const parsed = await parseBibleXml(id);
   const bible = parsed.bible;
   const shortId = toShortId(toFullId(id) + '.xml');
 
-  return {
+  const result = {
     id: shortId,
     name: bible.$.translation || bible.$.name || shortId,
     shortName: shortId,
@@ -169,14 +275,43 @@ export const getTranslationInfo = async (id) => {
     copyright: bible.$.status || null,
     link: bible.$.link || null
   };
+
+  await cacheSet(cacheKey, result);
+  return result;
 };
 
 export const getBooks = async (id) => {
+  const cacheKey = `books:${id}`;
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+
   const parsed = await parseBibleXml(id);
   const testaments = Array.isArray(parsed.bible.testament) 
     ? parsed.bible.testament 
     : [parsed.bible.testament];
-  return extractBooks(testaments);
+  const result = extractBooks(testaments);
+  
+  await cacheSet(cacheKey, result);
+  return result;
+};
+
+export const getBooksWithMaxChapters = async (id) => {
+  const cacheKey = `books:${id}:with-max`;
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+
+  const parsed = await parseBibleXml(id);
+  const testaments = Array.isArray(parsed.bible.testament) 
+    ? parsed.bible.testament 
+    : [parsed.bible.testament];
+  
+  const result = extractBooks(testaments).map(book => ({
+    ...book,
+    maxChapter: book.chaptersCount
+  }));
+  
+  await cacheSet(cacheKey, result);
+  return result;
 };
 
 export const getChapters = async (id, bookName) => {
@@ -184,6 +319,10 @@ export const getChapters = async (id, bookName) => {
   if (!bookNumber) {
     throw new Error('Invalid book name');
   }
+
+  const cacheKey = `chapters:${id}:${bookName}`;
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
 
   const parsed = await parseBibleXml(id);
   const testaments = Array.isArray(parsed.bible.testament) 
@@ -196,7 +335,7 @@ export const getChapters = async (id, bookName) => {
   }
 
   const chapters = Array.isArray(book.chapter) ? book.chapter : [book.chapter];
-  return {
+  const result = {
     bookNumber,
     bookName: BOOK_NAMES[bookNumber],
     chapters: chapters.map(ch => ({
@@ -204,6 +343,9 @@ export const getChapters = async (id, bookName) => {
       versesCount: (Array.isArray(ch.verse) ? ch.verse : [ch.verse]).length
     }))
   };
+
+  await cacheSet(cacheKey, result);
+  return result;
 };
 
 export const getVerses = async (id, bookName, chapterNumber) => {
@@ -211,6 +353,10 @@ export const getVerses = async (id, bookName, chapterNumber) => {
   if (!bookNumber) {
     throw new Error('Invalid book name');
   }
+
+  const cacheKey = `verses:${id}:${bookName}:${chapterNumber}`;
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
 
   const parsed = await parseBibleXml(id);
   const testaments = Array.isArray(parsed.bible.testament) 
@@ -228,7 +374,7 @@ export const getVerses = async (id, bookName, chapterNumber) => {
   }
 
   const verses = Array.isArray(chapter.verse) ? chapter.verse : [chapter.verse];
-  return {
+  const result = {
     bookNumber,
     bookName: BOOK_NAMES[bookNumber],
     chapterNumber,
@@ -237,14 +383,12 @@ export const getVerses = async (id, bookName, chapterNumber) => {
       text: typeof v === 'string' ? v : (v._ || v)
     }))
   };
+
+  await cacheSet(cacheKey, result);
+  return result;
 };
 
 export const getVerse = async (id, bookName, chapter, verseNumber) => {
-  const bookNumber = BOOK_NAME_TO_NUMBER[bookName.toLowerCase()];
-  if (!bookNumber) {
-    throw new Error('Invalid book name');
-  }
-
   const verses = await getVerses(id, bookName, chapter);
   const verse = verses.verses.find(v => v.verseNumber === verseNumber);
 
@@ -254,7 +398,7 @@ export const getVerse = async (id, bookName, chapter, verseNumber) => {
 
   return {
     ...verse,
-    bookNumber,
+    bookNumber: verses.bookNumber,
     bookName,
     chapterNumber: chapter
   };

@@ -3,6 +3,7 @@ import {
   listTranslations,
   getTranslation,
   listBooks,
+  listBooksWithMaxChapters,
   listChapters,
   listVerses,
   getVerseByRef,
@@ -18,6 +19,7 @@ router.get("/books/names", getBookNames);
 router.post("/", listTranslations);
 router.post("/:translationId", getTranslation);
 router.post("/:translationId/books", listBooks);
+router.post("/:translationId/books-with-max", listBooksWithMaxChapters);
 router.post("/:translationId/chapters", listChapters);
 router.post("/:translationId/verses", listVerses);
 router.post("/:translationId/verse", getVerseByRef);

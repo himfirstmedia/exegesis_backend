@@ -2,6 +2,7 @@ import {
   getAllTranslations,
   getTranslationInfo,
   getBooks,
+  getBooksWithMaxChapters,
   getChapters,
   getVerses,
   getVerse,
@@ -59,6 +60,29 @@ export const listBooks = async (req, res) => {
       });
     }
     const books = await getBooks(translationId);
+    return res.status(200).json({
+      success: true,
+      count: books.length,
+      data: books,
+    });
+  } catch (error) {
+    return res.status(404).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+export const listBooksWithMaxChapters = async (req, res) => {
+  try {
+    const { translationId } = req.params;
+    if (!translationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Translation ID is required",
+      });
+    }
+    const books = await getBooksWithMaxChapters(translationId);
     return res.status(200).json({
       success: true,
       count: books.length,
