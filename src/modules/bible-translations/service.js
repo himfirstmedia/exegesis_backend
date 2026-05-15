@@ -13,6 +13,7 @@ const REDIS_PORT = parseInt(process.env.REDIS_PORT) || 6379;
 const CACHE_TTL = parseInt(process.env.REDIS_CACHE_TTL) || 86400; // 24 hours default
 
 let redisClient = null;
+let isRedisReady = false;
 
 const getRedisClient = () => {
   if (!redisClient) {
@@ -21,17 +22,34 @@ const getRedisClient = () => {
         host: REDIS_HOST,
         port: REDIS_PORT,
         maxRetriesPerRequest: 3,
-        retryDelayOnFailover: 100,
-        lazyConnect: true,
-        enableOfflineQueue: false,
+        retryStrategy: (times) => {
+          if (times > 3) {
+            console.log('Redis retry limit exceeded, disabling cache');
+            return null;
+          }
+          return Math.min(times * 200, 2000);
+        },
+        connectTimeout: 5000,
+        commandTimeout: 3000,
       });
 
       redisClient.on('error', (err) => {
+        isRedisReady = false;
         console.log('Redis connection error (will use file cache):', err.message);
       });
 
-      redisClient.on('connect', () => {
+      redisClient.on('ready', () => {
+        isRedisReady = true;
         console.log('Bible translations Redis connected');
+      });
+
+      redisClient.on('close', () => {
+        isRedisReady = false;
+        console.log('Redis connection closed');
+      });
+
+      redisClient.on('reconnecting', () => {
+        console.log('Redis reconnecting...');
       });
     } catch (err) {
       console.log('Redis init failed:', err.message);
@@ -45,9 +63,12 @@ const cacheGet = async (key) => {
   try {
     const client = getRedisClient();
     if (!client) return null;
+    await client.ping(); // This will trigger connection if not ready
     const data = await client.get(`bible:${key}`);
+    isRedisReady = true;
     if (data) return JSON.parse(data);
   } catch (err) {
+    isRedisReady = false;
     console.log('Cache get error:', err.message);
   }
   return null;
@@ -57,8 +78,11 @@ const cacheSet = async (key, data, ttl = CACHE_TTL) => {
   try {
     const client = getRedisClient();
     if (!client) return;
+    await client.ping(); // This will trigger connection if not ready
+    isRedisReady = true;
     await client.setex(`bible:${key}`, ttl, JSON.stringify(data));
   } catch (err) {
+    isRedisReady = false;
     console.log('Cache set error:', err.message);
   }
 };
