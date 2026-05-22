@@ -8,6 +8,7 @@
     "dev": "nodemon src/server.js",
     "start": "npx prisma db push && node src/server.js",
     "seedmovies": "node prisma/seed.js",
+"seed-explanations": "node prisma/seed-explanations.js",
     "postinstall": "npx prisma generate"
   },
   "keywords": [],
