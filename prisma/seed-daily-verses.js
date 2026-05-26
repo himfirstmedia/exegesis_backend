@@ -40,7 +40,7 @@ const dailyVerses = [
     chapter: 3,
     verseNumber: 16,
     bibleVersion: "KJV",
-    displayDate: dateAtMidnight(0), // Monday
+    displayDate: dateAtMidnight(1), // Tuesday
     reflection:
       "God's love is the foundation of our faith. He gave His only Son so that we might have eternal life through faith in Him.",
     explanation:
@@ -52,7 +52,7 @@ const dailyVerses = [
     chapter: 29,
     verseNumber: 11,
     bibleVersion: "KJV",
-    displayDate: dateAtMidnight(1), // Tuesday
+    displayDate: dateAtMidnight(2), // Wednesday
     reflection:
       "God has good plans for your life — plans to prosper you and give you hope and a future. Trust in His timing and purpose.",
     explanation:
@@ -64,7 +64,7 @@ const dailyVerses = [
     chapter: 23,
     verseNumber: 1,
     bibleVersion: "KJV",
-    displayDate: dateAtMidnight(2), // Wednesday
+    displayDate: dateAtMidnight(3), // Thursday
     reflection:
       "The Lord is our Shepherd — He guides, provides, and protects. With Him, we lack nothing.",
     explanation:
@@ -76,7 +76,7 @@ const dailyVerses = [
     chapter: 4,
     verseNumber: 13,
     bibleVersion: "KJV",
-    displayDate: dateAtMidnight(3), // Thursday
+    displayDate: dateAtMidnight(4), // Friday
     reflection:
       "Through Christ who strengthens us, we can face any circumstance with contentment and faith.",
     explanation:
@@ -88,7 +88,7 @@ const dailyVerses = [
     chapter: 8,
     verseNumber: 28,
     bibleVersion: "KJV",
-    displayDate: dateAtMidnight(4), // Friday
+    displayDate: dateAtMidnight(5), // Saturday
     reflection:
       "God works all things together for the good of those who love Him and are called according to His purpose.",
     explanation:
@@ -100,7 +100,7 @@ const dailyVerses = [
     chapter: 3,
     verseNumber: 5,
     bibleVersion: "KJV",
-    displayDate: dateAtMidnight(5), // Saturday
+    displayDate: dateAtMidnight(6), // Sunday
     reflection:
       "Trust in the Lord completely, not relying on your own understanding. He will direct your paths.",
     explanation:
@@ -112,7 +112,7 @@ const dailyVerses = [
     chapter: 5,
     verseNumber: 17,
     bibleVersion: "KJV",
-    displayDate: dateAtMidnight(6), // Sunday
+    displayDate: dateAtMidnight(7), // Monday
     reflection:
       "In Christ, you are a new creation. The old has passed away — behold, the new has come!",
     explanation:

@@ -1,6 +1,6 @@
 import { prisma } from "../../config/db.js";
 import bcrypt from "bcryptjs";
-import { generateToken, verifyToken, generateSixDigitCode } from "../../utils/helpers.js";
+import { generateToken, verifyToken, generateSixDigitCode, serializeBigInt } from "../../utils/helpers.js";
 import { emailTemplates } from "../../utils/emailTemplates.js";
 import { OAuth2Client } from "google-auth-library";
 
@@ -582,20 +582,7 @@ export const getCurrentUser = async (userId) => {
     return { status: 404, message: "User not found" };
   }
   
-  const serializeUser = (u) => {
-    const obj = { ...u };
-    obj.password = null;
-    for (const key of Object.keys(obj)) {
-      if (obj[key] instanceof Date) {
-        obj[key] = obj[key].toISOString();
-      } else if (typeof obj[key] === "bigint") {
-        obj[key] = Number(obj[key]);
-      }
-    }
-    return obj;
-  };
-  
-  return { status: 200, message: "User details fetched successfully", data: serializeUser(user) };
+  return { status: 200, message: "User details fetched successfully", data: { ...serializeBigInt(user), password: null } };
 };
 
 export const updateCurrentUser = async (userId, data) => {

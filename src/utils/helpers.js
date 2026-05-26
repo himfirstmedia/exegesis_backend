@@ -47,9 +47,30 @@ export const formatResponse = (status, message, data = null) => {
   return response;
 };
 
+/**
+ * Recursively serialize Prisma result objects for JSON responses.
+ * - BigInt → Number
+ * - Date → ISO string
+ * - null/undefined pass through
+ * - Arrays and Objects recurse
+ */
+export const serializeBigInt = (val) => {
+  if (val === null || val === undefined) return val;
+  if (typeof val === "bigint") return Number(val);
+  if (val instanceof Date) return val.toISOString();
+  if (Array.isArray(val)) return val.map(serializeBigInt);
+  if (typeof val === "object") {
+    return Object.fromEntries(
+      Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)])
+    );
+  }
+  return val;
+};
+
 const serializeValue = (val) => {
   if (val === null || val === undefined) return val;
-  if (typeof val === "bigint") return val.toString();
+  if (typeof val === "bigint") return Number(val);
+  if (val instanceof Date) return val.toISOString();
   if (Array.isArray(val)) return val.map(serializeValue);
   if (typeof val === "object") {
     const result = {};
@@ -73,25 +94,26 @@ export const formatApiResponse = (serviceResponse) => {
   return response;
 };
 
-export const getCurrentUser = async (req) => {
+/**
+ * Decode the current user from the JWT in the request header.
+ * No DB query — uses the JWT payload directly.
+ */
+export const getCurrentUser = (req) => {
   const token = extractToken(req.headers.authorization);
   if (!token) return null;
 
   const decoded = verifyToken(token);
   if (!decoded) return null;
 
-  const user = await prisma.systemUser.findUnique({
-    where: { id: decoded.id },
-  });
-  return user;
+  return decoded;
 };
 
-export const isAdmin = async (req) => {
-  const user = await getCurrentUser(req);
-  return user && user.userRole === 1n;
+export const isAdmin = (req) => {
+  const user = getCurrentUser(req);
+  return user && Number(user.userRole) === 1;
 };
 
-export const isAuthenticated = async (req) => {
-  const user = await getCurrentUser(req);
+export const isAuthenticated = (req) => {
+  const user = getCurrentUser(req);
   return !!user;
 };
