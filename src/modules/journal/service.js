@@ -32,7 +32,7 @@ export const createJournalEntry = async (data, userId) => {
   } = data;
 
   if (!content) {
-    return { status: 400, message: "Content is required" };
+    return { returnCode: 400, returnMessage: "Content is required" };
   }
 
   const journalEntry = await prisma.journalEntry.create({
@@ -57,9 +57,9 @@ export const createJournalEntry = async (data, userId) => {
   });
 
   return {
-    status: 200,
-    message: "Journal entry created successfully",
-    data: serializeBigInt(journalEntry),
+    returnCode: 200,
+    returnMessage: "Journal entry created successfully",
+    returnData: serializeBigInt(journalEntry),
   };
 };
 
@@ -83,7 +83,7 @@ export const updateJournalEntry = async (data, userId) => {
   } = data;
 
   if (!id) {
-    return { status: 400, message: "Journal entry ID is required" };
+    return { returnCode: 400, returnMessage: "Journal entry ID is required" };
   }
 
   const existing = await prisma.journalEntry.findFirst({
@@ -91,7 +91,7 @@ export const updateJournalEntry = async (data, userId) => {
   });
 
   if (!existing) {
-    return { status: 404, message: "Journal entry not found" };
+    return { returnCode: 404, returnMessage: "Journal entry not found" };
   }
 
   const updateData = {};
@@ -118,16 +118,16 @@ export const updateJournalEntry = async (data, userId) => {
   });
 
   return {
-    status: 200,
-    message: "Journal entry updated successfully",
-    data: serializeBigInt(journalEntry),
+    returnCode: 200,
+    returnMessage: "Journal entry updated successfully",
+    returnData: serializeBigInt(journalEntry),
   };
 };
 
 export const deleteJournalEntry = async (data, userId) => {
   const { id } = data;
   if (!id) {
-    return { status: 400, message: "Journal entry ID is required" };
+    return { returnCode: 400, returnMessage: "Journal entry ID is required" };
   }
 
   const existing = await prisma.journalEntry.findFirst({
@@ -135,20 +135,20 @@ export const deleteJournalEntry = async (data, userId) => {
   });
 
   if (!existing) {
-    return { status: 404, message: "Journal entry not found" };
+    return { returnCode: 404, returnMessage: "Journal entry not found" };
   }
 
   await prisma.journalEntry.delete({
     where: { id: BigInt(id) },
   });
 
-  return { status: 200, message: "Journal entry deleted successfully" };
+  return { returnCode: 200, returnMessage: "Journal entry deleted successfully" };
 };
 
 export const getJournalEntry = async (data, userId) => {
   const { id } = data;
   if (!id) {
-    return { status: 400, message: "Journal entry ID is required" };
+    return { returnCode: 400, returnMessage: "Journal entry ID is required" };
   }
 
   const journalEntry = await prisma.journalEntry.findFirst({
@@ -156,13 +156,13 @@ export const getJournalEntry = async (data, userId) => {
   });
 
   if (!journalEntry) {
-    return { status: 404, message: "Journal entry not found" };
+    return { returnCode: 404, returnMessage: "Journal entry not found" };
   }
 
   return {
-    status: 200,
-    message: "Journal entry fetched successfully",
-    data: serializeBigInt(journalEntry),
+    returnCode: 200,
+    returnMessage: "Journal entry fetched successfully",
+    returnData: serializeBigInt(journalEntry),
   };
 };
 
@@ -215,16 +215,20 @@ export const getAllJournalEntries = async (data, userId) => {
   ]);
 
   const totalPages = Math.ceil(totalCount / pageSizeNum);
+  const hasNext = pageNum < totalPages;
+  const hasPrevious = pageNum > 1;
 
   return {
-    status: 200,
-    message: "Journal entries fetched successfully",
-    data: serializeBigInt({
+    returnCode: 200,
+    returnMessage: "Journal entries fetched successfully",
+    returnData: serializeBigInt({
       entries,
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,
       totalPages,
+      hasNext,
+      hasPrevious,
     }),
   };
 };
@@ -233,7 +237,7 @@ export const getJournalEntriesByVerse = async (data, userId) => {
   const { bookName, chapter, verseNumber } = data;
 
   if (!bookName || !chapter || !verseNumber) {
-    return { status: 400, message: "bookName, chapter, and verseNumber are required" };
+    return { returnCode: 400, returnMessage: "bookName, chapter, and verseNumber are required" };
   }
 
   const entries = await prisma.journalEntry.findMany({
@@ -247,16 +251,16 @@ export const getJournalEntriesByVerse = async (data, userId) => {
   });
 
   return {
-    status: 200,
-    message: "Journal entries for verse fetched successfully",
-    data: serializeBigInt(entries),
+    returnCode: 200,
+    returnMessage: "Journal entries for verse fetched successfully",
+    returnData: serializeBigInt(entries),
   };
 };
 
 export const toggleFavorite = async (data, userId) => {
   const { id } = data;
   if (!id) {
-    return { status: 400, message: "Journal entry ID is required" };
+    return { returnCode: 400, returnMessage: "Journal entry ID is required" };
   }
 
   const existing = await prisma.journalEntry.findFirst({
@@ -264,7 +268,7 @@ export const toggleFavorite = async (data, userId) => {
   });
 
   if (!existing) {
-    return { status: 404, message: "Journal entry not found" };
+    return { returnCode: 404, returnMessage: "Journal entry not found" };
   }
 
   const journalEntry = await prisma.journalEntry.update({
@@ -273,9 +277,9 @@ export const toggleFavorite = async (data, userId) => {
   });
 
   return {
-    status: 200,
-    message: journalEntry.isFavorite ? "Added to favorites" : "Removed from favorites",
-    data: serializeBigInt(journalEntry),
+    returnCode: 200,
+    returnMessage: journalEntry.isFavorite ? "Added to favorites" : "Removed from favorites",
+    returnData: serializeBigInt(journalEntry),
   };
 };
 
@@ -328,9 +332,9 @@ export const getJournalStats = async (userId) => {
   ]);
 
   return {
-    status: 200,
-    message: "Journal stats fetched successfully",
-    data: serializeBigInt({
+    returnCode: 200,
+    returnMessage: "Journal stats fetched successfully",
+    returnData: serializeBigInt({
       totalEntries,
       favoriteCount,
       categoryBreakdown: categoryBreakdown.map((c) => ({
@@ -348,7 +352,7 @@ export const createJournalPrompt = async (data, userId) => {
   const { prompt, category, description, order, isActive, bookName, chapter, verseNumber } = data;
 
   if (!prompt) {
-    return { status: 400, message: "Prompt is required" };
+    return { returnCode: 400, returnMessage: "Prompt is required" };
   }
 
   const journalPrompt = await prisma.journalPrompt.create({
@@ -366,9 +370,9 @@ export const createJournalPrompt = async (data, userId) => {
   });
 
   return {
-    status: 200,
-    message: "Journal prompt created successfully",
-    data: serializeBigInt(journalPrompt),
+    returnCode: 200,
+    returnMessage: "Journal prompt created successfully",
+    returnData: serializeBigInt(journalPrompt),
   };
 };
 
@@ -387,9 +391,9 @@ export const getJournalPrompts = async (data) => {
   });
 
   return {
-    status: 200,
-    message: "Journal prompts fetched successfully",
-    data: serializeBigInt(prompts),
+    returnCode: 200,
+    returnMessage: "Journal prompts fetched successfully",
+    returnData: serializeBigInt(prompts),
   };
 };
 
@@ -397,7 +401,7 @@ export const updateJournalPrompt = async (data, userId) => {
   const { id, prompt, category, description, order, isActive, bookName, chapter, verseNumber } = data;
 
   if (!id) {
-    return { status: 400, message: "Prompt ID is required" };
+    return { returnCode: 400, returnMessage: "Prompt ID is required" };
   }
 
   const existing = await prisma.journalPrompt.findFirst({
@@ -405,7 +409,7 @@ export const updateJournalPrompt = async (data, userId) => {
   });
 
   if (!existing) {
-    return { status: 404, message: "Journal prompt not found" };
+    return { returnCode: 404, returnMessage: "Journal prompt not found" };
   }
 
   const updateData = {};
@@ -424,30 +428,30 @@ export const updateJournalPrompt = async (data, userId) => {
   });
 
   return {
-    status: 200,
-    message: "Journal prompt updated successfully",
-    data: serializeBigInt(journalPrompt),
+    returnCode: 200,
+    returnMessage: "Journal prompt updated successfully",
+    returnData: serializeBigInt(journalPrompt),
   };
 };
 
 export const deleteJournalPrompt = async (data) => {
   const { id } = data;
   if (!id) {
-    return { status: 400, message: "Prompt ID is required" };
+    return { returnCode: 400, returnMessage: "Prompt ID is required" };
   }
 
   await prisma.journalPrompt.delete({
     where: { id: BigInt(id) },
   });
 
-  return { status: 200, message: "Journal prompt deleted successfully" };
+  return { returnCode: 200, returnMessage: "Journal prompt deleted successfully" };
 };
 
 export const createJournalTemplate = async (data, userId) => {
   const { name, description, category, prompts, isDefault } = data;
 
   if (!name || !prompts || !Array.isArray(prompts)) {
-    return { status: 400, message: "Name and prompts array are required" };
+    return { returnCode: 400, returnMessage: "Name and prompts array are required" };
   }
 
   if (isDefault) {
@@ -470,9 +474,9 @@ export const createJournalTemplate = async (data, userId) => {
   });
 
   return {
-    status: 200,
-    message: "Journal template created successfully",
-    data: serializeBigInt(template),
+    returnCode: 200,
+    returnMessage: "Journal template created successfully",
+    returnData: serializeBigInt(template),
   };
 };
 
@@ -494,23 +498,23 @@ export const getJournalTemplates = async (data) => {
   }));
 
   return {
-    status: 200,
-    message: "Journal templates fetched successfully",
-    data: serializeBigInt(parsed),
+    returnCode: 200,
+    returnMessage: "Journal templates fetched successfully",
+    returnData: serializeBigInt(parsed),
   };
 };
 
 export const deleteJournalTemplate = async (data) => {
   const { id } = data;
   if (!id) {
-    return { status: 400, message: "Template ID is required" };
+    return { returnCode: 400, returnMessage: "Template ID is required" };
   }
 
   await prisma.journalTemplate.delete({
     where: { id: BigInt(id) },
   });
 
-  return { status: 200, message: "Journal template deleted successfully" };
+  return { returnCode: 200, returnMessage: "Journal template deleted successfully" };
 };
 
 export const getUserJournalEntriesForAdmin = async (data, adminId) => {
@@ -552,16 +556,20 @@ export const getUserJournalEntriesForAdmin = async (data, adminId) => {
   ]);
 
   const totalPages = Math.ceil(totalCount / pageSizeNum);
+  const hasNext = pageNum < totalPages;
+  const hasPrevious = pageNum > 1;
 
   return {
-    status: 200,
-    message: "User journal entries fetched successfully",
-    data: serializeBigInt({
+    returnCode: 200,
+    returnMessage: "User journal entries fetched successfully",
+    returnData: serializeBigInt({
       entries,
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,
       totalPages,
+      hasNext,
+      hasPrevious,
     }),
   };
 };

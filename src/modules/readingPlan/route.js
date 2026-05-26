@@ -31,8 +31,8 @@ router.post(
   requireAdmin,
   readingPlanController.addQuizQuestions,
 );
-router.post("/get-all", readingPlanController.getAll);
-router.post("/by-category", readingPlanController.getPlansByCategory);
+router.post("/get-all", authenticate, readingPlanController.getAll);
+router.post("/by-category", authenticate, readingPlanController.getPlansByCategory);
 router.post("/start", authenticate, readingPlanController.start);
 router.post("/my-progress", authenticate, readingPlanController.myProgress);
 router.post(

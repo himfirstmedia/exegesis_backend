@@ -138,15 +138,16 @@ export const addQuizQuestions = async (data, userId) => {
   };
 };
 
-export const getAllReadingPlans = async (data, userId = null) => {
+export const getAllReadingPlans = async (data, userId = null, isadmin = false) => {
   const { category, page = 1, pageSize = 10 } = data;
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 10, 50);
   const offset = (pageNum - 1) * pageSizeNum;
 
   console.log("📋 getAllReadingPlans called with userId:", userId);
-
-  const whereClause = { isActive: true };
+ 
+  // Admins can see all plans, regular users only see active plans
+  const whereClause = isadmin ? {} : { isActive: true };
   if (category) whereClause.category = category;
 
   const [plans, totalCount] = await Promise.all([

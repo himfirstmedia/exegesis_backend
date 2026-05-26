@@ -1,4 +1,5 @@
 import { prisma } from "../../config/db.js";
+import { getVerse } from "../../modules/bible-translations/service.js";
 
 export const addHighlight = async (data, userId) => {
   const { bookName, chapter, verseNumber, verseNumbers, colorId, note } = data;
@@ -611,6 +612,74 @@ export const deleteVerseNote = async (data, userId) => {
   return { status: 200, message: "Verse note deleted successfully" };
 };
 
+export const getVerseByDate = async (data) => {
+  const { date } = data;
+  if (!date) {
+    return { status: 400, message: "Date is required" };
+  }
+
+  const startDate = new Date(date);
+  startDate.setHours(0, 0, 0, 0);
+  const endDate = new Date(date);
+  endDate.setHours(23, 59, 59, 999);
+
+  let dailyVerse = await prisma.dailyVerse.findFirst({
+    where: {
+      displayDate: {
+        gte: startDate,
+        lte: endDate,
+      },
+      isPublished: true,
+    },
+    orderBy: { displayDate: "asc" },
+  });
+
+  if (!dailyVerse) {
+    return { status: 200, message: "No daily verse found for the given date" };
+  }
+
+  // Fetch the actual verse text from the Bible translation
+  const bibleVersion = dailyVerse.bibleVersion || "KJV";
+  let verseText = "";
+  try {
+    const verseData = await getVerse(
+      bibleVersion,
+      dailyVerse.bookName,
+      Number(dailyVerse.chapter),
+      Number(dailyVerse.verseNumber)
+    );
+    verseText = verseData.text || "";
+  } catch (e) {
+    console.warn("Could not fetch verse text for daily verse:", e.message);
+  }
+
+  const serializeBigInt = (val) => {
+    if (val === null || val === undefined) return val;
+    if (typeof val === "bigint") return Number(val);
+    if (val instanceof Date) return val.toISOString();
+    if (Array.isArray(val)) return val.map(serializeBigInt);
+    if (typeof val === "object") {
+      return Object.fromEntries(
+        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
+      );
+    }
+    return val;
+  };
+
+  const data_out = serializeBigInt(dailyVerse);
+
+  return {
+    status: 200,
+    message: "Verse fetched successfully",
+    data: {
+      ...data_out,
+      reference: `${data_out.bookName} ${data_out.chapter}:${data_out.verseNumber}`,
+      translation: bibleVersion,
+      text: verseText,
+    },
+  };
+};
+
 export const getTodaysVerse = async () => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -628,7 +697,22 @@ export const getTodaysVerse = async () => {
   }
 
   if (!dailyVerse)
-    return { status: 404, message: "No daily verse found for today" };
+    return { status: 200, message: "No daily verse found for today" };
+
+  // Fetch the actual verse text from the Bible translation
+  const bibleVersion = dailyVerse.bibleVersion || "KJV";
+  let verseText = "";
+  try {
+    const verseData = await getVerse(
+      bibleVersion,
+      dailyVerse.bookName,
+      Number(dailyVerse.chapter),
+      Number(dailyVerse.verseNumber)
+    );
+    verseText = verseData.text || "";
+  } catch (e) {
+    console.warn("Could not fetch verse text for daily verse:", e.message);
+  }
 
   const serializeBigInt = (val) => {
     if (val === null || val === undefined) return val;
@@ -642,9 +726,56 @@ export const getTodaysVerse = async () => {
     return val;
   };
 
+  const data = serializeBigInt(dailyVerse);
+
   return {
     status: 200,
     message: "Today's verse fetched successfully",
+    data: {
+      ...data,
+      reference: `${data.bookName} ${data.chapter}:${data.verseNumber}`,
+      translation: bibleVersion,
+      text: verseText,
+    },
+  };
+};
+
+export const getDailyVerseByRef = async (data) => {
+  const { bookName, chapter, verseNumber } = data || {};
+  if (!bookName || !chapter || !verseNumber) {
+    return { status: 400, message: "bookName, chapter, and verseNumber are required" };
+  }
+
+  const dailyVerse = await prisma.dailyVerse.findFirst({
+    where: {
+      bookName: { equals: bookName, mode: "insensitive" },
+      chapter: BigInt(chapter),
+      verseNumber: BigInt(verseNumber),
+      isPublished: true,
+    },
+    orderBy: { updatedOn: "desc" },
+  });
+
+  if (!dailyVerse) {
+    return { status: 404, message: "No daily verse found for this reference" };
+  }
+
+  const serializeBigInt = (val) => {
+    if (val === null || val === undefined) return val;
+    if (typeof val === "bigint") return Number(val);
+    if (val instanceof Date) return val.toISOString();
+    if (Array.isArray(val)) return val.map(serializeBigInt);
+    if (typeof val === "object") {
+      return Object.fromEntries(
+        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
+      );
+    }
+    return val;
+  };
+
+  return {
+    status: 200,
+    message: "Daily verse found",
     data: serializeBigInt(dailyVerse),
   };
 };

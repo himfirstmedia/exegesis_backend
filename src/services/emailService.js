@@ -26,7 +26,7 @@ export const processPendingMessages = async () => {
   });
 
   if (pendingMessages.length === 0) {
-    console.log("No pending messages to process");
+    // console.log("No pending messages to process");
     return;
   }
 

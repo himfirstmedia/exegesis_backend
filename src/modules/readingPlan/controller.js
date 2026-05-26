@@ -73,9 +73,12 @@ export const addQuizQuestions = async (req, res) => {
 export const getAll = async (req, res) => {
   try {
     const userId = req.user?.id || null;
+
+    const isAdmin = Number(req.user?.userRole) === 1;
     const result = await readingPlanService.getAllReadingPlans(
       req.body,
       userId,
+      isAdmin
     );
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {

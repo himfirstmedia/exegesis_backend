@@ -20,8 +20,10 @@ router.post("/delete-verse-explanation", authenticate, bibleController.deleteVer
 router.post("/add-verse-note", authenticate, bibleController.addVerseNote);
 router.post("/get-verse-note", authenticate, bibleController.getVerseNote);
 router.post("/delete-verse-note", authenticate, bibleController.deleteVerseNote);
+router.post("/get-verse-by-date", bibleController.getVerseByDate);
 router.post("/get-todays-verse", bibleController.getTodaysVerse);
 router.post("/get-todays-devotion", bibleController.getTodaysDevotion);
+router.post("/get-daily-verse-by-ref", bibleController.getDailyVerseByRef);
 router.post("/get-devotion-by-date", bibleController.getDevotionByDate); // Added for fetching devotion by specific date
 router.post("/get-all-daily-devotions", bibleController.getAllDailyDevotions);
 router.post("/get-home-stats", authenticate, bibleController.getHomeStats);

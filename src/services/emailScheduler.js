@@ -5,9 +5,9 @@ const CRON_INTERVAL = "*/20 * * * * *";
 
 export const startEmailScheduler = () => {
   console.log(`Email scheduler started - running every 20 seconds`);
-  
+  console.log("Running email scheduler...");
   cron.schedule(CRON_INTERVAL, async () => {
-    console.log("Running email scheduler...");
+    
     try {
       await processPendingMessages();
     } catch (error) {

@@ -9,6 +9,8 @@
     "start": "npx prisma db push && node src/server.js",
     "seedmovies": "node prisma/seed.js",
 "seed-explanations": "node prisma/seed-explanations.js",
+    "seed-reading-plans": "node prisma/seed-reading-plans.js",
+    "seed-daily-verses": "node prisma/seed-daily-verses.js",
     "postinstall": "npx prisma generate"
   },
   "keywords": [],

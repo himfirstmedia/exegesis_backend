@@ -151,6 +151,16 @@ export const deleteVerseNote = async (req, res) => {
   }
 };
 
+export const getVerseByDate = async (req, res) => {
+  try {
+    const result = await bibleService.getVerseByDate(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Get verse by date error:", error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Error getting verse by date: " + error.message }));
+  }
+};
+
 export const getTodaysVerse = async (req, res) => {
   try {
     const result = await bibleService.getTodaysVerse();
@@ -209,6 +219,16 @@ export const getRecentActivity = async (req, res) => {
   } catch (error) {
     console.error("Get recent activity error:", error);
     return res.status(500).json(formatApiResponse({ status: 500, message: "Error getting recent activity: " + error.message }));
+  }
+};
+
+export const getDailyVerseByRef = async (req, res) => {
+  try {
+    const result = await bibleService.getDailyVerseByRef(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Get daily verse by ref error:", error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Error fetching daily verse: " + error.message }));
   }
 };
 

@@ -430,7 +430,7 @@ export const addDailyVerse = async (data, adminId) => {
 };
 
 export const getAllDailyVerses = async (data) => {
-  const { page = 0, size = 12, startDate, endDate, smartDefault, futureDays = 2 } = data || {};
+  const { page = 0, size = 12, startDate, endDate, smartDefault, futureDays = 2, bookName, chapter, verseNumber } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
   const offset = pageNum * pageSize;
@@ -439,8 +439,28 @@ export const getAllDailyVerses = async (data) => {
 
   if (startDate || endDate) {
     whereClause.displayDate = {};
-    if (startDate) whereClause.displayDate.gte = new Date(startDate);
-    if (endDate) whereClause.displayDate.lte = new Date(endDate);
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      whereClause.displayDate.gte = start;
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      whereClause.displayDate.lte = end;
+    }
+  }
+
+  if (bookName) {
+    whereClause.bookName = { contains: bookName, mode: "insensitive" };
+  }
+
+  if (chapter) {
+    whereClause.chapter = BigInt(chapter);
+  }
+
+  if (verseNumber) {
+    whereClause.verseNumber = BigInt(verseNumber);
   }
 
   if (smartDefault) {
@@ -455,7 +475,7 @@ export const getAllDailyVerses = async (data) => {
   const [dailyVerses, totalElements] = await Promise.all([
     prisma.dailyVerse.findMany({
       where: whereClause,
-      orderBy: { displayDate: "desc" },
+      orderBy: [{ updatedOn: "desc" }, { createdOn: "desc" }],
       skip: offset,
       take: pageSize,
       include: {
