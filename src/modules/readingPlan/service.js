@@ -1,5 +1,7 @@
+import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { generatePlanId } from "../../utils/helpers.js";
+import { cache } from "../../services/cacheService.js";
 
 export const createReadingPlan = async (data, userId) => {
   const {
@@ -33,16 +35,6 @@ export const createReadingPlan = async (data, userId) => {
       createdBy: userId,
     },
   });
-
-  const serializeBigInt = (val) => {
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object")
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    return val;
-  };
 
   return {
     status: 200,
@@ -80,16 +72,6 @@ export const addDailyAssignment = async (data, userId) => {
     },
   });
 
-  const serializeBigInt = (val) => {
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object")
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    return val;
-  };
-
   return {
     status: 200,
     message: "Daily assignment added successfully",
@@ -121,16 +103,6 @@ export const addQuizQuestions = async (data, userId) => {
     ),
   );
 
-  const serializeBigInt = (val) => {
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object")
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    return val;
-  };
-
   return {
     status: 200,
     message: "Quiz questions added successfully",
@@ -144,25 +116,35 @@ export const getAllReadingPlans = async (data, userId = null, isadmin = false) =
   const pageSizeNum = Math.min(parseInt(pageSize) || 10, 50);
   const offset = (pageNum - 1) * pageSizeNum;
 
-  console.log("📋 getAllReadingPlans called with userId:", userId);
- 
   // Admins can see all plans, regular users only see active plans
   const whereClause = isadmin ? {} : { isActive: true };
   if (category) whereClause.category = category;
 
-  const [plans, totalCount] = await Promise.all([
-    prisma.readingPlan.findMany({
-      where: whereClause,
-      skip: offset,
-      take: pageSizeNum,
-      orderBy: { createdOn: "desc" },
-    }),
-    prisma.readingPlan.count({ where: whereClause }),
-  ]);
+  // Cache the base plans list (non-user-specific) for 60 seconds
+  const cacheKey = `all:${isadmin ? 'admin' : 'user'}:${category || 'all'}:${pageNum}:${pageSizeNum}`;
+  const plansCache = await cache.get('reading-plans', cacheKey);
+
+  let plans, totalCount;
+  if (plansCache) {
+    plans = plansCache.plans;
+    totalCount = plansCache.totalCount;
+  } else {
+    const result = await Promise.all([
+      prisma.readingPlan.findMany({
+        where: whereClause,
+        skip: offset,
+        take: pageSizeNum,
+        orderBy: { createdOn: "desc" },
+      }),
+      prisma.readingPlan.count({ where: whereClause }),
+    ]);
+    plans = result[0];
+    totalCount = result[1];
+    await cache.set('reading-plans', cacheKey, { plans, totalCount }, 60);
+  }
 
   let userProgressList = [];
   if (userId) {
-    console.log("📋 Fetching user progress for userId:", userId);
     userProgressList = await prisma.userPlanProgress.findMany({
       where: { userId },
       select: {
@@ -175,22 +157,9 @@ export const getAllReadingPlans = async (data, userId = null, isadmin = false) =
         completedDate: true,
       },
     });
-    console.log("📋 User progress found:", userProgressList.length, "records");
-  } else {
-    console.log("📋 No userId provided, skipping user progress");
   }
 
   const userProgressMap = new Map(userProgressList.map((p) => [p.planId, p]));
-
-  const serializeBigInt = (val) => {
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object")
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    return val;
-  };
 
   const plansWithUserProgress = plans.map((plan) => {
     const userProgress = userProgressMap.get(plan.planId);
@@ -227,10 +196,17 @@ export const getPlansByCategory = async (data) => {
   const { category } = data;
   if (!category) return { status: 400, message: "Category is required" };
 
-  const plans = await prisma.readingPlan.findMany({
-    where: { category, isActive: true },
-    orderBy: { createdOn: "desc" },
-  });
+  const plans = await cache.getOrSet(
+    'reading-plans',
+    `category:${category}`,
+    () =>
+      prisma.readingPlan.findMany({
+        where: { category, isActive: true },
+        orderBy: { createdOn: "desc" },
+      }),
+    300,
+  );
+
   return {
     status: 200,
     message: "Reading plans fetched successfully",
@@ -263,11 +239,6 @@ export const startReadingPlan = async (data, userId) => {
 
   if (userProgress) {
     // Return the existing progress so app can navigate to it
-    const serializeBigInt = (val) => {
-      if (val === null || val === undefined) return val;
-      if (typeof val === "bigint") return Number(val);
-      return val;
-    };
     return {
       status: 200,
       message: `You already have progress in "${plan.title}". Loading...`,
@@ -287,17 +258,6 @@ export const startReadingPlan = async (data, userId) => {
     },
   });
 
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    }
-    return val;
-  };
 
   return {
     status: 200,
@@ -325,18 +285,6 @@ export const getUserPlans = async (userId) => {
     include: { readingPlan: true },
     orderBy: { startDate: "desc" },
   });
-
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    }
-    return val;
-  };
 
   const plans = userPlans.map((up) => {
     const completedDays = up.completedDaysJson
@@ -385,21 +333,29 @@ export const getDailyAssignment = async (data, userId = null) => {
   if (!planId || !dayNumber)
     return { status: 400, message: "Plan ID and day number are required" };
 
-  const assignment = await prisma.dailyAssignment.findFirst({
-    where: { planId, dayNumber },
-  });
-  if (!assignment)
+  // Cache the base assignment + quiz questions (non-user-specific) for 5 minutes
+  const base = await cache.getOrSet(
+    'reading-plans',
+    `assignment:${planId}:${dayNumber}`,
+    async () => {
+      const assignment = await prisma.dailyAssignment.findFirst({
+        where: { planId, dayNumber },
+      });
+      if (!assignment) return null;
+
+      const quizQuestions = await prisma.quizQuestion.findMany({
+        where: { planId, dayNumber },
+      });
+
+      return { assignment, quizQuestions };
+    },
+    300,
+  );
+
+  if (!base)
     return { status: 404, message: "No assignment found for this day" };
 
-  const serializeBigInt = (val) => {
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object")
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    return val;
-  };
+  const { assignment, quizQuestions } = base;
 
   // Check if user has completed this day
   let completed = false;
@@ -412,11 +368,6 @@ export const getDailyAssignment = async (data, userId = null) => {
       completed = completedDays.includes(dayNumber);
     }
   }
-
-  // Fetch quiz questions for this day
-  const quizQuestions = await prisma.quizQuestion.findMany({
-    where: { planId, dayNumber },
-  });
 
   // Fetch user's previous answers if logged in
   let userAnswers = [];
@@ -466,10 +417,17 @@ export const getAllDailyAssignments = async (data) => {
   const { planId } = data;
   if (!planId) return { status: 400, message: "Plan ID is required" };
 
-  const assignments = await prisma.dailyAssignment.findMany({
-    where: { planId },
-    orderBy: { dayNumber: "asc" },
-  });
+  const assignments = await cache.getOrSet(
+    'reading-plans',
+    `assignments:${planId}`,
+    () =>
+      prisma.dailyAssignment.findMany({
+        where: { planId },
+        orderBy: { dayNumber: "asc" },
+      }),
+    300,
+  );
+
   return {
     status: 200,
     message: "All assignments fetched successfully",
@@ -520,17 +478,6 @@ export const markDayCompleted = async (data, userId) => {
     },
   });
 
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    }
-    return val;
-  };
 
   return {
     status: 200,
@@ -653,12 +600,6 @@ export const submitQuizAnswer = async (data, userId) => {
     });
   }
 
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return val.toString();
-    return val;
-  };
-
   return {
     status: 200,
     message: "Quiz answer submitted",
@@ -676,20 +617,17 @@ export const getQuizQuestions = async (data) => {
   if (!planId || !dayNumber)
     return { status: 400, message: "Plan ID and day number are required" };
 
-  const questions = await prisma.quizQuestion.findMany({
-    where: { planId, dayNumber },
-  });
-  const questionsWithoutAnswer = questions.map(({ correctAnswer, ...q }) => q);
+  const questions = await cache.getOrSet(
+    'reading-plans',
+    `quiz:${planId}:${dayNumber}`,
+    () =>
+      prisma.quizQuestion.findMany({
+        where: { planId, dayNumber },
+      }),
+    300,
+  );
 
-  const serializeBigInt = (val) => {
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object")
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    return val;
-  };
+  const questionsWithoutAnswer = questions.map(({ correctAnswer, ...q }) => q);
 
   return {
     status: 200,
@@ -749,16 +687,6 @@ export const updateReadingPlan = async (data, userId) => {
     data: updateData,
   });
 
-  const serializeBigInt = (val) => {
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object")
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    return val;
-  };
-
   return {
     status: 200,
     message: "Reading plan updated successfully",
@@ -782,16 +710,6 @@ export const updateQuizQuestion = async (data, userId) => {
     where: { id: BigInt(questionId) },
     data: updateData,
   });
-
-  const serializeBigInt = (val) => {
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object")
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    return val;
-  };
 
   return {
     status: 200,
@@ -828,16 +746,6 @@ export const updateDailyAssignment = async (data, userId) => {
     data: updateData,
   });
 
-  const serializeBigInt = (val) => {
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object")
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    return val;
-  };
-
   return {
     status: 200,
     message: "Daily assignment updated successfully",
@@ -849,24 +757,30 @@ export const getPlanDetail = async (data, userId = null) => {
   const { planId } = data;
   if (!planId) return { status: 400, message: "Plan ID is required" };
 
-  const serializeBigInt = (val) => {
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object")
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    return val;
-  };
+  // Cache the plan structure (non-user-specific) for 5 minutes
+  const structure = await cache.getOrSet(
+    'reading-plans',
+    `structure:${planId}`,
+    async () => {
+      const plan = await prisma.readingPlan.findUnique({ where: { planId } });
+      if (!plan) return null;
 
-  const plan = await prisma.readingPlan.findUnique({ where: { planId } });
-  if (!plan) return { status: 404, message: "Reading plan not found" };
+      const [assignments, questions] = await Promise.all([
+        prisma.dailyAssignment.findMany({
+          where: { planId },
+          orderBy: { dayNumber: "asc" },
+        }),
+        prisma.quizQuestion.findMany({ where: { planId } }),
+      ]);
 
-  const assignments = await prisma.dailyAssignment.findMany({
-    where: { planId },
-    orderBy: { dayNumber: "asc" },
-  });
-  const questions = await prisma.quizQuestion.findMany({ where: { planId } });
+      return { plan, assignments, questions };
+    },
+    300,
+  );
+
+  if (!structure) return { status: 404, message: "Reading plan not found" };
+
+  const { plan, assignments, questions } = structure;
 
   let userProgress = null;
   let userQuizStats = null;
@@ -1114,18 +1028,6 @@ export const getAdminPlanStatistics = async (data) => {
     }
     difficultQuestions.sort((a, b) => a.accuracy - b.accuracy);
   }
-
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (val && typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)]),
-      );
-    }
-    return val;
-  };
 
   // ── Enrollment Trends (Last 14 days) ──────────────────────────────────
   const fourteenDaysAgo = new Date();

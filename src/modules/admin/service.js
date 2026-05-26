@@ -1,3 +1,4 @@
+import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 
 export const getUsersByAdmin = async (data, adminId) => {
@@ -27,18 +28,6 @@ export const getUsersByAdmin = async (data, adminId) => {
     }),
     prisma.systemUser.count({ where: whereClause }),
   ]);
-
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)])
-      );
-    }
-    return val;
-  };
 
   const usersWithoutPassword = users.map((u) => {
     const { password, ...rest } = u;
@@ -107,15 +96,7 @@ export const updateUser = async (data, adminId) => {
   });
 
   updatedUser.password = null;
-  const serializeUser = (u) => {
-    const serialized = {};
-    for (const key of Object.keys(u)) {
-      const value = u[key];
-      serialized[key] = typeof value === "bigint" ? value.toString() : value;
-    }
-    return serialized;
-  };
-  return { status: 200, message: "User updated successfully", data: serializeUser(updatedUser) };
+  return { status: 200, message: "User updated successfully", data: serializeBigInt(updatedUser) };
 };
 
 export const deleteUser = async (data, adminId) => {
@@ -209,18 +190,6 @@ export const getAdminDashboardStats = async () => {
     prisma.userPlanProgress.count(),
     prisma.userPlanProgress.count({ where: { isCompleted: true } }),
   ]);
-
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)])
-      );
-    }
-    return val;
-  };
 
   return {
     status: 200,
@@ -324,18 +293,6 @@ export const getAllActivity = async (data) => {
     prisma.activity.count({ where: whereClause }),
   ]);
 
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)])
-      );
-    }
-    return val;
-  };
-
   const sessions = serializeBigInt(activities);
 
   const summary = {
@@ -413,18 +370,6 @@ export const addDailyVerse = async (data, adminId) => {
     });
   }
 
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)])
-      );
-    }
-    return val;
-  };
-
   const msg = id ? "Daily verse updated successfully" : "Daily verse added successfully";
   return { status: 200, message: msg, data: serializeBigInt(dailyVerse) };
 };
@@ -490,19 +435,6 @@ export const getAllDailyVerses = async (data) => {
     }),
     prisma.dailyVerse.count({ where: whereClause }),
   ]);
-
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (val instanceof Date) return val.toISOString(); // Handle Date objects
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)])
-      );
-    }
-    return val;
-  };
 
   const totalPages = Math.ceil(totalElements / pageSize);
   const rawContent = dailyVerses.map(dv => {
@@ -585,18 +517,6 @@ export const addDailyDevotion = async (data, adminId) => {
     });
   }
 
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)])
-      );
-    }
-    return val;
-  };
-
   const msg = id ? "Daily devotion updated successfully" : "Daily devotion added successfully";
   return { status: 200, message: msg, data: serializeBigInt(dailyDevotion) };
 };
@@ -637,18 +557,6 @@ export const getAllDailyDevotions = async (data) => {
     take: pageSize,
   });
 
-  const serializeBigInt = (val) => {
-    if (val === null || val === undefined) return val;
-    if (typeof val === "bigint") return Number(val);
-    if (val instanceof Date) return val.toISOString();
-    if (Array.isArray(val)) return val.map(serializeBigInt);
-    if (typeof val === "object") {
-      return Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)])
-      );
-    }
-    return val;
-  };
   const content = serializeBigInt(rawContent);
 
   return {

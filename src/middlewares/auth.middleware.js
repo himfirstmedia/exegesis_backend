@@ -1,4 +1,5 @@
-import { getCurrentUser, extractToken, verifyToken } from "../utils/helpers.js";
+import { extractToken, verifyToken } from "../utils/helpers.js";
+import { prisma } from "../config/db.js";
 
 export const authenticate = async (req, res, next) => {
   try {
@@ -12,16 +13,21 @@ export const authenticate = async (req, res, next) => {
       return res.status(401).json({ status: 401, message: "Invalid or expired token" });
     }
 
-    const user = await getCurrentUser(req);
-    if (!user) {
+    // Lightweight status check — single field, primary key lookup
+    const userStatus = await prisma.systemUser.findUnique({
+      where: { id: decoded.id },
+      select: { status: true },
+    });
+
+    if (!userStatus) {
       return res.status(401).json({ status: 401, message: "User not found" });
     }
 
-    if (!user.status) {
+    if (!userStatus.status) {
       return res.status(403).json({ status: 403, message: "Account is disabled" });
     }
 
-    req.user = user;
+    req.user = decoded;
     next();
   } catch (error) {
     console.error("Auth middleware error:", error);
@@ -35,10 +41,8 @@ export const optionalAuth = async (req, res, next) => {
     if (token) {
       const decoded = verifyToken(token);
       if (decoded) {
-        const user = await getCurrentUser(req);
-        if (user && user.status) {
-          req.user = user;
-        }
+        // Optional auth trusts the JWT — no DB query
+        req.user = decoded;
       }
     }
     next();
@@ -48,7 +52,7 @@ export const optionalAuth = async (req, res, next) => {
 };
 
 export const requireAdmin = async (req, res, next) => {
-  if (!req.user || req.user.userRole !== 1n) {
+  if (!req.user || Number(req.user.userRole) !== 1) {
     return res.status(403).json({ status: 403, message: "Admin access required" });
   }
   next();

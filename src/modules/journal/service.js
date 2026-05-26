@@ -1,17 +1,7 @@
+import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
+import { cache } from "../../services/cacheService.js";
 
-const serializeBigInt = (val) => {
-  if (val === null || val === undefined) return val;
-  if (typeof val === "bigint") return Number(val);
-  if (val instanceof Date) return val.toISOString();
-  if (Array.isArray(val)) return val.map(serializeBigInt);
-  if (val && typeof val === "object") {
-    return Object.fromEntries(
-      Object.entries(val).map(([k, v]) => [k, serializeBigInt(v)])
-    );
-  }
-  return val;
-};
 
 export const createJournalEntry = async (data, userId) => {
   const {
@@ -151,9 +141,15 @@ export const getJournalEntry = async (data, userId) => {
     return { returnCode: 400, returnMessage: "Journal entry ID is required" };
   }
 
-  const journalEntry = await prisma.journalEntry.findFirst({
-    where: { id: BigInt(id), userId },
-  });
+  const journalEntry = await cache.getOrSet(
+    'journal',
+    `entry:${userId}:${id}`,
+    () =>
+      prisma.journalEntry.findFirst({
+        where: { id: BigInt(id), userId },
+      }),
+    60,
+  );
 
   if (!journalEntry) {
     return { returnCode: 404, returnMessage: "Journal entry not found" };
@@ -284,67 +280,76 @@ export const toggleFavorite = async (data, userId) => {
 };
 
 export const getJournalStats = async (userId) => {
-  const [
-    totalEntries,
-    favoriteCount,
-    categoryBreakdown,
-    recentEntries,
-    entriesThisMonth,
-    entriesThisWeek,
-  ] = await Promise.all([
-    prisma.journalEntry.count({ where: { userId } }),
-    prisma.journalEntry.count({ where: { userId, isFavorite: true } }),
-    prisma.journalEntry.groupBy({
-      by: ["category"],
-      where: { userId },
-      _count: { id: true },
-    }),
-    prisma.journalEntry.findMany({
-      where: { userId },
-      take: 5,
-      orderBy: { createdOn: "desc" },
-      select: {
-        id: true,
-        title: true,
-        category: true,
-        createdOn: true,
-        bookName: true,
-        chapter: true,
-        verseNumber: true,
-      },
-    }),
-    prisma.journalEntry.count({
-      where: {
-        userId,
-        createdOn: {
-          gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-        },
-      },
-    }),
-    prisma.journalEntry.count({
-      where: {
-        userId,
-        createdOn: {
-          gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-        },
-      },
-    }),
-  ]);
+  const stats = await cache.getOrSet(
+    'journal',
+    `stats:${userId}`,
+    async () => {
+      const [
+        totalEntries,
+        favoriteCount,
+        categoryBreakdown,
+        recentEntries,
+        entriesThisMonth,
+        entriesThisWeek,
+      ] = await Promise.all([
+        prisma.journalEntry.count({ where: { userId } }),
+        prisma.journalEntry.count({ where: { userId, isFavorite: true } }),
+        prisma.journalEntry.groupBy({
+          by: ["category"],
+          where: { userId },
+          _count: { id: true },
+        }),
+        prisma.journalEntry.findMany({
+          where: { userId },
+          take: 5,
+          orderBy: { createdOn: "desc" },
+          select: {
+            id: true,
+            title: true,
+            category: true,
+            createdOn: true,
+            bookName: true,
+            chapter: true,
+            verseNumber: true,
+          },
+        }),
+        prisma.journalEntry.count({
+          where: {
+            userId,
+            createdOn: {
+              gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+            },
+          },
+        }),
+        prisma.journalEntry.count({
+          where: {
+            userId,
+            createdOn: {
+              gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+            },
+          },
+        }),
+      ]);
+
+      return {
+        totalEntries,
+        favoriteCount,
+        categoryBreakdown: categoryBreakdown.map((c) => ({
+          category: c.category,
+          count: c._count.id,
+        })),
+        recentEntries,
+        entriesThisMonth,
+        entriesThisWeek,
+      };
+    },
+    60,
+  );
 
   return {
     returnCode: 200,
     returnMessage: "Journal stats fetched successfully",
-    returnData: serializeBigInt({
-      totalEntries,
-      favoriteCount,
-      categoryBreakdown: categoryBreakdown.map((c) => ({
-        category: c.category,
-        count: c._count.id,
-      })),
-      recentEntries,
-      entriesThisMonth,
-      entriesThisWeek,
-    }),
+    returnData: serializeBigInt(stats),
   };
 };
 
@@ -385,10 +390,21 @@ export const getJournalPrompts = async (data) => {
   if (bookName) whereClause.bookName = bookName;
   if (chapter) whereClause.chapter = BigInt(chapter);
 
-  const prompts = await prisma.journalPrompt.findMany({
-    where: whereClause,
-    orderBy: [{ order: "asc" }, { createdOn: "desc" }],
-  });
+  // Build a cache key from filters since prompts are shared across all users
+  const filterKey = [category, isActive, bookName, chapter]
+    .filter((v) => v !== undefined && v !== null)
+    .join(':');
+
+  const prompts = await cache.getOrSet(
+    'journal',
+    `prompts:${filterKey || 'all'}`,
+    () =>
+      prisma.journalPrompt.findMany({
+        where: whereClause,
+        orderBy: [{ order: "asc" }, { createdOn: "desc" }],
+      }),
+    300,
+  );
 
   return {
     returnCode: 200,
@@ -487,10 +503,21 @@ export const getJournalTemplates = async (data) => {
   if (category) whereClause.category = category;
   if (isActive !== undefined) whereClause.isActive = isActive;
 
-  const templates = await prisma.journalTemplate.findMany({
-    where: whereClause,
-    orderBy: { createdOn: "desc" },
-  });
+  // Build a cache key from filters since templates are shared across all users
+  const filterKey = [category, isActive]
+    .filter((v) => v !== undefined && v !== null)
+    .join(':');
+
+  const templates = await cache.getOrSet(
+    'journal',
+    `templates:${filterKey || 'all'}`,
+    () =>
+      prisma.journalTemplate.findMany({
+        where: whereClause,
+        orderBy: { createdOn: "desc" },
+      }),
+    300,
+  );
 
   const parsed = templates.map((t) => ({
     ...t,

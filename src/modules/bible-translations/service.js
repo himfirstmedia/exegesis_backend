@@ -2,90 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { parseString } from 'xml2js';
-import Redis from 'ioredis';
+import { cache } from '../../services/cacheService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const XML_DIR = path.join(__dirname, 'Holy-Bible-XML-Format');
-
-const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
-const REDIS_PORT = parseInt(process.env.REDIS_PORT) || 6379;
-const CACHE_TTL = parseInt(process.env.REDIS_CACHE_TTL) || 86400; // 24 hours default
-
-let redisClient = null;
-let isRedisReady = false;
-
-const getRedisClient = () => {
-  if (!redisClient) {
-    try {
-      redisClient = new Redis({
-        host: REDIS_HOST,
-        port: REDIS_PORT,
-        maxRetriesPerRequest: 3,
-        retryStrategy: (times) => {
-          if (times > 3) {
-            console.log('Redis retry limit exceeded, disabling cache');
-            return null;
-          }
-          return Math.min(times * 200, 2000);
-        },
-        connectTimeout: 5000,
-        commandTimeout: 3000,
-      });
-
-      redisClient.on('error', (err) => {
-        isRedisReady = false;
-        console.log('Redis connection error (will use file cache):', err.message);
-      });
-
-      redisClient.on('ready', () => {
-        isRedisReady = true;
-        console.log('Bible translations Redis connected');
-      });
-
-      redisClient.on('close', () => {
-        isRedisReady = false;
-        console.log('Redis connection closed');
-      });
-
-      redisClient.on('reconnecting', () => {
-        console.log('Redis reconnecting...');
-      });
-    } catch (err) {
-      console.log('Redis init failed:', err.message);
-      return null;
-    }
-  }
-  return redisClient;
-};
-
-const cacheGet = async (key) => {
-  try {
-    const client = getRedisClient();
-    if (!client) return null;
-    await client.ping(); // This will trigger connection if not ready
-    const data = await client.get(`bible:${key}`);
-    isRedisReady = true;
-    if (data) return JSON.parse(data);
-  } catch (err) {
-    isRedisReady = false;
-    console.log('Cache get error:', err.message);
-  }
-  return null;
-};
-
-const cacheSet = async (key, data, ttl = CACHE_TTL) => {
-  try {
-    const client = getRedisClient();
-    if (!client) return;
-    await client.ping(); // This will trigger connection if not ready
-    isRedisReady = true;
-    await client.setex(`bible:${key}`, ttl, JSON.stringify(data));
-  } catch (err) {
-    isRedisReady = false;
-    console.log('Cache set error:', err.message);
-  }
-};
 
 export const BOOK_NAMES = {
   1: 'Genesis', 2: 'Exodus', 3: 'Leviticus', 4: 'Numbers', 5: 'Deuteronomy',
@@ -253,8 +174,7 @@ const findChapter = (book, chapterNumber) => {
 };
 
 export const getAllTranslations = async () => {
-  const cacheKey = 'translations:all:v2';
-  const cached = await cacheGet(cacheKey);
+  const cached = await cache.get('bible', 'translations:all:v2');
   if (cached) return cached;
 
   const files = fs.readdirSync(XML_DIR).filter(f => f.endsWith('.xml'));
@@ -278,13 +198,12 @@ export const getAllTranslations = async () => {
     });
   }
 
-  await cacheSet(cacheKey, translations);
+  await cache.set('bible', 'translations:all:v2', translations);
   return translations;
 };
 
 export const getTranslationInfo = async (id) => {
-  const cacheKey = `translation:${id}`;
-  const cached = await cacheGet(cacheKey);
+  const cached = await cache.get('bible', `translation:${id}`);
   if (cached) return cached;
 
   const parsed = await parseBibleXml(id);
@@ -300,13 +219,12 @@ export const getTranslationInfo = async (id) => {
     link: bible.$.link || null
   };
 
-  await cacheSet(cacheKey, result);
+  await cache.set('bible', `translation:${id}`, result);
   return result;
 };
 
 export const getBooks = async (id) => {
-  const cacheKey = `books:${id}`;
-  const cached = await cacheGet(cacheKey);
+  const cached = await cache.get('bible', `books:${id}`);
   if (cached) return cached;
 
   const parsed = await parseBibleXml(id);
@@ -315,13 +233,12 @@ export const getBooks = async (id) => {
     : [parsed.bible.testament];
   const result = extractBooks(testaments);
   
-  await cacheSet(cacheKey, result);
+  await cache.set('bible', `books:${id}`, result);
   return result;
 };
 
 export const getBooksWithMaxChapters = async (id) => {
-  const cacheKey = `books:${id}:with-max`;
-  const cached = await cacheGet(cacheKey);
+  const cached = await cache.get('bible', `books:${id}:with-max`);
   if (cached) return cached;
 
   const parsed = await parseBibleXml(id);
@@ -334,7 +251,7 @@ export const getBooksWithMaxChapters = async (id) => {
     maxChapter: book.chaptersCount
   }));
   
-  await cacheSet(cacheKey, result);
+  await cache.set('bible', `books:${id}:with-max`, result);
   return result;
 };
 
@@ -344,8 +261,7 @@ export const getChapters = async (id, bookName) => {
     throw new Error('Invalid book name');
   }
 
-  const cacheKey = `chapters:${id}:${bookName}`;
-  const cached = await cacheGet(cacheKey);
+  const cached = await cache.get('bible', `chapters:${id}:${bookName}`);
   if (cached) return cached;
 
   const parsed = await parseBibleXml(id);
@@ -368,7 +284,7 @@ export const getChapters = async (id, bookName) => {
     }))
   };
 
-  await cacheSet(cacheKey, result);
+  await cache.set('bible', `chapters:${id}:${bookName}`, result);
   return result;
 };
 
@@ -378,8 +294,7 @@ export const getVerses = async (id, bookName, chapterNumber) => {
     throw new Error('Invalid book name');
   }
 
-  const cacheKey = `verses:${id}:${bookName}:${chapterNumber}`;
-  const cached = await cacheGet(cacheKey);
+  const cached = await cache.get('bible', `verses:${id}:${bookName}:${chapterNumber}`);
   if (cached) return cached;
 
   const parsed = await parseBibleXml(id);
@@ -408,7 +323,7 @@ export const getVerses = async (id, bookName, chapterNumber) => {
     }))
   };
 
-  await cacheSet(cacheKey, result);
+  await cache.set('bible', `verses:${id}:${bookName}:${chapterNumber}`, result);
   return result;
 };
 
