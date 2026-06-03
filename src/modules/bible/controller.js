@@ -214,7 +214,8 @@ export const getHomeStats = async (req, res) => {
 export const getRecentActivity = async (req, res) => {
   try {
     const limit = req.body.limit || 10;
-    const result = await bibleService.getRecentActivity(req.user.id, limit);
+    const lang = req.body.lang || 'en';
+    const result = await bibleService.getRecentActivity(req.user.id, limit, lang);
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get recent activity error:", error);
