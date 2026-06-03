@@ -163,7 +163,7 @@ export const getVerseByDate = async (req, res) => {
 
 export const getTodaysVerse = async (req, res) => {
   try {
-    const result = await bibleService.getTodaysVerse();
+    const result = await bibleService.getTodaysVerse(req.body);
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get today's verse error:", error);
