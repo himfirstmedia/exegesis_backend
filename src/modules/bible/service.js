@@ -2,9 +2,10 @@ import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { getVerse } from "../../modules/bible-translations/service.js";
 import { cache } from "../../services/cacheService.js";
+import { translateMany } from "../../utils/translator.js";
 
 export const addHighlight = async (data, userId) => {
-  const { bookName, chapter, verseNumber, verseNumbers, colorId, note } = data;
+  const { bookName, chapter, verseNumber, verseNumbers, colorId, note, lang } = data;
 
   if (!bookName || !chapter || !colorId) {
     return {
