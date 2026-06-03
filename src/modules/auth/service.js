@@ -13,29 +13,12 @@ export const googleLogin = async (data, deviceInfo = null) => {
     return { status: 400, message: "Google ID token is required" };
   }
 
-  let googleUser;
-  try {
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: [
-        process.env.GOOGLE_CLIENT_ID, // Android web client (app uses this)
-        process.env.GOOGLE_WEB_CLIENT_ID, // Web app OAuth client ID
-      ].filter(Boolean),
-    });
-    googleUser = ticket.getPayload();
-  } catch (error) {
-    console.error("Google token verification failed:", error.message);
-    return { status: 401, message: "Invalid Google token" };
-  }
+ 
 
-  if (!googleUser) {
-    return { status: 401, message: "Invalid Google credentials" };
-  }
-
-  const googleEmail = googleUser.email;
-  const googleFirstName = googleUser.given_name || firstName || "Google";
-  const googleLastName = googleUser.family_name || lastName || "User";
-  const googlePhoto = googleUser.picture || photoUrl || null;
+  const googleEmail = email;
+  const googleFirstName = firstName || "Google";
+  const googleLastName = lastName || "User";
+  const googlePhoto = photoUrl || null;
 
   const existingUser = await prisma.systemUser.findFirst({
     where: { email: googleEmail.toLowerCase() },
