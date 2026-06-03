@@ -83,7 +83,7 @@ router.post(
   requireAdmin,
   readingPlanController.updateAssignment,
 );
-router.post("/plan-detail", readingPlanController.planDetail);
+router.post("/plan-detail", authenticate, readingPlanController.planDetail);
 router.post("/remove", authenticate, readingPlanController.remove);
 router.post(
   "/day-quiz-answers",

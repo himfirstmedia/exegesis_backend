@@ -2,6 +2,7 @@ import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { generatePlanId } from "../../utils/helpers.js";
 import { cache } from "../../services/cacheService.js";
+import { translateMany } from "../../utils/translator.js";
 
 export const createReadingPlan = async (data, userId) => {
   const {
@@ -111,7 +112,7 @@ export const addQuizQuestions = async (data, userId) => {
 };
 
 export const getAllReadingPlans = async (data, userId = null, isadmin = false) => {
-  const { category, page = 1, pageSize = 10 } = data;
+  const { category, page = 1, pageSize = 10, lang = 'en' } = data;
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 10, 50);
   const offset = (pageNum - 1) * pageSizeNum;
@@ -161,10 +162,18 @@ export const getAllReadingPlans = async (data, userId = null, isadmin = false) =
 
   const userProgressMap = new Map(userProgressList.map((p) => [p.planId, p]));
 
-  const plansWithUserProgress = plans.map((plan) => {
+  // Translate user-generated fields for non-English languages
+  const [translatedTitles, translatedDescs] = await Promise.all([
+    translateMany(plans.map((p) => p.title || ''), lang),
+    translateMany(plans.map((p) => p.description || ''), lang),
+  ]);
+
+  const plansWithUserProgress = plans.map((plan, i) => {
     const userProgress = userProgressMap.get(plan.planId);
     return {
       ...serializeBigInt(plan),
+      title: translatedTitles[i] || plan.title,
+      description: translatedDescs[i] || plan.description,
       isStarted: !!userProgress,
       userCompletedDays: userProgress?.completedDaysJson
         ? JSON.parse(userProgress.completedDaysJson)
@@ -329,7 +338,7 @@ export const getUserPlanProgress = async (data, userId) => {
 };
 
 export const getDailyAssignment = async (data, userId = null) => {
-  const { planId, dayNumber } = data;
+  const { planId, dayNumber, lang = 'en' } = data;
   if (!planId || !dayNumber)
     return { status: 400, message: "Plan ID and day number are required" };
 
@@ -395,15 +404,51 @@ export const getDailyAssignment = async (data, userId = null) => {
     };
   });
 
+  const rawReflections = assignment.reflectionQuestions
+    ? JSON.parse(assignment.reflectionQuestions)
+    : [];
+
+  // Collect all quiz text that needs translation
+  const rawQuestions = questionsWithUserAnswer.map((q) => q.question);
+  const rawOptions = questionsWithUserAnswer.flatMap((q) => q.options);
+  const rawExplanations = questionsWithUserAnswer.map((q) => q.explanation || '');
+
+  const [
+    [translatedTitle],
+    translatedReflections,
+    translatedQuestions,
+    translatedOptions,
+    translatedExplanations,
+  ] = await Promise.all([
+    translateMany([assignment.title || ''], lang),
+    translateMany(rawReflections, lang),
+    translateMany(rawQuestions, lang),
+    translateMany(rawOptions, lang),
+    translateMany(rawExplanations, lang),
+  ]);
+
+  // Re-map options back per question
+  let optOffset = 0;
+  const translatedQuestionsWithUserAnswer = questionsWithUserAnswer.map((q, qi) => {
+    const optCount = q.options.length;
+    const opts = translatedOptions.slice(optOffset, optOffset + optCount);
+    optOffset += optCount;
+    return {
+      ...q,
+      question: translatedQuestions[qi] || q.question,
+      options: opts.length ? opts : q.options,
+      explanation: translatedExplanations[qi] || q.explanation,
+    };
+  });
+
   const parsed = {
     ...assignment,
+    title: translatedTitle || assignment.title,
     chapters: assignment.chaptersJson
       ? JSON.parse(assignment.chaptersJson)
       : [],
-    reflectionQuestions: assignment.reflectionQuestions
-      ? JSON.parse(assignment.reflectionQuestions)
-      : [],
-    quizQuestions: serializeBigInt(questionsWithUserAnswer),
+    reflectionQuestions: translatedReflections,
+    quizQuestions: serializeBigInt(translatedQuestionsWithUserAnswer),
     completed,
   };
   return {
@@ -414,7 +459,7 @@ export const getDailyAssignment = async (data, userId = null) => {
 };
 
 export const getAllDailyAssignments = async (data) => {
-  const { planId } = data;
+  const { planId, lang = 'en' } = data;
   if (!planId) return { status: 400, message: "Plan ID is required" };
 
   const assignments = await cache.getOrSet(
@@ -428,10 +473,43 @@ export const getAllDailyAssignments = async (data) => {
     300,
   );
 
+  // Parse JSON fields on every assignment
+  const parsed = assignments.map((a) => ({
+    ...a,
+    chapters: a.chaptersJson ? JSON.parse(a.chaptersJson) : [],
+    reflectionQuestions: a.reflectionQuestions ? JSON.parse(a.reflectionQuestions) : [],
+  }));
+
+  if (lang !== 'en') {
+    const allTitles = parsed.map((a) => a.title || '');
+    const allReflections = parsed.flatMap((a) => a.reflectionQuestions);
+
+    const [translatedTitles, translatedReflections] = await Promise.all([
+      translateMany(allTitles, lang),
+      translateMany(allReflections, lang),
+    ]);
+
+    let reflIdx = 0;
+    return {
+      status: 200,
+      message: "All assignments fetched successfully",
+      data: parsed.map((a, i) => {
+        const rCount = a.reflectionQuestions.length;
+        const tRefls = translatedReflections.slice(reflIdx, reflIdx + rCount);
+        reflIdx += rCount;
+        return {
+          ...a,
+          title: translatedTitles[i] || a.title,
+          reflectionQuestions: tRefls.length ? tRefls : a.reflectionQuestions,
+        };
+      }),
+    };
+  }
+
   return {
     status: 200,
     message: "All assignments fetched successfully",
-    data: assignments,
+    data: parsed,
   };
 };
 
@@ -754,7 +832,7 @@ export const updateDailyAssignment = async (data, userId) => {
 };
 
 export const getPlanDetail = async (data, userId = null) => {
-  const { planId } = data;
+  const { planId, lang = 'en' } = data;
   if (!planId) return { status: 400, message: "Plan ID is required" };
 
   // Cache the plan structure (non-user-specific) for 5 minutes
@@ -881,11 +959,64 @@ export const getPlanDetail = async (data, userId = null) => {
     };
   });
 
+  // Translate user-generated fields shown on the UI
+  let planTitle = plan.title;
+  let planDescription = plan.description;
+  let translatedDays = days;
+
+  if (lang !== 'en') {
+    // Plan-level strings
+    const [[tTitle], [tDesc]] = await Promise.all([
+      translateMany([plan.title || ''], lang),
+      translateMany([plan.description || ''], lang),
+    ]);
+    planTitle = tTitle || plan.title;
+    planDescription = tDesc || plan.description;
+
+    // Per-day: titles, reflectionQuestions, quiz question texts and options
+    const dayTitles = days.map((d) => d.title);
+    const allReflections = days.flatMap((d) => d.reflectionQuestions);
+    const allQuizQuestions = days.flatMap((d) => d.quizQuestions.map((q) => q.question));
+    const allQuizOptions = days.flatMap((d) => d.quizQuestions.flatMap((q) => q.options));
+
+    const [tDayTitles, tReflections, tQuizQuestions, tQuizOptions] = await Promise.all([
+      translateMany(dayTitles, lang),
+      translateMany(allReflections, lang),
+      translateMany(allQuizQuestions, lang),
+      translateMany(allQuizOptions, lang),
+    ]);
+
+    let reflIdx = 0;
+    let quizQIdx = 0;
+    let quizOptIdx = 0;
+
+    translatedDays = days.map((d, di) => {
+      const rCount = d.reflectionQuestions.length;
+      const tRefls = tReflections.slice(reflIdx, reflIdx + rCount);
+      reflIdx += rCount;
+
+      const translatedQuizQuestions = d.quizQuestions.map((q) => {
+        const tQuestion = tQuizQuestions[quizQIdx++] || q.question;
+        const oCount = q.options.length;
+        const tOptions = tQuizOptions.slice(quizOptIdx, quizOptIdx + oCount);
+        quizOptIdx += oCount;
+        return { ...q, question: tQuestion, options: tOptions.length ? tOptions : q.options };
+      });
+
+      return {
+        ...d,
+        title: tDayTitles[di] || d.title,
+        reflectionQuestions: tRefls.length ? tRefls : d.reflectionQuestions,
+        quizQuestions: translatedQuizQuestions,
+      };
+    });
+  }
+
   const response = {
     planId: plan.planId,
     plan_db_id: plan.id,
-    title: plan.title,
-    description: plan.description,
+    title: planTitle,
+    description: planDescription,
     category: plan.category,
     difficulty: plan.difficulty,
     total_days: totalDays,
@@ -915,7 +1046,7 @@ export const getPlanDetail = async (data, userId = null) => {
     user_correct_answers: userQuizStats?.correctAnswers ?? 0,
     quiz_accuracy_percentage: userQuizStats?.accuracy ?? 0,
 
-    days,
+    days: translatedDays,
   };
 
   return {
