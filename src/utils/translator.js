@@ -167,6 +167,41 @@ export const translateMany = async (texts = [], lang = 'en') => {
 };
 
 /**
+ * Translate a long string by splitting into chunks (max 500 chars per chunk,
+ * splitting on sentence boundaries) so that MyMemory's limit is respected.
+ * Each chunk is translated independently and re-joined.
+ */
+export const translateLongText = async (text, lang = 'en') => {
+  if (!text || !lang || lang === 'en' || text.length <= 500)
+    return translateText(text, lang);
+
+  // Split on sentence boundaries near 500 chars
+  const chunks = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(start + 500, text.length);
+    // Try to break at a sentence boundary
+    if (end < text.length) {
+      const boundary = text.lastIndexOf('. ', end);
+      if (boundary > start + 100) {
+        end = boundary + 1; // include the period
+      } else {
+        // Fallback: break at last space
+        const space = text.lastIndexOf(' ', end);
+        if (space > start + 100) end = space;
+      }
+    }
+    chunks.push(text.slice(start, end).trim());
+    start = end;
+  }
+
+  const translated = await Promise.all(
+    chunks.map((chunk) => translateText(chunk, lang)),
+  );
+  return translated.join(' ');
+};
+
+/**
  * Translate the message field of a service result object
  * @param {{ status: number, message: string, data?: any }} result
  * @param {string} lang
