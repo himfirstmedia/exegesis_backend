@@ -127,7 +127,8 @@ export const start = async (req, res) => {
 
 export const myProgress = async (req, res) => {
   try {
-    const result = await readingPlanService.getUserProgress(req.user.id);
+    const lang = req.body.lang || 'en';
+    const result = await readingPlanService.getUserProgress(req.user.id, lang);
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get user progress error:", error);
@@ -142,7 +143,8 @@ export const myProgress = async (req, res) => {
 
 export const getUserPlans = async (req, res) => {
   try {
-    const result = await readingPlanService.getUserPlans(req.user.id);
+    const lang = req.body.lang || 'en';
+    const result = await readingPlanService.getUserPlans(req.user.id, lang);
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get user plans error:", error);

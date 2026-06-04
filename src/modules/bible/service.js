@@ -470,7 +470,7 @@ export const addVerseExplanation = async (data, userId) => {
 };
 
 export const getAllVersesExplanation = async (data) => {
-  const { page = 1, pageSize = 20, bookName } = data;
+  const { page = 1, pageSize = 20, bookName, lang = 'en' } = data;
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
   const offset = (pageNum - 1) * pageSizeNum;
@@ -488,18 +488,27 @@ export const getAllVersesExplanation = async (data) => {
     prisma.verseExplanation.count({ where: whereClause }),
   ]);
 
-  const totalPages = Math.ceil(totalCount / pageSizeNum);
-  return {
+  const serialized = serializeBigInt({ explanations, totalCount, page: pageNum, pageSize: pageSizeNum, totalPages: Math.ceil(totalCount / pageSizeNum) });
+
+  if (lang !== 'en' && serialized.explanations?.length > 0) {
+    const expls = serialized.explanations.map((e) => e.explanation || '');
+    const learns = serialized.explanations.map((e) => e.learnMore || '');
+    const [tExpls, tLearns] = await Promise.all([
+      translateMany(expls, lang),
+      translateMany(learns, lang),
+    ]);
+    serialized.explanations.forEach((e, i) => {
+      e.explanation = tExpls[i] || e.explanation;
+      e.learnMore = tLearns[i] || e.learnMore;
+    });
+  }
+
+  const result = {
     status: 200,
     message: "Verse explanations fetched successfully",
-    data: serializeBigInt({
-      explanations,
-      totalCount,
-      page: pageNum,
-      pageSize: pageSizeNum,
-      totalPages,
-    }),
+    data: serialized,
   };
+  return lang !== 'en' ? translateResult(result, lang) : result;
 };
 
 export const addVerseNote = async (data, userId) => {
@@ -789,12 +798,12 @@ export const getTodaysVerse = async (data = {}) => {
 };
 
 export const getDailyVerseByRef = async (data) => {
-  const { bookName, chapter, verseNumber } = data || {};
+  const { bookName, chapter, verseNumber, lang = 'en' } = data || {};
   if (!bookName || !chapter || !verseNumber) {
     return { status: 400, message: "bookName, chapter, and verseNumber are required" };
   }
 
-  return cache.getOrSet(
+  const base = await cache.getOrSet(
     'bible',
     `daily-verse-ref:${bookName}:${chapter}:${verseNumber}`,
     async () => {
@@ -808,22 +817,34 @@ export const getDailyVerseByRef = async (data) => {
         orderBy: { updatedOn: "desc" },
       });
 
-      if (!dailyVerse) {
-        return { status: 404, message: "No daily verse found for this reference" };
-      }
-
-      return {
-        status: 200,
-        message: "Daily verse found",
-        data: serializeBigInt(dailyVerse),
-      };
+      return dailyVerse || null;
     },
     86400,
   );
+
+  if (!base) {
+    return { status: 404, message: "No daily verse found for this reference" };
+  }
+
+  const dv = serializeBigInt(base);
+  let reflection = dv.reflection || null;
+
+  if (lang !== 'en' && reflection) {
+    reflection = await translateLongText(reflection, lang);
+  }
+
+  const result = {
+    status: 200,
+    message: "Daily verse found",
+    data: { ...dv, reflection },
+  };
+  return lang !== 'en' ? translateResult(result, lang) : result;
 };
 
-export const getTodaysDevotion = async () => {
-  return cache.getOrSet('bible', 'todays-devotion', async () => {
+export const getTodaysDevotion = async (data = {}) => {
+  const { lang = 'en' } = data;
+
+  const base = await cache.getOrSet('bible', 'todays-devotion', async () => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -839,24 +860,40 @@ export const getTodaysDevotion = async () => {
       });
     }
 
-    if (!dailyDevotion)
-      return { status: 404, message: "No daily devotion found for today" };
-
-    return {
-      status: 200,
-      message: "Today's devotion fetched successfully",
-      data: serializeBigInt(dailyDevotion),
-    };
+    return dailyDevotion;
   }, 1800);
+
+  if (!base)
+    return { status: 404, message: "No daily devotion found for today" };
+
+  const dv = serializeBigInt(base);
+  let title = dv.title;
+  let content = dv.content;
+
+  if (lang !== 'en') {
+    const [tTitle, tContent] = await Promise.all([
+      translateLongText(title, lang),
+      translateLongText(content, lang),
+    ]);
+    title = tTitle ?? title;
+    content = tContent ?? content;
+  }
+
+  const result = {
+    status: 200,
+    message: "Today's devotion fetched successfully",
+    data: { ...dv, title, content },
+  };
+  return lang !== 'en' ? translateResult(result, lang) : result;
 };
 
 export const getDevotionByDate = async (data) => {
-  const { date } = data;
+  const { date, lang = 'en' } = data;
   if (!date) {
     return { status: 400, message: "Date is required" };
   }
 
-  return cache.getOrSet('bible', `devotion-by-date:${date}`, async () => {
+  const base = await cache.getOrSet('bible', `devotion-by-date:${date}`, async () => {
     const startDate = new Date(date);
     startDate.setHours(0, 0, 0, 0);
     const endDate = new Date(date);
@@ -870,27 +907,37 @@ export const getDevotionByDate = async (data) => {
       isPublished: true,
     };
 
-    const [devotions, totalElements] = await Promise.all([
-      prisma.dailyDevotion.findMany({
-        where: whereClause,
-        orderBy: { displayDate: "asc" },
-        take: 1,
-      }),
-      prisma.dailyDevotion.count({ where: whereClause }),
-    ]);
+    const devotions = await prisma.dailyDevotion.findMany({
+      where: whereClause,
+      orderBy: { displayDate: "asc" },
+      take: 1,
+    });
 
-    if (devotions.length === 0) {
-      return { status: 404, message: "No devotion found for the given date" };
-    }
-
-    const content = serializeBigInt(devotions[0]);
-
-    return {
-      status: 200,
-      message: "Devotion fetched successfully",
-      data: content,
-    };
+    return devotions.length > 0 ? devotions[0] : null;
   }, 3600);
+
+  if (!base)
+    return { status: 404, message: "No devotion found for the given date" };
+
+  const dv = serializeBigInt(base);
+  let title = dv.title;
+  let content = dv.content;
+
+  if (lang !== 'en') {
+    const [tTitle, tContent] = await Promise.all([
+      translateLongText(title, lang),
+      translateLongText(content, lang),
+    ]);
+    title = tTitle ?? title;
+    content = tContent ?? content;
+  }
+
+  const result = {
+    status: 200,
+    message: "Devotion fetched successfully",
+    data: { ...dv, title, content },
+  };
+  return lang !== 'en' ? translateResult(result, lang) : result;
 };
 
 export const getAllDailyDevotionsPublic = async (data) => {
@@ -901,6 +948,7 @@ export const getAllDailyDevotionsPublic = async (data) => {
     endDate,
     smartDefault,
     futureDays = 2,
+    lang = 'en',
   } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
@@ -938,7 +986,19 @@ export const getAllDailyDevotionsPublic = async (data) => {
   const content = serializeBigInt(devotions);
   const totalPages = Math.ceil(totalElements / pageSize);
 
-  return {
+  // Translate devotion titles and content
+  if (lang !== 'en' && content.length > 0) {
+    const [translatedTitles, translatedContent] = await Promise.all([
+      translateMany(content.map((d) => d.title || ''), lang),
+      translateMany(content.map((d) => d.content || ''), lang),
+    ]);
+    content.forEach((d, i) => {
+      d.title = translatedTitles[i] || d.title;
+      d.content = translatedContent[i] || d.content;
+    });
+  }
+
+  const result = {
     status: 200,
     message: "Daily devotions fetched successfully",
     data: {
@@ -953,6 +1013,7 @@ export const getAllDailyDevotionsPublic = async (data) => {
       isLast: pageNum >= totalPages - 1,
     },
   };
+  return lang !== 'en' ? translateResult(result, lang) : result;
 };
 
 export const getHomeStats = async (userId) => {

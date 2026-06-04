@@ -173,7 +173,7 @@ export const getTodaysVerse = async (req, res) => {
 
 export const getTodaysDevotion = async (req, res) => {
   try {
-    const result = await bibleService.getTodaysDevotion();
+    const result = await bibleService.getTodaysDevotion(req.body);
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get today's devotion error:", error);

@@ -2,7 +2,7 @@ import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { generatePlanId } from "../../utils/helpers.js";
 import { cache } from "../../services/cacheService.js";
-import { translateMany } from "../../utils/translator.js";
+import { translateText, translateMany } from "../../utils/translator.js";
 
 export const createReadingPlan = async (data, userId) => {
   const {
@@ -202,7 +202,7 @@ export const getAllReadingPlans = async (data, userId = null, isadmin = false) =
 };
 
 export const getPlansByCategory = async (data) => {
-  const { category } = data;
+  const { category, lang = 'en' } = data;
   if (!category) return { status: 400, message: "Category is required" };
 
   const plans = await cache.getOrSet(
@@ -216,15 +216,28 @@ export const getPlansByCategory = async (data) => {
     300,
   );
 
+  const serialized = serializeBigInt(plans);
+
+  if (lang !== 'en') {
+    const [translatedTitles, translatedDescs] = await Promise.all([
+      translateMany(serialized.map((p) => p.title || ''), lang),
+      translateMany(serialized.map((p) => p.description || ''), lang),
+    ]);
+    serialized.forEach((p, i) => {
+      p.title = translatedTitles[i] || p.title;
+      p.description = translatedDescs[i] || p.description;
+    });
+  }
+
   return {
     status: 200,
     message: "Reading plans fetched successfully",
-    data: plans,
+    data: serialized,
   };
 };
 
 export const startReadingPlan = async (data, userId) => {
-  const { planId } = data;
+  const { planId, lang = 'en' } = data;
   console.log("📝 startReadingPlan called:", { planId, userId });
 
   if (!planId) return { status: 400, message: "Plan ID is required" };
@@ -247,10 +260,13 @@ export const startReadingPlan = async (data, userId) => {
   console.log("📝 Existing progress for user:", userProgress);
 
   if (userProgress) {
-    // Return the existing progress so app can navigate to it
+    let msg = `You already have progress in "${plan.title}". Loading...`;
+    if (lang !== 'en') {
+      msg = await translateText(msg, lang);
+    }
     return {
       status: 200,
-      message: `You already have progress in "${plan.title}". Loading...`,
+      message: msg,
       data: serializeBigInt(userProgress),
     };
   }
@@ -275,27 +291,44 @@ export const startReadingPlan = async (data, userId) => {
   };
 };
 
-export const getUserProgress = async (userId) => {
+export const getUserProgress = async (userId, lang = 'en') => {
   const progress = await prisma.userPlanProgress.findMany({
     where: { userId },
     include: { readingPlan: true },
     orderBy: { startDate: "desc" },
   });
+
+  const serialized = serializeBigInt(progress);
+  if (serialized.length > 0 && lang !== 'en') {
+    const planTitles = serialized.map((p) => p.readingPlan?.title || '');
+    const planDescs = serialized.map((p) => p.readingPlan?.description || '');
+    const [translatedTitles, translatedDescs] = await Promise.all([
+      translateMany(planTitles, lang),
+      translateMany(planDescs, lang),
+    ]);
+    serialized.forEach((p, i) => {
+      if (p.readingPlan) {
+        p.readingPlan.title = translatedTitles[i] || p.readingPlan.title;
+        p.readingPlan.description = translatedDescs[i] || p.readingPlan.description;
+      }
+    });
+  }
+
   return {
     status: 200,
     message: "User progress fetched successfully",
-    data: progress,
+    data: serialized,
   };
 };
 
-export const getUserPlans = async (userId) => {
+export const getUserPlans = async (userId, lang = 'en') => {
   const userPlans = await prisma.userPlanProgress.findMany({
     where: { userId },
     include: { readingPlan: true },
     orderBy: { startDate: "desc" },
   });
 
-  const plans = userPlans.map((up) => {
+  let plans = userPlans.map((up) => {
     const completedDays = up.completedDaysJson
       ? JSON.parse(up.completedDaysJson)
       : [];
@@ -312,6 +345,20 @@ export const getUserPlans = async (userId) => {
     };
   });
 
+  if (lang !== 'en' && plans.length > 0) {
+    const planNames = plans.map((p) => p.planName || '');
+    const planDescs = plans.map((p) => p.description || '');
+    const [translatedNames, translatedDescs] = await Promise.all([
+      translateMany(planNames, lang),
+      translateMany(planDescs, lang),
+    ]);
+    plans = plans.map((p, i) => ({
+      ...p,
+      planName: translatedNames[i] || p.planName,
+      description: translatedDescs[i] || p.description,
+    }));
+  }
+
   return {
     status: 200,
     message: "User plans fetched successfully",
@@ -320,7 +367,7 @@ export const getUserPlans = async (userId) => {
 };
 
 export const getUserPlanProgress = async (data, userId) => {
-  const { planId } = data;
+  const { planId, lang = 'en' } = data;
   if (!planId) return { status: 400, message: "Plan ID is required" };
 
   const progress = await prisma.userPlanProgress.findUnique({
@@ -330,10 +377,21 @@ export const getUserPlanProgress = async (data, userId) => {
   if (!progress)
     return { status: 404, message: "No progress found for this plan" };
 
+  const serialized = serializeBigInt(progress);
+
+  if (lang !== 'en' && serialized.readingPlan) {
+    const [tTitle, tDesc] = await Promise.all([
+      translateText(serialized.readingPlan.title || '', lang),
+      translateText(serialized.readingPlan.description || '', lang),
+    ]);
+    serialized.readingPlan.title = tTitle || serialized.readingPlan.title;
+    serialized.readingPlan.description = tDesc || serialized.readingPlan.description;
+  }
+
   return {
     status: 200,
     message: "Plan progress fetched successfully",
-    data: progress,
+    data: serialized,
   };
 };
 
@@ -565,7 +623,7 @@ export const markDayCompleted = async (data, userId) => {
 };
 
 export const submitQuizAnswer = async (data, userId) => {
-  let { planId, dayNumber, questionId, userAnswer } = data;
+  let { planId, dayNumber, questionId, userAnswer, lang = 'en' } = data;
   console.log("📥 submitQuizAnswer INPUT:", {
     planId,
     dayNumber,
@@ -678,6 +736,11 @@ export const submitQuizAnswer = async (data, userId) => {
     });
   }
 
+  let explanation = question.explanation;
+  if (lang !== 'en' && explanation) {
+    explanation = await translateText(explanation, lang);
+  }
+
   return {
     status: 200,
     message: "Quiz answer submitted",
@@ -685,13 +748,13 @@ export const submitQuizAnswer = async (data, userId) => {
       ...serializeBigInt(answer),
       isCorrect,
       correctAnswer: question.correctAnswer,
-      explanation: question.explanation,
+      explanation,
     },
   };
 };
 
 export const getQuizQuestions = async (data) => {
-  const { planId, dayNumber } = data;
+  const { planId, dayNumber, lang = 'en' } = data;
   if (!planId || !dayNumber)
     return { status: 400, message: "Plan ID and day number are required" };
 
@@ -706,11 +769,35 @@ export const getQuizQuestions = async (data) => {
   );
 
   const questionsWithoutAnswer = questions.map(({ correctAnswer, ...q }) => q);
+  const serialized = serializeBigInt(questionsWithoutAnswer);
+
+  if (lang !== 'en' && serialized.length > 0) {
+    const rawQuestions = serialized.map((q) => q.question || '');
+    const rawOptions = serialized.flatMap((q) => (q.optionsJson ? JSON.parse(q.optionsJson) : []));
+    const rawExplanations = serialized.map((q) => q.explanation || '');
+
+    const [translatedQuestions, translatedOptions, translatedExplanations] = await Promise.all([
+      translateMany(rawQuestions, lang),
+      translateMany(rawOptions, lang),
+      translateMany(rawExplanations, lang),
+    ]);
+
+    let optIdx = 0;
+    serialized.forEach((q, i) => {
+      const parsedOptions = q.optionsJson ? JSON.parse(q.optionsJson) : [];
+      const optCount = parsedOptions.length;
+      const tOptions = translatedOptions.slice(optIdx, optIdx + optCount);
+      optIdx += optCount;
+      q.question = translatedQuestions[i] || q.question;
+      q.optionsJson = tOptions.length ? JSON.stringify(tOptions) : q.optionsJson;
+      q.explanation = translatedExplanations[i] || q.explanation;
+    });
+  }
 
   return {
     status: 200,
     message: "Quiz questions fetched successfully",
-    data: serializeBigInt(questionsWithoutAnswer),
+    data: serialized,
   };
 };
 
@@ -1090,7 +1177,7 @@ export const removeReadingPlan = async (data, userId) => {
 };
 
 export const getAdminPlanStatistics = async (data) => {
-  const { planId } = data;
+  const { planId, lang = 'en' } = data;
   if (!planId) return { status: 400, message: "Plan ID is required" };
 
   const plan = await prisma.readingPlan.findUnique({
@@ -1309,6 +1396,20 @@ export const getAdminPlanStatistics = async (data) => {
       };
     })
     .filter((u) => u !== null); // Remove orphaned records
+
+  // Translate top-level and structure fields
+  if (lang !== 'en') {
+    const [[tTitle], [tDesc], tStructureTitles, tDiffQuestions] = await Promise.all([
+      translateMany([plan.title || ''], lang),
+      translateMany([plan.description || ''], lang),
+      translateMany(structure.map((s) => s.title || ''), lang),
+      translateMany(difficultQuestions.map((q) => q.question || ''), lang),
+    ]);
+    plan.title = tTitle || plan.title;
+    plan.description = tDesc || plan.description;
+    structure.forEach((s, i) => { s.title = tStructureTitles[i] || s.title; });
+    difficultQuestions.forEach((q, i) => { q.question = tDiffQuestions[i] || q.question; });
+  }
 
   const stats = {
     planId: plan.planId,

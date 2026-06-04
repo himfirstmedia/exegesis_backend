@@ -8,7 +8,7 @@
     "dev": "nodemon src/server.js",
     "start": "npx prisma db push && node src/server.js",
     "seedmovies": "node prisma/seed.js",
-"seed-explanations": "node prisma/seed-explanations.js",
+    "seed-explanations": "node prisma/seed-explanations.js",
     "seed-reading-plans": "node prisma/seed-reading-plans.js",
     "seed-daily-verses": "node prisma/seed-daily-verses.js",
     "postinstall": "npx prisma generate"
@@ -19,6 +19,7 @@
   "type": "module",
   "dependencies": {
     "@prisma/client": "^6.19.2",
+    "@vitalets/google-translate-api": "^9.2.1",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
