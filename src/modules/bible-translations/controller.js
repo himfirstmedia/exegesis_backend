@@ -5,6 +5,7 @@ import {
   getBooksWithMaxChapters,
   getChapters,
   getVerses,
+  getVersesBatch,
   getVerse,
   searchVerses,
   getChapterRange,
@@ -125,6 +126,26 @@ export const listChapters = async (req, res) => {
       success: false,
       message: error.message,
     });
+  }
+};
+
+export const listVersesBatch = async (req, res) => {
+  try {
+    const { translationId } = req.params;
+    const { bookName, chapters } = req.body;
+
+    if (!translationId) {
+      return res.status(400).json({ success: false, message: "Translation ID is required" });
+    }
+    if (!bookName || !chapters || !Array.isArray(chapters) || chapters.length === 0) {
+      return res.status(400).json({ success: false, message: "Book name and chapters array are required" });
+    }
+
+    const numericChapters = chapters.map((c) => parseInt(c));
+    const data = await getVersesBatch(translationId, bookName, numericChapters);
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    return res.status(404).json({ success: false, message: error.message });
   }
 };
 

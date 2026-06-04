@@ -8,6 +8,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const XML_DIR = path.join(__dirname, 'Holy-Bible-XML-Format');
 
+// In-memory cache for parsed XML documents — avoids re-parsing the same translation
+// XML file on every getVerses/getChapters call. Keyed by full translation ID.
+// LRU eviction: keeps the most recently used entries to cap memory.
+const PARSED_XML_CACHE_MAX = 5;
+const parsedXmlCache = new Map();
+const parsedXmlCacheOrder = []; // LRU order, most recent at end
+
+const cacheParsedXml = (fullId, parsed) => {
+  if (parsedXmlCache.has(fullId)) return;
+  if (parsedXmlCache.size >= PARSED_XML_CACHE_MAX) {
+    const oldest = parsedXmlCacheOrder.shift();
+    parsedXmlCache.delete(oldest);
+  }
+  parsedXmlCache.set(fullId, parsed);
+  parsedXmlCacheOrder.push(fullId);
+};
+
 export const BOOK_NAMES = {
   1: 'Genesis', 2: 'Exodus', 3: 'Leviticus', 4: 'Numbers', 5: 'Deuteronomy',
   6: 'Joshua', 7: 'Judges', 8: 'Ruth', 9: '1 Samuel', 10: '2 Samuel',
@@ -119,6 +136,37 @@ const parseXml = (xmlContent) => {
   });
 };
 
+// Deduplicate concurrent parse requests for the same translation
+const parsingPromises = new Map();
+
+/** Parse or retrieve cached parsed XML for a translation. Avoids re-parsing the full file. */
+const getParsedBible = async (id) => {
+  const fullId = toFullId(id);
+  if (parsedXmlCache.has(fullId)) {
+    // Move to end (most recently used)
+    const idx = parsedXmlCacheOrder.indexOf(fullId);
+    if (idx !== -1) {
+      parsedXmlCacheOrder.splice(idx, 1);
+      parsedXmlCacheOrder.push(fullId);
+    }
+    return parsedXmlCache.get(fullId);
+  }
+  // Dedup concurrent parses — wait for the in-flight one instead of parsing again
+  if (parsingPromises.has(fullId)) {
+    return parsingPromises.get(fullId);
+  }
+  const promise = parseBibleXml(id).then((parsed) => {
+    cacheParsedXml(fullId, parsed);
+    parsingPromises.delete(fullId);
+    return parsed;
+  }).catch((err) => {
+    parsingPromises.delete(fullId);
+    throw err;
+  });
+  parsingPromises.set(fullId, promise);
+  return promise;
+};
+
 const getXmlPath = (id) => {
   const fullId = toFullId(id);
   const filePath = path.join(XML_DIR, `${fullId}.xml`);
@@ -178,25 +226,20 @@ export const getAllTranslations = async () => {
   if (cached) return cached;
 
   const files = fs.readdirSync(XML_DIR).filter(f => f.endsWith('.xml'));
-  const translations = [];
 
-  for (const file of files) {
-    const xmlContent = fs.readFileSync(path.join(XML_DIR, file), 'utf-8');
-    const parsed = await parseXml(xmlContent);
-    const bible = parsed.bible;
+  const translations = files.map((file) => {
     const shortId = toShortId(file);
     const displayInfo = TRANSLATION_DISPLAY_NAMES[shortId];
-    
-    translations.push({
+    return {
       id: shortId,
-      name: displayInfo ? displayInfo.name : (bible.$.translation || bible.$.name || shortId),
+      name: displayInfo ? displayInfo.name : shortId,
       shortName: shortId,
       year: displayInfo?.year || null,
-      description: bible.$.title || null,
-      copyright: bible.$.status || null,
-      link: bible.$.link || null
-    });
-  }
+      description: null,
+      copyright: null,
+      link: null,
+    };
+  });
 
   await cache.set('bible', 'translations:all:v2', translations);
   return translations;
@@ -206,7 +249,7 @@ export const getTranslationInfo = async (id) => {
   const cached = await cache.get('bible', `translation:${id}`);
   if (cached) return cached;
 
-  const parsed = await parseBibleXml(id);
+  const parsed = await getParsedBible(id);
   const bible = parsed.bible;
   const shortId = toShortId(toFullId(id) + '.xml');
 
@@ -227,7 +270,7 @@ export const getBooks = async (id) => {
   const cached = await cache.get('bible', `books:${id}`);
   if (cached) return cached;
 
-  const parsed = await parseBibleXml(id);
+  const parsed = await getParsedBible(id);
   const testaments = Array.isArray(parsed.bible.testament) 
     ? parsed.bible.testament 
     : [parsed.bible.testament];
@@ -241,7 +284,7 @@ export const getBooksWithMaxChapters = async (id) => {
   const cached = await cache.get('bible', `books:${id}:with-max`);
   if (cached) return cached;
 
-  const parsed = await parseBibleXml(id);
+  const parsed = await getParsedBible(id);
   const testaments = Array.isArray(parsed.bible.testament) 
     ? parsed.bible.testament 
     : [parsed.bible.testament];
@@ -264,7 +307,7 @@ export const getChapters = async (id, bookName) => {
   const cached = await cache.get('bible', `chapters:${id}:${bookName}`);
   if (cached) return cached;
 
-  const parsed = await parseBibleXml(id);
+  const parsed = await getParsedBible(id);
   const testaments = Array.isArray(parsed.bible.testament) 
     ? parsed.bible.testament 
     : [parsed.bible.testament];
@@ -297,7 +340,7 @@ export const getVerses = async (id, bookName, chapterNumber) => {
   const cached = await cache.get('bible', `verses:${id}:${bookName}:${chapterNumber}`);
   if (cached) return cached;
 
-  const parsed = await parseBibleXml(id);
+  const parsed = await getParsedBible(id);
   const testaments = Array.isArray(parsed.bible.testament) 
     ? parsed.bible.testament 
     : [parsed.bible.testament];
@@ -344,7 +387,7 @@ export const getVerse = async (id, bookName, chapter, verseNumber) => {
 };
 
 export const searchVerses = async (id, query, limit = 50) => {
-  const parsed = await parseBibleXml(id);
+  const parsed = await getParsedBible(id);
   const testaments = Array.isArray(parsed.bible.testament) 
     ? parsed.bible.testament 
     : [parsed.bible.testament];
@@ -387,6 +430,47 @@ export const searchVerses = async (id, query, limit = 50) => {
   }
 
   return results;
+};
+
+/** Fetch multiple chapters at once (preserves chapter boundaries). Uses cached parsed XML. */
+export const getVersesBatch = async (id, bookName, chapters) => {
+  const bookNumber = BOOK_NAME_TO_NUMBER[bookName.toLowerCase()];
+  if (!bookNumber) {
+    throw new Error('Invalid book name');
+  }
+
+  const parsed = await getParsedBible(id);
+  const testaments = Array.isArray(parsed.bible.testament)
+    ? parsed.bible.testament
+    : [parsed.bible.testament];
+
+  const book = findBook(testaments, bookNumber);
+  if (!book) {
+    throw new Error('Book not found');
+  }
+
+  const allChapters = Array.isArray(book.chapter) ? book.chapter : [book.chapter];
+  const result = [];
+
+  for (const chNum of chapters) {
+    const chapter = allChapters.find(ch => parseInt(ch.$.number) === chNum);
+    if (!chapter) {
+      result.push({ bookName, chapterNumber: chNum, verses: [] });
+      continue;
+    }
+    const verses = Array.isArray(chapter.verse) ? chapter.verse : [chapter.verse];
+    result.push({
+      bookName: BOOK_NAMES[bookNumber],
+      chapterNumber: chNum,
+      bookNumber,
+      verses: verses.map(v => ({
+        verseNumber: parseInt(v.$.number),
+        text: typeof v === 'string' ? v : (v._ || v),
+      })),
+    });
+  }
+
+  return result;
 };
 
 export const getChapterRange = async (id, bookName, startChapter, endChapter) => {
@@ -452,3 +536,6 @@ export const getReadingProgress = async (id, startBookName, startChapter, endBoo
     books
   };
 };
+
+// Pre-warm the default translation cache on module load
+getParsedBible('Berean').catch(() => {});
