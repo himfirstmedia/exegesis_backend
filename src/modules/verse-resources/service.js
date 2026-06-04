@@ -2,6 +2,7 @@ import { serializeBigInt } from '../../utils/helpers.js';
 import { prisma } from '../../config/db.js';
 import { cache } from '../../services/cacheService.js';
 import { getVerse } from '../bible-translations/service.js';
+import { translateText, translateMany, translateResult } from '../../utils/translator.js';
 
 const CACHE_TTL = 86400;
 
@@ -24,9 +25,61 @@ function serializeResources(resource) {
   };
 }
 
+/** Translate UI-facing fields inside a verse resource object */
+async function translateResourceData(resource, lang) {
+  if (!resource || lang === 'en') return resource;
+
+  // commentaries: translate `text` field
+  if (resource.commentaries?.length) {
+    const texts = resource.commentaries.map((c) => c.text || '');
+    const translated = await translateMany(texts, lang);
+    resource.commentaries.forEach((c, i) => { c.text = translated[i] || c.text; });
+  }
+
+  // crossReferences: translate `text` field
+  if (resource.crossReferences?.length) {
+    const texts = resource.crossReferences.map((c) => c.text || '');
+    const translated = await translateMany(texts, lang);
+    resource.crossReferences.forEach((c, i) => { c.text = translated[i] || c.text; });
+  }
+
+  // wordStudies: translate `meaning` field
+  if (resource.wordStudies?.length) {
+    const meanings = resource.wordStudies.map((w) => w.meaning || '');
+    const translated = await translateMany(meanings, lang);
+    resource.wordStudies.forEach((w, i) => { w.meaning = translated[i] || w.meaning; });
+  }
+
+  // dictionaryTerms: translate `definition` and `description`
+  if (resource.dictionaryTerms?.length) {
+    const defs = resource.dictionaryTerms.map((d) => d.definition || '');
+    const descs = resource.dictionaryTerms.map((d) => d.description || '');
+    const [translatedDefs, translatedDescs] = await Promise.all([
+      translateMany(defs, lang),
+      translateMany(descs, lang),
+    ]);
+    resource.dictionaryTerms.forEach((d, i) => {
+      d.definition = translatedDefs[i] || d.definition;
+      d.description = translatedDescs[i] || d.description;
+    });
+  }
+
+  // relatedTopics: translate `name` field (or plain strings)
+  if (resource.relatedTopics?.length) {
+    const names = resource.relatedTopics.map((t) => (typeof t === 'string' ? t : t.name || ''));
+    const translated = await translateMany(names, lang);
+    resource.relatedTopics.forEach((t, i) => {
+      if (typeof t === 'string') resource.relatedTopics[i] = translated[i] || t;
+      else t.name = translated[i] || t.name;
+    });
+  }
+
+  return resource;
+}
+
 export const getVerseResources = async (data) => {
   try {
-    const { bookName, chapter, verseNumber } = data;
+    const { bookName, chapter, verseNumber, lang = 'en' } = data;
     if (!bookName || !chapter || !verseNumber) {
       return { status: 400, message: 'bookName, chapter, and verseNumber are required' };
     }
@@ -52,7 +105,11 @@ export const getVerseResources = async (data) => {
       return { status: 404, message: 'No resources found for this verse', data: null };
     }
 
-    return { status: 200, message: 'Resources retrieved successfully', data: serializeResources(result) };
+    const data = serializeResources(result);
+    await translateResourceData(data, lang);
+
+    const response = { status: 200, message: 'Resources retrieved successfully', data };
+    return lang !== 'en' ? translateResult(response, lang) : response;
   } catch (error) {
     console.error('getVerseResources error:', error);
     return { status: 500, message: 'Failed to fetch verse resources: ' + error.message };
@@ -61,7 +118,7 @@ export const getVerseResources = async (data) => {
 
 export const getMultipleVerseResources = async (data) => {
   try {
-    const { bookName, chapter, verses } = data;
+    const { bookName, chapter, verses, lang = 'en' } = data;
     if (!bookName || !chapter || !verses || !Array.isArray(verses)) {
       return { status: 400, message: 'bookName, chapter, and verses array are required' };
     }
@@ -75,11 +132,15 @@ export const getMultipleVerseResources = async (data) => {
       orderBy: { verseStart: 'asc' },
     });
 
-    return {
+    const serialized = resources.map(r => serializeResources(r));
+    await Promise.all(serialized.map((r) => translateResourceData(r, lang)));
+
+    const response = {
       status: 200,
       message: 'Resources retrieved successfully',
-      data: resources.map(r => serializeResources(r)),
+      data: serialized,
     };
+    return lang !== 'en' ? translateResult(response, lang) : response;
   } catch (error) {
     console.error('getMultipleVerseResources error:', error);
     return { status: 500, message: 'Failed: ' + error.message };
@@ -129,7 +190,7 @@ export const upsertVerseResource = async (data, userId) => {
 
 export const compareTranslations = async (data) => {
   try {
-    const { bookName, chapter, verseNumber } = data;
+    const { bookName, chapter, verseNumber, lang = 'en' } = data;
     if (!bookName || !chapter || !verseNumber) {
       return { status: 400, message: 'bookName, chapter, and verseNumber are required' };
     }
@@ -156,7 +217,20 @@ export const compareTranslations = async (data) => {
       return { status: 404, message: 'No translations found for this verse', data: [] };
     }
 
-    return { status: 200, message: 'Translations compared successfully', data: results };
+    // Translate version names and verse text
+    if (lang !== 'en') {
+      const [tVersions, tTexts] = await Promise.all([
+        translateMany(results.map((r) => r.version), lang),
+        translateMany(results.map((r) => r.text), lang),
+      ]);
+      results.forEach((r, i) => {
+        r.version = tVersions[i] || r.version;
+        r.text = tTexts[i] || r.text;
+      });
+    }
+
+    const response = { status: 200, message: 'Translations compared successfully', data: results };
+    return lang !== 'en' ? translateResult(response, lang) : response;
   } catch (error) {
     console.error('compareTranslations error:', error);
     return { status: 500, message: 'Failed to compare translations: ' + error.message };
