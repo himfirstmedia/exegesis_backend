@@ -1044,6 +1044,46 @@ export const getHomeStats = async (userId) => {
   };
 };
 
+/** Format a date as a locale-aware relative time string (Node Intl is guaranteed) */
+function formatActivityTime(time, lang = 'en') {
+  if (!time) return '';
+  const date = new Date(time);
+  const now = new Date();
+
+  const isToday =
+    date.getDate() === now.getDate() &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear();
+
+  const yesterday = new Date();
+  yesterday.setDate(now.getDate() - 1);
+
+  const isYesterday =
+    date.getDate() === yesterday.getDate() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getFullYear() === yesterday.getFullYear();
+
+  if (isToday)
+    return date.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' });
+
+  if (isYesterday) {
+    try {
+      return new Intl.RelativeTimeFormat(lang, { numeric: 'auto' }).format(-1, 'day');
+    } catch {
+      return date.toLocaleDateString(lang, { weekday: 'long' });
+    }
+  }
+
+  const diffDays = (now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24);
+  if (diffDays < 7) return date.toLocaleDateString(lang, { weekday: 'short' });
+
+  return date.toLocaleDateString(lang, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
 export const getRecentActivity = async (userId, limit = 10, lang = 'en') => {
   const limitNum = Math.min(parseInt(limit) || 10, 20);
 
@@ -1096,6 +1136,7 @@ export const getRecentActivity = async (userId, limit = 10, lang = 'en') => {
       chapter: Number(r.chapter),
       verse: Number(r.verseNumber),
       time: r.createdOn,
+      formattedTime: formatActivityTime(r.createdOn, lang),
     })),
     ...recentHighlights.map((h) => ({
       type: "highlight",
@@ -1105,6 +1146,7 @@ export const getRecentActivity = async (userId, limit = 10, lang = 'en') => {
       verse: Number(h.verseNumber),
       colorId: Number(h.colorId),
       time: h.createdOn,
+      formattedTime: formatActivityTime(h.createdOn, lang),
     })),
     ...recentNotes.map((n) => ({
       type: "note",
@@ -1113,6 +1155,7 @@ export const getRecentActivity = async (userId, limit = 10, lang = 'en') => {
       chapter: Number(n.chapter),
       verse: Number(n.verseNumber),
       time: n.createdOn,
+      formattedTime: formatActivityTime(n.createdOn, lang),
     })),
     ...recentFavorites.map((f) => ({
       type: "favorite",
@@ -1121,19 +1164,22 @@ export const getRecentActivity = async (userId, limit = 10, lang = 'en') => {
       chapter: Number(f.chapter),
       verse: Number(f.verseNumber),
       time: f.createdOn,
+      formattedTime: formatActivityTime(f.createdOn, lang),
     })),
     ...planProgress.map((p, i) => {
       const completedDays = p.completedDaysJson
         ? JSON.parse(p.completedDaysJson)
         : [];
       const lastCompleted = completedDays[completedDays.length - 1];
+      const planTime = p.lastCompletedDate || p.startDate;
       return {
         type: "plan",
         id: p.id,
         book: translatedPlanTitles[i] || planTitles[i],
         chapter: lastCompleted || 0,
         verse: completedDays.length,
-        time: p.lastCompletedDate || p.startDate,
+        time: planTime,
+        formattedTime: formatActivityTime(planTime, lang),
         planId: p.planId,
         isPlanCompleted: p.isCompleted,
       };

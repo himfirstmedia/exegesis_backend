@@ -539,3 +539,4 @@ export const getReadingProgress = async (id, startBookName, startChapter, endBoo
 
 // Pre-warm the default translation cache on module load
 getParsedBible('Berean').catch(() => {});
+

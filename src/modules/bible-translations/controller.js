@@ -1,3 +1,4 @@
+import { translateText } from "../../utils/translator.js";
 import {
   getAllTranslations,
   getTranslationInfo,
@@ -322,4 +323,31 @@ export const getBookNames = (req, res) => {
     count: BOOK_NAMES.length,
     data: BOOK_NAMES,
   });
+
+
 };
+
+export const getTranslationText = async (req, res) => {
+
+  try {
+    const { text,lang } = await req.body;
+
+    if (!text) {
+      return res.status(200).json({
+        success: false,
+        message: "Text to translate is required",
+        returnCode:400
+      });
+    }
+    const translation = await translateText(text, lang);
+    return res.status(200).json({
+      success: true,
+      data: translation,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+}
