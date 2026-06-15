@@ -13,6 +13,7 @@ import {
   getReadingProgress,
   BOOK_NAMES,
 } from "./service.js";
+import { prisma } from "../../config/db.js";
 
 export const listTranslations = async (req, res) => {
   try {
@@ -311,6 +312,23 @@ export const getReading = async (req, res) => {
     });
   } catch (error) {
     return res.status(404).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+export const getTranslationSettings = async (req, res) => {
+  try {
+    const setting = await prisma.siteSetting.findUnique({
+      where: { key: "freeTranslationsOnly" },
+    });
+    return res.status(200).json({
+      success: true,
+      data: setting ? { freeTranslationsOnly: setting.value === "true" } : { freeTranslationsOnly: false },
+    });
+  } catch (error) {
+    return res.status(500).json({
       success: false,
       message: error.message,
     });

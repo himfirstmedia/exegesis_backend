@@ -613,6 +613,38 @@ export const getAllDailyDevotions = async (data) => {
   return lang !== 'en' ? translateResult(result, lang) : result;
 };
 
+// ── Site Settings ─────────────────────────────────────────────────────────────
+
+export const getSiteSetting = async (data) => {
+  const { key } = data;
+  if (!key) {
+    return { status: 400, message: "Setting key is required" };
+  }
+  const setting = await prisma.siteSetting.findUnique({ where: { key } });
+  return {
+    status: 200,
+    message: "Setting retrieved successfully",
+    data: setting ? serializeBigInt(setting) : null,
+  };
+};
+
+export const setSiteSetting = async (data, adminId) => {
+  const { key, value } = data;
+  if (!key || value === undefined) {
+    return { status: 400, message: "Key and value are required" };
+  }
+  const setting = await prisma.siteSetting.upsert({
+    where: { key },
+    update: { value: String(value), updatedBy: adminId },
+    create: { key, value: String(value), updatedBy: adminId },
+  });
+  return {
+    status: 200,
+    message: "Setting saved successfully",
+    data: serializeBigInt(setting),
+  };
+};
+
 export const deleteDailyDevotion = async (data) => {
   const { devotionId, id } = data;
   const targetId = devotionId || id;

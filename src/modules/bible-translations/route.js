@@ -12,7 +12,8 @@ import {
   getChapterRangeVerses,
   getReading,
   getBookNames,
-  getTranslationText
+  getTranslationText,
+  getTranslationSettings
 } from "./controller.js";
 
 const router = express.Router();
@@ -31,5 +32,6 @@ router.post("/:translationId/search", search);
 router.post("/:translationId/chapter-range", getChapterRangeVerses);
 router.post("/:translationId/reading", getReading);
 router.get("/translate-text", getTranslationText);
+router.get("/settings", getTranslationSettings);
 
 export default router;

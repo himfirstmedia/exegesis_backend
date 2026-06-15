@@ -19,6 +19,9 @@ router.post("/delete-daily-verse", authenticate, requireAdmin, adminController.d
 router.post("/add-daily-devotion", authenticate, requireAdmin, adminController.addDailyDevotion);
 router.post("/get-all-daily-devotions", authenticate, requireAdmin, adminController.getAllDailyDevotions);
 router.post("/delete-daily-devotion", authenticate, requireAdmin, adminController.deleteDailyDevotion);
-//get daily devotion for today
+
+// Site settings
+router.post("/get-site-setting", authenticate, requireAdmin, adminController.getSiteSetting);
+router.post("/set-site-setting", authenticate, requireAdmin, adminController.setSiteSetting);
 
 export default router;
