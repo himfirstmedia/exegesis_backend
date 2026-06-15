@@ -332,6 +332,7 @@ export const getTranslationText = async (req, res) => {
   try {
     const { text,lang } = await req.body;
 
+
     if (!text) {
       return res.status(200).json({
         success: false,
