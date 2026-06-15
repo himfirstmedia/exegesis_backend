@@ -147,6 +147,26 @@ export const getAllDailyDevotions = async (req, res) => {
   }
 };
 
+export const getSiteSetting = async (req, res) => {
+  try {
+    const result = await adminService.getSiteSetting(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Get site setting error:", error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Error fetching setting: " + error.message }));
+  }
+};
+
+export const setSiteSetting = async (req, res) => {
+  try {
+    const result = await adminService.setSiteSetting(req.body, req.user.id);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Set site setting error:", error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Error saving setting: " + error.message }));
+  }
+};
+
 export const deleteDailyDevotion = async (req, res) => {
   try {
     const result = await adminService.deleteDailyDevotion(req.body);

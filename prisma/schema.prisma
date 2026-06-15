@@ -400,6 +400,15 @@ model JournalPrompt {
   @@map("journal_prompts")
 }
 
+model SiteSetting {
+  key       String   @id
+  value     String
+  updatedBy String?  @map("updated_by")
+  updatedOn DateTime @updatedAt @map("updated_on")
+
+  @@map("site_settings")
+}
+
 model JournalTemplate {
   id          BigInt   @id @default(autoincrement())
   name        String
