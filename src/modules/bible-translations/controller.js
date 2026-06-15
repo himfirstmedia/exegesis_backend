@@ -320,12 +320,16 @@ export const getReading = async (req, res) => {
 
 export const getTranslationSettings = async (req, res) => {
   try {
-    const setting = await prisma.siteSetting.findUnique({
-      where: { key: "freeTranslationsOnly" },
-    });
+    const [freeSetting, defaultSetting] = await Promise.all([
+      prisma.siteSetting.findUnique({ where: { key: "freeTranslationsOnly" } }),
+      prisma.siteSetting.findUnique({ where: { key: "defaultTranslationId" } }),
+    ]);
     return res.status(200).json({
       success: true,
-      data: setting ? { freeTranslationsOnly: setting.value === "true" } : { freeTranslationsOnly: false },
+      data: {
+        freeTranslationsOnly: freeSetting ? freeSetting.value === "true" : false,
+        defaultTranslationId: defaultSetting?.value || "Berean",
+      },
     });
   } catch (error) {
     return res.status(500).json({
