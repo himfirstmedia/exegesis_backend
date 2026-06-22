@@ -52,12 +52,11 @@ const memSet = (key, value) => {
 const inFlight = new Map();
 
 // ── Concurrency limiter ────────────────────────────────────────────────────
-// Allows up to MAX_CONCURRENT simultaneous API calls (vs 1 before).
-// MIN_DELAY_MS between each slot prevents IP rate limiting.
-// Net result: ~15 translations/sec vs 1/sec before.
+// MAX_CONCURRENT simultaneous API calls with MIN_DELAY_MS spacing between
+// each slot to prevent IP rate limiting.
 
-const MAX_CONCURRENT = 3;
-const MIN_DELAY_MS   = 200; // 5x faster than before (was 1000ms)
+const MAX_CONCURRENT = 2;
+const MIN_DELAY_MS   = 600;
 let activeCount = 0;
 let lastCallTime = 0;
 
@@ -74,6 +73,25 @@ const withRateLimit = async (fn) => {
     return await fn();
   } finally {
     activeCount--;
+  }
+};
+
+// Retry once with a short backoff for rate limits, then fall through
+const RETRYABLE_ERRORS = ['Too Many Requests', 'ETIMEDOUT', 'ECONNRESET', 'socket hang up', 'timeout'];
+
+const shouldRetry = (err) =>
+  RETRYABLE_ERRORS.some((keyword) => err.message?.includes(keyword));
+
+const withRetry = async (fn) => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (shouldRetry(err)) {
+      console.warn(`[translator] Retry after 2s — ${err.message.slice(0, 80)}`);
+      await new Promise((r) => setTimeout(r, 2000));
+      return await fn();
+    }
+    throw err;
   }
 };
 
@@ -95,9 +113,9 @@ const fetchTranslation = (text, lang, cacheKey) => {
       }
     } catch (_) {} // Redis down — just proceed to translate
 
-    // Provider 1: Google Translate
+    // Provider 1: Google Translate (with retry for rate limits)
     try {
-      const { text: translated } = await translate(text, { to: lang });
+      const { text: translated } = await withRetry(() => translate(text, { to: lang }));
       memSet(cacheKey, translated);
       cache.set('translations', cacheKey, translated, CACHE_TTL).catch(() => {});
       return translated;
@@ -133,6 +151,11 @@ const fetchTranslation = (text, lang, cacheKey) => {
 export const translateText = async (text, lang = 'en') => {
   if (!text || !lang || lang === 'en') return text;
 
+  // Route long texts through translateLongText to avoid MyMemory's 500-char limit
+  if (text.length > 500) {
+    return translateLongText(text, lang);
+  }
+
   const cacheKey = `${hashStr(text)}:${lang}`;
 
   // Layer 1: memory cache — returns instantly, no async
@@ -161,9 +184,18 @@ export const translateText = async (text, lang = 'en') => {
  * @param {string[]} texts
  * @param {string} lang
  */
+const BATCH_SIZE = 10;
+
 export const translateMany = async (texts = [], lang = 'en') => {
   if (!lang || lang === 'en') return texts;
-  return Promise.all(texts.map((text) => translateText(text, lang)));
+
+  const results = [];
+  for (let i = 0; i < texts.length; i += BATCH_SIZE) {
+    const batch = texts.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(batch.map((text) => translateText(text, lang)));
+    results.push(...batchResults);
+  }
+  return results;
 };
 
 /**
