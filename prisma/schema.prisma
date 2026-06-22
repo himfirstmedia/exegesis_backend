@@ -125,6 +125,9 @@ model DailyVerse {
   isPublished  Boolean    @default(false) @map("is_published")
   user         SystemUser @relation("DailyVerseCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
+  @@index([displayDate])
+  @@index([bookName, chapter, verseNumber])
+  @@index([isPublished, displayDate])
   @@map("daily_verse")
 }
 
@@ -144,6 +147,8 @@ model DailyDevotion {
   isPublished Boolean    @default(false) @map("is_published")
   user        SystemUser @relation("DailyDevotionCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
+  @@index([displayDate])
+  @@index([isPublished, displayDate])
   @@map("daily_devotion")
 }
 

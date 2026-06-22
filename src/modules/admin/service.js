@@ -1,6 +1,5 @@
 import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
-import { translateText, translateMany, translateLongText, translateResult } from "../../utils/translator.js";
 
 export const getUsersByAdmin = async (data, adminId) => {
   const { search, userId, page = 1, pageSize = 10 } = data;
@@ -178,7 +177,13 @@ export const toggleUserVerification = async (data, adminId) => {
 };
 
 export const getAdminDashboardStats = async () => {
-  const [totalUsers, activeUsers, inactiveUsers, verifiedUsers, unverifiedUsers, adminCount, memberCount, totalPlans, activePlans, totalEnrollments, completedEnrollments] = await Promise.all([
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfTomorrow = new Date(startOfToday);
+  startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
+  const [totalUsers, activeUsers, inactiveUsers, verifiedUsers, unverifiedUsers, adminCount, memberCount, totalPlans, activePlans, totalEnrollments, completedEnrollments, newUsersThisMonth, newUsersToday] = await Promise.all([
     prisma.systemUser.count(),
     prisma.systemUser.count({ where: { status: true } }),
     prisma.systemUser.count({ where: { status: false } }),
@@ -190,6 +195,8 @@ export const getAdminDashboardStats = async () => {
     prisma.readingPlan.count({ where: { isActive: true } }),
     prisma.userPlanProgress.count(),
     prisma.userPlanProgress.count({ where: { isCompleted: true } }),
+    prisma.systemUser.count({ where: { createdOn: { gte: startOfMonth } } }),
+    prisma.systemUser.count({ where: { createdOn: { gte: startOfToday, lt: startOfTomorrow } } }),
   ]);
 
   return {
@@ -203,7 +210,8 @@ export const getAdminDashboardStats = async () => {
       unverifiedUsers,
       adminCount,
       memberCount,
-      newUsersThisMonth: totalUsers,
+      newUsersThisMonth,
+      newUsersToday,
       totalPlans,
       activePlans,
       totalEnrollments,
@@ -376,7 +384,7 @@ export const addDailyVerse = async (data, adminId) => {
 };
 
 export const getAllDailyVerses = async (data) => {
-  const { page = 0, size = 12, startDate, endDate, smartDefault, futureDays = 2, bookName, chapter, verseNumber, lang = 'en' } = data || {};
+  const { page = 0, size = 12, startDate, endDate, smartDefault, futureDays = 2, bookName, chapter, verseNumber } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
   const offset = pageNum * pageSize;
@@ -449,29 +457,7 @@ export const getAllDailyVerses = async (data) => {
   });
   const content = serializeBigInt(rawContent);
 
-  // Translate reflection, explanation, learnMore, creatorName
-  if (lang !== 'en' && content.length > 0) {
-    const reflections = content.map((v) => v.reflection || '');
-    const explanations = content.map((v) => v.explanation || '');
-    const learnMores = content.map((v) => v.learnMore || '');
-    const creatorNames = content.map((v) => v.creatorName || '');
-
-    const [tReflections, tExplanations, tLearnMores, tCreatorNames] = await Promise.all([
-      translateMany(reflections, lang),
-      translateMany(explanations, lang),
-      translateMany(learnMores, lang),
-      translateMany(creatorNames, lang),
-    ]);
-
-    content.forEach((v, i) => {
-      v.reflection = tReflections[i] || v.reflection;
-      v.explanation = tExplanations[i] || v.explanation;
-      v.learnMore = tLearnMores[i] || v.learnMore;
-      v.creatorName = tCreatorNames[i] || v.creatorName;
-    });
-  }
-
-  const result = {
+  return {
     status: 200,
     message: "Daily verses fetched successfully",
     data: {
@@ -486,7 +472,6 @@ export const getAllDailyVerses = async (data) => {
       isLast: pageNum >= totalPages - 1,
     },
   };
-  return lang !== 'en' ? translateResult(result, lang) : result;
 };
 
 export const deleteDailyVerse = async (data) => {
@@ -546,7 +531,7 @@ export const addDailyDevotion = async (data, adminId) => {
 };
 
 export const getAllDailyDevotions = async (data) => {
-  const { page = 0, size = 12, startDate, endDate, smartDefault, futureDays = 2, lang = 'en' } = data || {};
+  const { page = 0, size = 12, startDate, endDate, smartDefault, futureDays = 2 } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
 
@@ -583,19 +568,7 @@ export const getAllDailyDevotions = async (data) => {
 
   const content = serializeBigInt(rawContent);
 
-  // Translate devotion titles and content
-  if (lang !== 'en' && content.length > 0) {
-    const [translatedTitles, translatedContent] = await Promise.all([
-      translateMany(content.map((d) => d.title || ''), lang),
-      translateMany(content.map((d) => d.content || ''), lang),
-    ]);
-    content.forEach((d, i) => {
-      d.title = translatedTitles[i] || d.title;
-      d.content = translatedContent[i] || d.content;
-    });
-  }
-
-  const result = {
+  return {
     status: 200,
     message: "Daily devotions fetched successfully",
     data: {
@@ -610,7 +583,6 @@ export const getAllDailyDevotions = async (data) => {
       isLast: pageNum >= totalPages - 1,
     },
   };
-  return lang !== 'en' ? translateResult(result, lang) : result;
 };
 
 // ── Site Settings ─────────────────────────────────────────────────────────────

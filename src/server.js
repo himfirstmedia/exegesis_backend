@@ -10,6 +10,7 @@ import journalRouter from "./modules/journal/route.js";
 import { formatApiResponse } from "./utils/helpers.js";
 import { startEmailScheduler } from "./services/emailScheduler.js";
 import translationRouter from "./modules/bible-translations/route.js"
+import ttsRouter from "./modules/tts/route.js"
 
 config();
 connectDB();
@@ -54,6 +55,7 @@ app.use("/bible", bibleRouter);
 app.use("/reading-plans", readingPlanRouter);
 app.use("/journal", journalRouter);
 app.use("/translations", translationRouter)
+app.use("/tts", ttsRouter)
 
 app.get("/health", (req, res) => {
   res.send(
