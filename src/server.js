@@ -11,6 +11,8 @@ import { formatApiResponse } from "./utils/helpers.js";
 import { startEmailScheduler } from "./services/emailScheduler.js";
 import translationRouter from "./modules/bible-translations/route.js"
 import ttsRouter from "./modules/tts/route.js"
+import strongsRouter from "./modules/strongs/route.js"
+import exegesisRouter from "./modules/exegesis/route.js"
 
 config();
 connectDB();
@@ -56,6 +58,8 @@ app.use("/reading-plans", readingPlanRouter);
 app.use("/journal", journalRouter);
 app.use("/translations", translationRouter)
 app.use("/tts", ttsRouter)
+app.use("/strongs", strongsRouter)
+app.use("/exegesis", exegesisRouter)
 
 app.get("/health", (req, res) => {
   res.send(

@@ -6,8 +6,8 @@ const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 
 // ── Edge TTS voices (free, Microsoft Neural) ──────────────────────────────
 const EDGE_VOICES = [
-  { name: "Aria (Female)",   voiceId: "en-US-AriaNeural",    source: "edge", category: "Neural" },
   { name: "Jenny (Female)",  voiceId: "en-US-JennyNeural",   source: "edge", category: "Neural" },
+  { name: "Aria (Female)",   voiceId: "en-US-AriaNeural",    source: "edge", category: "Neural" },
   { name: "Guy (Male)",      voiceId: "en-US-GuyNeural",     source: "edge", category: "Neural" },
   { name: "Davis (Male)",    voiceId: "en-US-DavisNeural",   source: "edge", category: "Neural" },
   { name: "Emma (Female)",   voiceId: "en-US-EmmaNeural",    source: "edge", category: "Neural" },

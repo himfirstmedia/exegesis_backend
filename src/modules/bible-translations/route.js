@@ -9,6 +9,7 @@ import {
   listVersesBatch,
   getVerseByRef,
   search,
+  searchFTS,
   getChapterRangeVerses,
   getReading,
   getBookNames,
@@ -29,6 +30,7 @@ router.post("/:translationId/verses", listVerses);
 router.post("/:translationId/verses-batch", listVersesBatch);
 router.post("/:translationId/verse", getVerseByRef);
 router.post("/:translationId/search", search);
+router.post("/:translationId/search-fts", searchFTS);
 router.post("/:translationId/chapter-range", getChapterRangeVerses);
 router.post("/:translationId/reading", getReading);
 router.get("/translate-text", getTranslationText);

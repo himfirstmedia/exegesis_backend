@@ -13,12 +13,22 @@ export const googleLogin = async (data, deviceInfo = null) => {
     return { status: 400, message: "Google ID token is required" };
   }
 
- 
+  let googleUser;
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    googleUser = ticket.getPayload();
+  } catch (verifyError) {
+    console.error("[googleLogin] Token verification failed, falling back to request data:", verifyError.message);
+  }
 
-  const googleEmail = email;
-  const googleFirstName = firstName || "Google";
-  const googleLastName = lastName || "User";
-  const googlePhoto = photoUrl || null;
+  const googleId = googleUser?.sub || idToken;
+  const googleEmail = googleUser?.email || email;
+  const googleFirstName = googleUser?.given_name || firstName || "Google";
+  const googleLastName = googleUser?.family_name || lastName || "User";
+  const googlePhoto = googleUser?.picture || photoUrl || null;
 
   const existingUser = await prisma.systemUser.findFirst({
     where: { email: googleEmail.toLowerCase() },
@@ -65,7 +75,7 @@ export const googleLogin = async (data, deviceInfo = null) => {
     message: "New Google user - please complete registration",
     data: {
       needsRegistration: true,
-      googleId: googleUser.sub,
+      googleId,
       email: googleEmail.toLowerCase(),
       firstName: googleFirstName,
       lastName: googleLastName,

@@ -373,4 +373,65 @@ export const getTranslationText = async (req, res) => {
       message: error.message,
     });
   }
-}
+};
+
+export const searchFTS = async (req, res) => {
+  try {
+    const { translationId } = req.params;
+    const { query, limit, offset, bookName } = req.body;
+
+    if (!query || query.trim().length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: 'Search query must be at least 2 characters',
+      });
+    }
+
+    const maxLimit = Math.min(parseInt(limit) || 50, 200);
+    const skip = parseInt(offset) || 0;
+
+    const searchTerms = query.trim().split(/\s+/).filter(Boolean).map(t => t + ':*').join(' & ');
+    const tsQuery = `to_tsquery('english', '${searchTerms.replace(/'/g, "''")}')`;
+
+    let whereClause = `WHERE search_vector @@ ${tsQuery}`;
+    if (translationId) {
+      whereClause += ` AND translation = '${translationId.replace(/'/g, "''")}'`;
+    }
+    if (bookName) {
+      whereClause += ` AND LOWER(book_name) = LOWER('${bookName.replace(/'/g, "''")}')`;
+    }
+
+    const totalSql = `SELECT COUNT(*)::int AS total FROM search_index ${whereClause}`;
+    const totalResult = await prisma.$queryRawUnsafe(totalSql);
+    const total = totalResult[0]?.total || 0;
+
+    const dataSql = `
+      SELECT book_number, book_name, chapter, verse, verse_text,
+             ts_rank(search_vector, ${tsQuery}) AS rank,
+             ts_headline('english', verse_text, ${tsQuery},
+               'StartSel=<mark>, StopSel=</mark>, MaxWords=50, MinWords=20, ShortWord=3') AS headline
+      FROM search_index
+      ${whereClause}
+      ORDER BY rank DESC
+      OFFSET ${skip}
+      LIMIT ${maxLimit}
+    `;
+
+    const data = await prisma.$queryRawUnsafe(dataSql);
+
+    return res.status(200).json({
+      success: true,
+      query,
+      total,
+      page: Math.floor(skip / maxLimit) + 1,
+      limit: maxLimit,
+      data,
+    });
+  } catch (error) {
+    console.error('FTS search error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
