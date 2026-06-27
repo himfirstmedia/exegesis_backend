@@ -205,6 +205,9 @@ export const saveAbideStage = async (sessionId, userId, body) => {
       application: body.application || '',
       tags: body.tags || '',
       isPublished: body.isPublic || false,
+      strongsWords: body.strongsWords || null,
+      strongsIds: body.strongsIds || null,
+      source: 'exegesis-lab',
     },
   });
 
@@ -258,6 +261,8 @@ export const saveProgress = async (sessionId, userId, body) => {
   if (body.isPublic !== undefined) updateData.isPublic = body.isPublic;
   if (body.strongsWords !== undefined) updateData.strongsWords = body.strongsWords;
   if (body.strongsIds !== undefined) updateData.strongsIds = body.strongsIds;
+  if (body.journalEntryId !== undefined) updateData.journalEntryId = BigInt(body.journalEntryId);
+  if (body.completed !== undefined) updateData.completed = body.completed;
 
   if (Object.keys(updateData).length === 0) {
     return { status: 400, message: 'No fields to update' };

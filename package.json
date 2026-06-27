@@ -11,7 +11,8 @@
     "seed-explanations": "node prisma/seed-explanations.js",
     "seed-reading-plans": "node prisma/seed-reading-plans.js",
     "seed-daily-verses": "node prisma/seed-daily-verses.js",
-    "postinstall": "npx prisma generate"
+    "seed-trivia": "node prisma/seed-trivia.js",
+  "postinstall": "npx prisma generate"
   },
   "keywords": [],
   "author": "",

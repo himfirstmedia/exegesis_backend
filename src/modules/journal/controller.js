@@ -194,6 +194,64 @@ export const deleteJournalTemplate = async (req, res) => {
   }
 };
 
+export const exportAllEntries = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
+    }
+    const format = req.body?.format || 'txt';
+    const result = await journalService.exportAllEntries(userId, format);
+    return res.status(result.returnCode || 200).json(result);
+  } catch (error) {
+    console.error("Export all entries error:", error);
+    return res.status(500).json({ returnCode: 500, returnMessage: "Internal server error" });
+  }
+};
+
+export const exportOneEntry = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
+    }
+    const { id, format } = req.body;
+    const result = await journalService.exportOneEntry(id, userId, format || 'txt');
+    return res.status(result.returnCode || 200).json(result);
+  } catch (error) {
+    console.error("Export one entry error:", error);
+    return res.status(500).json({ returnCode: 500, returnMessage: "Internal server error" });
+  }
+};
+
+export const getPublicEntries = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
+    }
+    const result = await journalService.getPublicEntries(req.body, userId);
+    return res.status(result.returnCode || 200).json(result);
+  } catch (error) {
+    console.error("Get public entries error:", error);
+    return res.status(500).json({ returnCode: 500, returnMessage: "Internal server error" });
+  }
+};
+
+export const searchEntriesByStrongs = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
+    }
+    const result = await journalService.searchEntriesByStrongs(req.body, userId);
+    return res.status(result.returnCode || 200).json(result);
+  } catch (error) {
+    console.error("Search entries by Strong's error:", error);
+    return res.status(500).json({ returnCode: 500, returnMessage: "Internal server error" });
+  }
+};
+
 export const getUserJournalEntriesForAdmin = async (req, res) => {
   try {
     const adminId = req.user?.id;
