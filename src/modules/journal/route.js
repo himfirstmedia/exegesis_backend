@@ -13,6 +13,11 @@ router.post("/get-by-verse", authenticate, journalController.getJournalEntriesBy
 router.post("/toggle-favorite", authenticate, journalController.toggleFavorite);
 router.post("/stats", authenticate, journalController.getJournalStats);
 
+router.post("/export-all", authenticate, journalController.exportAllEntries);
+router.post("/export-one", authenticate, journalController.exportOneEntry);
+router.post("/get-public", authenticate, journalController.getPublicEntries);
+router.post("/search-by-strongs", authenticate, journalController.searchEntriesByStrongs);
+
 router.post("/prompts/create", authenticate, requireAdmin, journalController.createJournalPrompt);
 router.post("/prompts/update", authenticate, requireAdmin, journalController.updateJournalPrompt);
 router.post("/prompts/get-all", journalController.getJournalPrompts);

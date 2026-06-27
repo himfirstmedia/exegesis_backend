@@ -13,6 +13,7 @@ import translationRouter from "./modules/bible-translations/route.js"
 import ttsRouter from "./modules/tts/route.js"
 import strongsRouter from "./modules/strongs/route.js"
 import exegesisRouter from "./modules/exegesis/route.js"
+import triviaRouter from "./modules/trivia/route.js"
 
 config();
 connectDB();
@@ -60,6 +61,7 @@ app.use("/translations", translationRouter)
 app.use("/tts", ttsRouter)
 app.use("/strongs", strongsRouter)
 app.use("/exegesis", exegesisRouter)
+app.use("/trivia", triviaRouter)
 
 app.get("/health", (req, res) => {
   res.send(

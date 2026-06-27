@@ -19,6 +19,9 @@ export const createJournalEntry = async (data, userId) => {
     isPublished,
     isFavorite,
     tags,
+    strongsWords,  // JSON: [{ strongsId, surfaceText, lemma }]
+    strongsIds,    // Comma-separated: "H7225,G26,G2889"
+    source,        // "manual" | "exegesis-lab"
   } = data;
 
   if (!content) {
@@ -41,6 +44,9 @@ export const createJournalEntry = async (data, userId) => {
       application: application || null,
       isPublished: isPublished || false,
       isFavorite: isFavorite || false,
+      strongsWords: strongsWords || null,
+      strongsIds: strongsIds || null,
+      source: source || 'manual',
       tags: tags || null,
       createdBy: userId,
     },
@@ -70,6 +76,9 @@ export const updateJournalEntry = async (data, userId) => {
     isPublished,
     isFavorite,
     tags,
+    strongsWords,
+    strongsIds,
+    source,
   } = data;
 
   if (!id) {
@@ -99,6 +108,9 @@ export const updateJournalEntry = async (data, userId) => {
   if (isPublished !== undefined) updateData.isPublished = isPublished;
   if (isFavorite !== undefined) updateData.isFavorite = isFavorite;
   if (tags !== undefined) updateData.tags = tags;
+  if (strongsWords !== undefined) updateData.strongsWords = strongsWords;
+  if (strongsIds !== undefined) updateData.strongsIds = strongsIds;
+  if (source !== undefined) updateData.source = source;
 
   updateData.updatedBy = userId;
 
@@ -146,7 +158,13 @@ export const getJournalEntry = async (data, userId) => {
     `entry:${userId}:${id}`,
     () =>
       prisma.journalEntry.findFirst({
-        where: { id: BigInt(id), userId },
+        where: {
+          id: BigInt(id),
+          OR: [
+            { userId }, // Own entry
+            { isPublished: true }, // Public entry from any user
+          ],
+        },
       }),
     60,
   );
@@ -171,6 +189,8 @@ export const getAllJournalEntries = async (data, userId) => {
     isPublished,
     startDate,
     endDate,
+    strongsId,
+    source,
     page = 1,
     pageSize = 20,
   } = data;
@@ -193,6 +213,10 @@ export const getAllJournalEntries = async (data, userId) => {
   if (bookName) whereClause.bookName = bookName;
   if (isFavorite !== undefined) whereClause.isFavorite = isFavorite;
   if (isPublished !== undefined) whereClause.isPublished = isPublished;
+  if (source) whereClause.source = source;
+  if (strongsId) {
+    whereClause.strongsIds = { contains: strongsId, mode: "insensitive" };
+  }
 
   if (startDate || endDate) {
     whereClause.createdOn = {};
@@ -597,6 +621,299 @@ export const getUserJournalEntriesForAdmin = async (data, adminId) => {
       totalPages,
       hasNext,
       hasPrevious,
+    }),
+  };
+};
+
+// ── Export Functions ─────────────────────────────────────────────────────────
+
+export const exportAllEntries = async (userId, format) => {
+  const entries = await prisma.journalEntry.findMany({
+    where: { userId },
+    orderBy: { createdOn: "desc" },
+  });
+
+  const serialized = serializeBigInt(entries);
+
+  if (format === 'json') {
+    const jsonContent = JSON.stringify(serialized, null, 2);
+    const base64 = Buffer.from(jsonContent).toString('base64');
+    return {
+      returnCode: 200,
+      returnData: {
+        content: base64,
+        filename: `legacy-ledger-${new Date().toISOString().split('T')[0]}.json`,
+        mimeType: 'application/json',
+        entryCount: serialized.length,
+      },
+    };
+  }
+
+  // Default: txt format
+  const lines = [];
+  lines.push('╔══════════════════════════════════╗');
+  lines.push('       EXEGESIS LEGACY LEDGER');
+  lines.push('╚══════════════════════════════════╛');
+  lines.push('               EXPORT');
+  lines.push('');
+  lines.push(`Generated: ${new Date().toLocaleDateString()}`);
+  lines.push(`Total Entries: ${serialized.length}`);
+  lines.push('');
+
+  serialized.forEach((entry, idx) => {
+    lines.push('────────────────────────────────────────────────────────────────────────────────┛');
+    lines.push(`Entry #${idx + 1}`);
+    lines.push('───────');
+    lines.push(`Date: ${new Date(entry.createdOn).toLocaleDateString()}`);
+    if (entry.bookName) {
+      lines.push(`Passage: ${entry.bookName} ${entry.chapter || ''}${entry.verseNumber ? ':' + entry.verseNumber : ''}`);
+    }
+    lines.push(`Source: ${entry.source || 'manual'}`);
+    lines.push(`Category: ${entry.category}`);
+    lines.push(`Privacy: ${entry.isPublished ? 'Public' : 'Private'}`);
+    lines.push('');
+    if (entry.title) lines.push(`Title: ${entry.title}`);
+    lines.push('');
+    if (entry.content) lines.push(entry.content);
+    lines.push('');
+    if (entry.reflection) {
+      lines.push('Reflection:');
+      lines.push(entry.reflection);
+      lines.push('');
+    }
+    if (entry.prayers) {
+      lines.push('Prayer:');
+      lines.push(entry.prayers);
+      lines.push('');
+    }
+    if (entry.application) {
+      lines.push('Application:');
+      lines.push(entry.application);
+      lines.push('');
+    }
+    if (entry.strongsWords) {
+      lines.push('Studied Strong\'s Words:');
+      try {
+        const words = typeof entry.strongsWords === 'string' ? JSON.parse(entry.strongsWords) : entry.strongsWords;
+        if (Array.isArray(words)) {
+          words.forEach(w => {
+            lines.push(`  • ${w.surfaceText || w.strongsId} (${w.strongsId})${w.lemma ? ` - ${w.lemma}` : ''}`);
+          });
+        }
+      } catch (e) {}
+      lines.push('');
+    }
+    if (entry.tags) {
+      lines.push(`Tags: ${entry.tags}`);
+      lines.push('');
+    }
+  });
+
+  const textContent = lines.join('\n');
+  const base64 = Buffer.from(textContent).toString('base64');
+  return {
+    returnCode: 200,
+    returnData: {
+      content: base64,
+      filename: `legacy-ledger-${new Date().toISOString().split('T')[0]}.txt`,
+      mimeType: 'text/plain',
+      entryCount: serialized.length,
+    },
+  };
+};
+
+export const exportOneEntry = async (id, userId, format) => {
+  if (!id) {
+    return { returnCode: 400, returnMessage: "Journal entry ID is required" };
+  }
+
+  const entry = await prisma.journalEntry.findFirst({
+    where: { id: BigInt(id), userId },
+  });
+
+  if (!entry) {
+    return { returnCode: 404, returnMessage: "Journal entry not found" };
+  }
+
+  const serialized = serializeBigInt(entry);
+
+  if (format === 'json') {
+    const base64 = Buffer.from(JSON.stringify(serialized, null, 2)).toString('base64');
+    const slug = (entry.bookName || 'entry').toLowerCase().replace(/\s+/g, '-');
+    return {
+      returnCode: 200,
+      returnData: {
+        content: base64,
+        filename: `${slug}-${new Date(entry.createdOn).toISOString().split('T')[0]}.json`,
+        mimeType: 'application/json',
+      },
+    };
+  }
+
+  // Default: txt format
+  const lines = [];
+  lines.push('╔═══ EXEGESIS LEGACY LEDGER ═══╗');
+  lines.push('');
+  lines.push(`Date: ${new Date(entry.createdOn).toLocaleDateString()}`);
+  if (entry.bookName) {
+    lines.push(`Passage: ${entry.bookName} ${entry.chapter || ''}${entry.verseNumber ? ':' + entry.verseNumber : ''}`);
+  }
+  lines.push(`Source: ${entry.source || 'manual'}`);
+  lines.push(`Category: ${entry.category}`);
+  lines.push(`Privacy: ${entry.isPublished ? 'Public' : 'Private'}`);
+  lines.push('');
+  if (entry.title) lines.push(`Title: ${entry.title}`);
+  lines.push('');
+  if (entry.content) lines.push(entry.content);
+  lines.push('');
+  if (entry.reflection) {
+    lines.push('Reflection:');
+    lines.push(entry.reflection);
+    lines.push('');
+  }
+  if (entry.prayers) {
+    lines.push('Prayer:');
+    lines.push(entry.prayers);
+    lines.push('');
+  }
+  if (entry.application) {
+    lines.push('Application:');
+    lines.push(entry.application);
+    lines.push('');
+  }
+  if (entry.strongsWords) {
+    lines.push('Studied Strong\'s Words:');
+    try {
+      const words = typeof entry.strongsWords === 'string' ? JSON.parse(entry.strongsWords) : entry.strongsWords;
+      if (Array.isArray(words)) {
+        words.forEach(w => {
+          lines.push(`  • ${w.surfaceText || w.strongsId} (${w.strongsId})${w.lemma ? ` - ${w.lemma}` : ''}`);
+        });
+      }
+    } catch (e) {}
+    lines.push('');
+  }
+  if (entry.tags) {
+    lines.push(`Tags: ${entry.tags}`);
+    lines.push('');
+  }
+  lines.push('— Saved from Exegesis Legacy Ledger —');
+
+  const base64 = Buffer.from(lines.join('\n')).toString('base64');
+  const slug = (entry.bookName || 'entry').toLowerCase().replace(/\s+/g, '-');
+  return {
+    returnCode: 200,
+    returnData: {
+      content: base64,
+      filename: `${slug}-${new Date(entry.createdOn).toISOString().split('T')[0]}.txt`,
+      mimeType: 'text/plain',
+    },
+  };
+};
+
+export const getPublicEntries = async (data, userId) => {
+  const {
+    search,
+    bookName,
+    category,
+    page = 1,
+    pageSize = 20,
+  } = data;
+
+  const pageNum = parseInt(page) || 1;
+  const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
+  const offset = (pageNum - 1) * pageSizeNum;
+
+  const whereClause = {
+    isPublished: true,
+    userId: { not: userId }, // Exclude the current user's own entries
+  };
+
+  if (search) {
+    whereClause.OR = [
+      { title: { contains: search, mode: "insensitive" } },
+      { content: { contains: search, mode: "insensitive" } },
+      { tags: { contains: search, mode: "insensitive" } },
+    ];
+  }
+
+  if (bookName) whereClause.bookName = bookName;
+  if (category) whereClause.category = category;
+
+  const [entries, totalCount] = await Promise.all([
+    prisma.journalEntry.findMany({
+      where: whereClause,
+      skip: offset,
+      take: pageSizeNum,
+      orderBy: { createdOn: "desc" },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            username: true,
+          },
+        },
+      },
+    }),
+    prisma.journalEntry.count({ where: whereClause }),
+  ]);
+
+  const totalPages = Math.ceil(totalCount / pageSizeNum);
+  const hasNext = pageNum < totalPages;
+
+  return {
+    returnCode: 200,
+    returnMessage: "Public entries fetched successfully",
+    returnData: serializeBigInt({
+      entries,
+      totalCount,
+      page: pageNum,
+      pageSize: pageSizeNum,
+      totalPages,
+      hasNext,
+    }),
+  };
+};
+
+export const searchEntriesByStrongs = async (data, userId) => {
+  const { strongsId, page = 1, pageSize = 20 } = data;
+
+  if (!strongsId) {
+    return { returnCode: 400, returnMessage: "strongsId is required" };
+  }
+
+  const pageNum = parseInt(page) || 1;
+  const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
+  const offset = (pageNum - 1) * pageSizeNum;
+
+  const whereClause = {
+    userId,
+    strongsIds: { contains: strongsId, mode: "insensitive" },
+  };
+
+  const [entries, totalCount] = await Promise.all([
+    prisma.journalEntry.findMany({
+      where: whereClause,
+      skip: offset,
+      take: pageSizeNum,
+      orderBy: { createdOn: "desc" },
+    }),
+    prisma.journalEntry.count({ where: whereClause }),
+  ]);
+
+  const totalPages = Math.ceil(totalCount / pageSizeNum);
+  const hasNext = pageNum < totalPages;
+
+  return {
+    returnCode: 200,
+    returnData: serializeBigInt({
+      entries,
+      totalCount,
+      page: pageNum,
+      pageSize: pageSizeNum,
+      hasNext,
     }),
   };
 };

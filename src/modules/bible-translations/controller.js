@@ -389,35 +389,43 @@ export const searchFTS = async (req, res) => {
 
     const maxLimit = Math.min(parseInt(limit) || 50, 200);
     const skip = parseInt(offset) || 0;
+    const searchTerm = query.trim();
 
-    const searchTerms = query.trim().split(/\s+/).filter(Boolean).map(t => t + ':*').join(' & ');
-    const tsQuery = `to_tsquery('english', '${searchTerms.replace(/'/g, "''")}')`;
+    const conditions = [];
+    const params = [];
+    let paramCount = 0;
 
-    let whereClause = `WHERE search_vector @@ ${tsQuery}`;
+    const addParam = (val) => {
+      paramCount++;
+      params.push(val);
+      return `$${paramCount}`;
+    };
+
+    conditions.push(`verse_text ILIKE ${addParam(`%${searchTerm}%`)}`);
+
     if (translationId) {
-      whereClause += ` AND translation = '${translationId.replace(/'/g, "''")}'`;
+      conditions.push(`translation = ${addParam(translationId)}`);
     }
     if (bookName) {
-      whereClause += ` AND LOWER(book_name) = LOWER('${bookName.replace(/'/g, "''")}')`;
+      conditions.push(`LOWER(book_name) = LOWER(${addParam(bookName)})`);
     }
 
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
     const totalSql = `SELECT COUNT(*)::int AS total FROM search_index ${whereClause}`;
-    const totalResult = await prisma.$queryRawUnsafe(totalSql);
+    const totalResult = await prisma.$queryRawUnsafe(totalSql, ...params);
     const total = totalResult[0]?.total || 0;
 
     const dataSql = `
-      SELECT book_number, book_name, chapter, verse, verse_text,
-             ts_rank(search_vector, ${tsQuery}) AS rank,
-             ts_headline('english', verse_text, ${tsQuery},
-               'StartSel=<mark>, StopSel=</mark>, MaxWords=50, MinWords=20, ShortWord=3') AS headline
+      SELECT book_number, book_name, chapter, verse, verse_text
       FROM search_index
       ${whereClause}
-      ORDER BY rank DESC
+      ORDER BY book_number ASC, chapter ASC, verse ASC
       OFFSET ${skip}
       LIMIT ${maxLimit}
     `;
 
-    const data = await prisma.$queryRawUnsafe(dataSql);
+    const data = await prisma.$queryRawUnsafe(dataSql, ...params);
 
     return res.status(200).json({
       success: true,

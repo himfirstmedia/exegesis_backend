@@ -25,15 +25,12 @@ export const getStrongsEntry = async (strongsId) => {
 };
 
 export const searchStrongs = async (query, limit = 50, offset = 0) => {
-  const terms = query.trim().split(/\s+/).filter(Boolean);
-
   const where = {
     OR: [
       { strongsId: { contains: query.trim().toUpperCase(), mode: 'insensitive' } },
       { originalWord: { contains: query.trim(), mode: 'insensitive' } },
       { transliteration: { contains: query.trim(), mode: 'insensitive' } },
       { shortDefinition: { contains: query.trim(), mode: 'insensitive' } },
-      { lemma: { contains: query.trim(), mode: 'insensitive' } },
     ],
   };
 
@@ -63,20 +60,36 @@ export const searchStrongs = async (query, limit = 50, offset = 0) => {
 };
 
 export const getRelatedWords = async (strongsId) => {
-  const entry = await prisma.strongsDictionary.findUnique({
+  // Find lemmas for this Strong's number via VerseWord table
+  const verseWordLemmas = await prisma.verseWord.findMany({
     where: { strongsId },
+    distinct: ['lemma'],
     select: { lemma: true },
   });
 
-  if (!entry || !entry.lemma) {
+  const lemmas = verseWordLemmas.map(r => r.lemma).filter(Boolean);
+  if (lemmas.length === 0) {
+    return { status: 200, message: 'No related words found', data: [] };
+  }
+
+  // Find other Strong's numbers sharing those lemmas
+  const relatedWords = await prisma.verseWord.findMany({
+    where: {
+      lemma: { in: lemmas },
+      strongsId: { not: null, not: strongsId },
+    },
+    distinct: ['strongsId'],
+    select: { strongsId: true },
+    take: 30,
+  });
+
+  const relatedIds = relatedWords.map(r => r.strongsId).filter(Boolean);
+  if (relatedIds.length === 0) {
     return { status: 200, message: 'No related words found', data: [] };
   }
 
   const related = await prisma.strongsDictionary.findMany({
-    where: {
-      lemma: entry.lemma,
-      strongsId: { not: strongsId },
-    },
+    where: { strongsId: { in: relatedIds } },
     select: {
       strongsId: true,
       originalWord: true,
