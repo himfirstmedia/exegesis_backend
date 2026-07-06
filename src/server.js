@@ -14,6 +14,8 @@ import ttsRouter from "./modules/tts/route.js"
 import strongsRouter from "./modules/strongs/route.js"
 import exegesisRouter from "./modules/exegesis/route.js"
 import triviaRouter from "./modules/trivia/route.js"
+import studyToolsRouter from "./modules/study-tools/route.js"
+import bookProloguesRouter from "./modules/book-prologues/route.js"
 
 config();
 connectDB();
@@ -62,6 +64,8 @@ app.use("/tts", ttsRouter)
 app.use("/strongs", strongsRouter)
 app.use("/exegesis", exegesisRouter)
 app.use("/trivia", triviaRouter)
+app.use("/", studyToolsRouter)
+app.use("/book-prologues", bookProloguesRouter)
 
 app.get("/health", (req, res) => {
   res.send(

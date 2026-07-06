@@ -1,6 +1,14 @@
 import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 
+const parseLocalDate = (value) => {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(year, month - 1, day);
+  }
+  return new Date(value);
+};
+
 export const getUsersByAdmin = async (data, adminId) => {
   const { search, userId, page = 1, pageSize = 10 } = data;
   const pageNum = parseInt(page) || 1;
@@ -49,7 +57,19 @@ export const getUsersByAdmin = async (data, adminId) => {
 };
 
 export const updateUser = async (data, adminId) => {
-  const { username, firstName, lastName, middleName, gender, maritalStatus, phoneNumber, email, roleName, roleId, status } = data;
+  const {
+    username,
+    firstName,
+    lastName,
+    middleName,
+    gender,
+    maritalStatus,
+    phoneNumber,
+    email,
+    roleName,
+    roleId,
+    status,
+  } = data;
 
   if (!username) {
     return { status: 400, message: "Username is required" };
@@ -63,7 +83,8 @@ export const updateUser = async (data, adminId) => {
   const updateData = {};
   if (firstName) updateData.firstName = firstName.trim();
   if (lastName) updateData.lastName = lastName.trim();
-  if (middleName !== undefined) updateData.middleName = middleName?.trim() || null;
+  if (middleName !== undefined)
+    updateData.middleName = middleName?.trim() || null;
   if (gender) updateData.gender = gender;
   if (maritalStatus !== undefined) updateData.maritalStatus = maritalStatus;
   if (phoneNumber) updateData.phoneNumber = phoneNumber.trim();
@@ -74,14 +95,21 @@ export const updateUser = async (data, adminId) => {
         where: { email: newEmail, id: { not: user.id } },
       });
       if (existingEmail) {
-        return { status: 400, message: "Email is already in use by another account" };
+        return {
+          status: 400,
+          message: "Email is already in use by another account",
+        };
       }
       updateData.email = newEmail;
     }
   }
   if (roleName) {
     const roleNameLower = roleName.trim().toLowerCase();
-    updateData.userRole = roleId ? BigInt(roleId) : (roleNameLower === "admin" ? 1n : 2n);
+    updateData.userRole = roleId
+      ? BigInt(roleId)
+      : roleNameLower === "admin"
+        ? 1n
+        : 2n;
   } else if (roleId) {
     updateData.userRole = BigInt(roleId);
   }
@@ -96,7 +124,11 @@ export const updateUser = async (data, adminId) => {
   });
 
   updatedUser.password = null;
-  return { status: 200, message: "User updated successfully", data: serializeBigInt(updatedUser) };
+  return {
+    status: 200,
+    message: "User updated successfully",
+    data: serializeBigInt(updatedUser),
+  };
 };
 
 export const deleteUser = async (data, adminId) => {
@@ -127,7 +159,10 @@ export const deleteUser = async (data, adminId) => {
 
   await prisma.systemUser.delete({ where: { id: user.id } });
 
-  return { status: 200, message: "User and all associated activity deleted successfully" };
+  return {
+    status: 200,
+    message: "User and all associated activity deleted successfully",
+  };
 };
 
 export const toggleUserStatus = async (data, adminId) => {
@@ -142,7 +177,10 @@ export const toggleUserStatus = async (data, adminId) => {
   }
 
   if (user.id === adminId) {
-    return { status: 403, message: "You cannot change your own account status" };
+    return {
+      status: 403,
+      message: "You cannot change your own account status",
+    };
   }
 
   const newStatus = status !== undefined ? status : !user.status;
@@ -151,7 +189,9 @@ export const toggleUserStatus = async (data, adminId) => {
     data: { status: newStatus, updatedOn: new Date(), updatedBy: adminId },
   });
 
-  const msg = newStatus ? "User activated successfully" : "User deactivated successfully";
+  const msg = newStatus
+    ? "User activated successfully"
+    : "User deactivated successfully";
   return { status: 200, message: msg };
 };
 
@@ -166,24 +206,49 @@ export const toggleUserVerification = async (data, adminId) => {
     return { status: 404, message: "User not found" };
   }
 
-  const newVerified = isVerified !== undefined ? isVerified : !user.emailVerified;
+  const newVerified =
+    isVerified !== undefined ? isVerified : !user.emailVerified;
   await prisma.systemUser.update({
     where: { id: user.id },
-    data: { emailVerified: newVerified, updatedOn: new Date(), updatedBy: adminId },
+    data: {
+      emailVerified: newVerified,
+      updatedOn: new Date(),
+      updatedBy: adminId,
+    },
   });
 
-  const msg = newVerified ? "User email verified successfully" : "User email verification revoked";
+  const msg = newVerified
+    ? "User email verified successfully"
+    : "User email verification revoked";
   return { status: 200, message: msg };
 };
 
 export const getAdminDashboardStats = async () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  );
   const startOfTomorrow = new Date(startOfToday);
   startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
 
-  const [totalUsers, activeUsers, inactiveUsers, verifiedUsers, unverifiedUsers, adminCount, memberCount, totalPlans, activePlans, totalEnrollments, completedEnrollments, newUsersThisMonth, newUsersToday] = await Promise.all([
+  const [
+    totalUsers,
+    activeUsers,
+    inactiveUsers,
+    verifiedUsers,
+    unverifiedUsers,
+    adminCount,
+    memberCount,
+    totalPlans,
+    activePlans,
+    totalEnrollments,
+    completedEnrollments,
+    newUsersThisMonth,
+    newUsersToday,
+  ] = await Promise.all([
     prisma.systemUser.count(),
     prisma.systemUser.count({ where: { status: true } }),
     prisma.systemUser.count({ where: { status: false } }),
@@ -196,7 +261,9 @@ export const getAdminDashboardStats = async () => {
     prisma.userPlanProgress.count(),
     prisma.userPlanProgress.count({ where: { isCompleted: true } }),
     prisma.systemUser.count({ where: { createdOn: { gte: startOfMonth } } }),
-    prisma.systemUser.count({ where: { createdOn: { gte: startOfToday, lt: startOfTomorrow } } }),
+    prisma.systemUser.count({
+      where: { createdOn: { gte: startOfToday, lt: startOfTomorrow } },
+    }),
   ]);
 
   return {
@@ -216,9 +283,16 @@ export const getAdminDashboardStats = async () => {
       activePlans,
       totalEnrollments,
       completedEnrollments,
-      activeRate: totalUsers > 0 ? Math.round((activeUsers / totalUsers) * 1000) / 10 : 0,
-      verificationRate: totalUsers > 0 ? Math.round((verifiedUsers / totalUsers) * 1000) / 10 : 0,
-      completionRate: totalEnrollments > 0 ? Math.round((completedEnrollments / totalEnrollments) * 1000) / 10 : 0,
+      activeRate:
+        totalUsers > 0 ? Math.round((activeUsers / totalUsers) * 1000) / 10 : 0,
+      verificationRate:
+        totalUsers > 0
+          ? Math.round((verifiedUsers / totalUsers) * 1000) / 10
+          : 0,
+      completionRate:
+        totalEnrollments > 0
+          ? Math.round((completedEnrollments / totalEnrollments) * 1000) / 10
+          : 0,
     }),
   };
 };
@@ -264,30 +338,38 @@ export const getUserActivity = async (data) => {
 };
 
 export const getAllActivity = async (data) => {
-  const { page = 1, pageSize = 20, username, success, deviceType, onlineOnly, endedOnly } = data;
+  const {
+    page = 1,
+    pageSize = 20,
+    username,
+    success,
+    deviceType,
+    onlineOnly,
+    endedOnly,
+  } = data;
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 20, 100);
   const offset = (pageNum - 1) * pageSizeNum;
 
   const whereClause = {};
-  
+
   if (username) {
     whereClause.username = { contains: username, mode: "insensitive" };
   }
-  
+
   if (success !== undefined) {
     whereClause.success = success;
   }
-  
+
   if (deviceType && deviceType !== "all") {
     whereClause.deviceType = deviceType;
   }
-  
+
   if (onlineOnly) {
     whereClause.loggedOutAt = null;
     whereClause.success = true;
   }
-  
+
   if (endedOnly) {
     whereClause.loggedOutAt = { not: null };
   }
@@ -307,7 +389,9 @@ export const getAllActivity = async (data) => {
   const summary = {
     successCount: await prisma.activity.count({ where: { success: true } }),
     failedCount: await prisma.activity.count({ where: { success: false } }),
-    onlineCount: await prisma.activity.count({ where: { loggedOutAt: null, success: true } }),
+    onlineCount: await prisma.activity.count({
+      where: { loggedOutAt: null, success: true },
+    }),
   };
 
   const totalPages = Math.ceil(totalCount / pageSizeNum);
@@ -337,10 +421,25 @@ export const deleteActivity = async (data) => {
 };
 
 export const addDailyVerse = async (data, adminId) => {
-  const { id, bookName, chapter, verseNumber, bibleVersion, displayDate, displayTime, reflection, explanation, learnMore, published } = data;
+  const {
+    id,
+    bookName,
+    chapter,
+    verseNumber,
+    bibleVersion,
+    displayDate,
+    displayTime,
+    reflection,
+    explanation,
+    learnMore,
+    published,
+  } = data;
 
   if (!bookName || !chapter || !verseNumber || !displayDate) {
-    return { status: 400, message: "bookName, chapter, verseNumber, and displayDate are required" };
+    return {
+      status: 400,
+      message: "bookName, chapter, verseNumber, and displayDate are required",
+    };
   }
 
   let dailyVerse;
@@ -351,7 +450,7 @@ export const addDailyVerse = async (data, adminId) => {
         bookName,
         chapter: BigInt(chapter),
         verseNumber: BigInt(verseNumber),
-        bibleVersion: bibleVersion || 'KJV',
+        bibleVersion: bibleVersion || "KJV",
         displayDate: new Date(displayDate),
         displayTime: displayTime ? new Date(displayTime) : null,
         reflection,
@@ -367,7 +466,7 @@ export const addDailyVerse = async (data, adminId) => {
         bookName,
         chapter: BigInt(chapter),
         verseNumber: BigInt(verseNumber),
-        bibleVersion: bibleVersion || 'KJV',
+        bibleVersion: bibleVersion || "KJV",
         displayDate: new Date(displayDate),
         displayTime: displayTime ? new Date(displayTime) : null,
         reflection,
@@ -379,12 +478,24 @@ export const addDailyVerse = async (data, adminId) => {
     });
   }
 
-  const msg = id ? "Daily verse updated successfully" : "Daily verse added successfully";
+  const msg = id
+    ? "Daily verse updated successfully"
+    : "Daily verse added successfully";
   return { status: 200, message: msg, data: serializeBigInt(dailyVerse) };
 };
 
 export const getAllDailyVerses = async (data) => {
-  const { page = 0, size = 12, startDate, endDate, smartDefault, futureDays = 2, bookName, chapter, verseNumber } = data || {};
+  const {
+    page = 0,
+    size = 12,
+    startDate,
+    endDate,
+    smartDefault,
+    futureDays = 2,
+    bookName,
+    chapter,
+    verseNumber,
+  } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
   const offset = pageNum * pageSize;
@@ -437,22 +548,23 @@ export const getAllDailyVerses = async (data) => {
           select: {
             firstName: true,
             lastName: true,
-            username: true
-          }
-        }
-      }
+            username: true,
+          },
+        },
+      },
     }),
     prisma.dailyVerse.count({ where: whereClause }),
   ]);
 
   const totalPages = Math.ceil(totalElements / pageSize);
-  const rawContent = dailyVerses.map(dv => {
+  const rawContent = dailyVerses.map((dv) => {
     const { user, ...rest } = dv;
     return {
       ...rest,
-      creatorName: user 
-        ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username
-        : 'System'
+      creatorName: user
+        ? `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
+          user.username
+        : "System",
     };
   });
   const content = serializeBigInt(rawContent);
@@ -488,10 +600,23 @@ export const deleteDailyVerse = async (data) => {
 // ── Daily Devotion CRUD ─────────────────────────────────────────────────────────
 
 export const addDailyDevotion = async (data, adminId) => {
-  const { id, title, content, bookName, chapter, verseNumber, displayDate, displayTime, published } = data;
+  const {
+    id,
+    title,
+    content,
+    bookName,
+    chapter,
+    verseNumber,
+    displayDate,
+    displayTime,
+    published,
+  } = data;
 
   if (!title || !content || !displayDate) {
-    return { status: 400, message: "title, content, and displayDate are required" };
+    return {
+      status: 400,
+      message: "title, content, and displayDate are required",
+    };
   }
 
   let dailyDevotion;
@@ -526,12 +651,21 @@ export const addDailyDevotion = async (data, adminId) => {
     });
   }
 
-  const msg = id ? "Daily devotion updated successfully" : "Daily devotion added successfully";
+  const msg = id
+    ? "Daily devotion updated successfully"
+    : "Daily devotion added successfully";
   return { status: 200, message: msg, data: serializeBigInt(dailyDevotion) };
 };
 
 export const getAllDailyDevotions = async (data) => {
-  const { page = 0, size = 12, startDate, endDate, smartDefault, futureDays = 2 } = data || {};
+  const {
+    page = 0,
+    size = 12,
+    startDate,
+    endDate,
+    smartDefault,
+    futureDays = 2,
+  } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
 
@@ -549,14 +683,22 @@ export const getAllDailyDevotions = async (data) => {
     ];
   } else {
     if (startDate) {
-      whereClause.displayDate = { ...whereClause.displayDate, gte: new Date(startDate) };
+      whereClause.displayDate = {
+        ...whereClause.displayDate,
+        gte: new Date(startDate),
+      };
     }
     if (endDate) {
-      whereClause.displayDate = { ...whereClause.displayDate, lte: new Date(endDate) };
+      whereClause.displayDate = {
+        ...whereClause.displayDate,
+        lte: new Date(endDate),
+      };
     }
   }
 
-  const totalElements = await prisma.dailyDevotion.count({ where: whereClause });
+  const totalElements = await prisma.dailyDevotion.count({
+    where: whereClause,
+  });
   const totalPages = Math.ceil(totalElements / pageSize);
 
   const rawContent = await prisma.dailyDevotion.findMany({
@@ -626,4 +768,136 @@ export const deleteDailyDevotion = async (data) => {
 
   await prisma.dailyDevotion.delete({ where: { id: BigInt(targetId) } });
   return { status: 200, message: "Daily devotion deleted successfully" };
+};
+
+// ── Lordsbook Daily Exegesis CRUD ─────────────────────────────────────────────
+
+export const addDailyExegesis = async (data, adminId) => {
+  const {
+    id,
+    title,
+    passageReference,
+    introduction,
+    contextSummary,
+    teachingBody,
+    application,
+    prayer,
+    tags,
+    displayDate,
+    displayTime,
+    published,
+  } = data;
+
+  if (!title || !passageReference || !teachingBody || !displayDate) {
+    return {
+      status: 400,
+      message:
+        "title, passageReference, teachingBody, and displayDate are required",
+    };
+  }
+
+  const payload = {
+    title,
+    passageReference,
+    introduction: introduction || null,
+    contextSummary: contextSummary || null,
+    teachingBody,
+    application: application || null,
+    prayer: prayer || null,
+    tags: tags || null,
+    displayDate: parseLocalDate(displayDate),
+    displayTime: displayTime ? new Date(displayTime) : null,
+    isPublished: published ?? true,
+  };
+
+  const dailyExegesis = id
+    ? await prisma.dailyExegesis.update({
+        where: { id: BigInt(id) },
+        data: { ...payload, updatedBy: adminId },
+      })
+    : await prisma.dailyExegesis.create({
+        data: { ...payload, createdBy: adminId },
+      });
+
+  const msg = id
+    ? "Daily exegesis updated successfully"
+    : "Daily exegesis added successfully";
+  return { status: 200, message: msg, data: serializeBigInt(dailyExegesis) };
+};
+
+export const getAllDailyExegesis = async (data) => {
+  const {
+    page = 0,
+    size = 12,
+    startDate,
+    endDate,
+    smartDefault,
+    futureDays = 2,
+  } = data || {};
+  const pageNum = parseInt(page) || 0;
+  const pageSize = Math.min(parseInt(size) || 12, 50);
+
+  const whereClause = {};
+
+  if (smartDefault) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const futureDate = new Date(today);
+    futureDate.setDate(futureDate.getDate() + (futureDays || 2));
+
+    whereClause.OR = [
+      { displayDate: { gte: today, lte: futureDate }, isPublished: true },
+      { displayDate: { lt: today }, isPublished: true },
+    ];
+  } else {
+    if (startDate)
+      whereClause.displayDate = {
+        ...whereClause.displayDate,
+        gte: new Date(startDate),
+      };
+    if (endDate)
+      whereClause.displayDate = {
+        ...whereClause.displayDate,
+        lte: new Date(endDate),
+      };
+  }
+
+  const totalElements = await prisma.dailyExegesis.count({
+    where: whereClause,
+  });
+  const totalPages = Math.ceil(totalElements / pageSize);
+
+  const rawContent = await prisma.dailyExegesis.findMany({
+    where: whereClause,
+    orderBy: { displayDate: "desc" },
+    skip: pageNum * pageSize,
+    take: pageSize,
+  });
+
+  return {
+    status: 200,
+    message: "Daily exegesis fetched successfully",
+    data: {
+      content: serializeBigInt(rawContent),
+      currentPage: pageNum,
+      pageSize,
+      totalElements,
+      totalPages,
+      hasNext: pageNum < totalPages - 1,
+      hasPrevious: pageNum > 0,
+      isFirst: pageNum === 0,
+      isLast: pageNum >= totalPages - 1,
+    },
+  };
+};
+
+export const deleteDailyExegesis = async (data) => {
+  const { exegesisId, id } = data;
+  const targetId = exegesisId || id;
+  if (!targetId) {
+    return { status: 400, message: "Daily exegesis ID is required" };
+  }
+
+  await prisma.dailyExegesis.delete({ where: { id: BigInt(targetId) } });
+  return { status: 200, message: "Daily exegesis deleted successfully" };
 };

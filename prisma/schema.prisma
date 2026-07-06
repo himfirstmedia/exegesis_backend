@@ -42,6 +42,7 @@ model SystemUser {
   updatedBy                    String?            @map("updated_by")
   activities                   Activity[]
   dailyDevotionsCreated        DailyDevotion[]    @relation("DailyDevotionCreator")
+  dailyExegesisCreated         DailyExegesis[]    @relation("DailyExegesisCreator")
   dailyVersesCreated           DailyVerse[]       @relation("DailyVerseCreator")
   favorites                    Favorite[]
   highlights                   Highlight[]
@@ -152,6 +153,30 @@ model DailyDevotion {
   @@index([displayDate])
   @@index([isPublished, displayDate])
   @@map("daily_devotion")
+}
+
+model DailyExegesis {
+  id               BigInt      @id @default(autoincrement())
+  title            String
+  passageReference String      @map("passage_reference")
+  introduction     String?
+  contextSummary   String?     @map("context_summary")
+  teachingBody     String      @map("teaching_body")
+  application      String?
+  prayer           String?
+  tags             String?
+  displayDate      DateTime    @map("display_date")
+  displayTime      DateTime?   @map("display_time")
+  createdBy        String?     @map("created_by")
+  createdOn        DateTime    @default(now()) @map("created_on")
+  updatedBy        String?     @map("updated_by")
+  updatedOn        DateTime    @updatedAt @map("updated_on")
+  isPublished      Boolean     @default(false) @map("is_published")
+  user             SystemUser? @relation("DailyExegesisCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([displayDate])
+  @@index([isPublished, displayDate])
+  @@map("daily_exegesis")
 }
 
 model ReadHistory {
@@ -357,31 +382,31 @@ model UserQuizAnswer {
 }
 
 model JournalEntry {
-  id          BigInt     @id @default(autoincrement())
-  userId      String     @map("user_id")
-  title       String?
-  content     String
-  bookName    String?    @map("book_name")
-  chapter     BigInt?    @map("chapter")
-  verseNumber BigInt?    @map("verse_number")
-  category    String?    @default("general")
-  mood        String?
-  prayers     String?
-  gratitude   String?
-  learnings   String?
-  application String?
-  isPublished Boolean    @default(false) @map("is_published")
-  isFavorite  Boolean    @default(false) @map("is_favorite")
-  strongsWords   String?  @map("strongs_words")   // JSON: [{ strongsId, surfaceText, lemma }]
-  strongsIds     String?  @map("strongs_ids")     // Comma-separated: "H7225,G26,G2889"
-  source         String   @default("manual")      @map("source")  // "manual" | "exegesis-lab"
-  tags        String?    @map("tags")
-  createdOn   DateTime   @default(now()) @map("created_on")
-  updatedOn   DateTime   @updatedAt @map("updated_on")
-  createdBy   String?    @map("created_by")
-  updatedBy   String?    @map("updated_by")
-  exegesisSessions             ExegesisSession[]
-  user                        SystemUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id               BigInt            @id @default(autoincrement())
+  userId           String            @map("user_id")
+  title            String?
+  content          String
+  bookName         String?           @map("book_name")
+  chapter          BigInt?           @map("chapter")
+  verseNumber      BigInt?           @map("verse_number")
+  category         String?           @default("general")
+  mood             String?
+  prayers          String?
+  gratitude        String?
+  learnings        String?
+  application      String?
+  isPublished      Boolean           @default(false) @map("is_published")
+  isFavorite       Boolean           @default(false) @map("is_favorite")
+  strongsWords     String?           @map("strongs_words") // JSON: [{ strongsId, surfaceText, lemma }]
+  strongsIds       String?           @map("strongs_ids") // Comma-separated: "H7225,G26,G2889"
+  source           String            @default("manual") @map("source") // "manual" | "exegesis-lab"
+  tags             String?           @map("tags")
+  createdOn        DateTime          @default(now()) @map("created_on")
+  updatedOn        DateTime          @updatedAt @map("updated_on")
+  createdBy        String?           @map("created_by")
+  updatedBy        String?           @map("updated_by")
+  exegesisSessions ExegesisSession[]
+  user             SystemUser        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([userId, createdOn])
@@ -439,21 +464,21 @@ model JournalTemplate {
 }
 
 model StrongsDictionary {
-  strongsId        String   @id
-  originalWord     String?
-  transliteration  String?
-  pronunciation    String?
-  shortDefinition  String   @map("short_definition")
-  fullDefinition   String?  @map("full_definition")
-  language         String   @default("greek")
-  usageCount       Int?     @map("usage_count")
-  partOfSpeech     String?  @map("part_of_speech")
-  grammaticalCase  String?  @map("grammatical_case")
-  gender           String?
-  number           String?
-  crossReferences  String?  @map("cross_references")
-  createdOn        DateTime @default(now()) @map("created_on")
-  verseWords       VerseWord[]
+  strongsId       String      @id
+  originalWord    String?
+  transliteration String?
+  pronunciation   String?
+  shortDefinition String      @map("short_definition")
+  fullDefinition  String?     @map("full_definition")
+  language        String      @default("greek")
+  usageCount      Int?        @map("usage_count")
+  partOfSpeech    String?     @map("part_of_speech")
+  grammaticalCase String?     @map("grammatical_case")
+  gender          String?
+  number          String?
+  crossReferences String?     @map("cross_references")
+  createdOn       DateTime    @default(now()) @map("created_on")
+  verseWords      VerseWord[]
 
   @@map("strongs_dictionary")
 }
@@ -472,14 +497,14 @@ model SearchIndex {
 }
 
 model VerseWord {
-  id          BigInt            @id @default(autoincrement())
-  translation String            @default("BSB")
-  bookName    String            @map("book_name")
+  id          BigInt             @id @default(autoincrement())
+  translation String             @default("BSB")
+  bookName    String             @map("book_name")
   chapter     BigInt
   verse       BigInt
-  wordOrder   Int               @map("word_order")
-  surfaceText String            @map("surface_text")
-  strongsId   String?           @map("strongs_id")
+  wordOrder   Int                @map("word_order")
+  surfaceText String             @map("surface_text")
+  strongsId   String?            @map("strongs_id")
   lemma       String?
   morphology  String?
   strongs     StrongsDictionary? @relation(fields: [strongsId], references: [strongsId])
@@ -491,33 +516,33 @@ model VerseWord {
 }
 
 model ExegesisSession {
-  id                String      @id @default(uuid())
-  userId            String      @map("user_id")
-  passageRef        String      @map("passage_ref")
-  bookName          String      @map("book_name")
-  chapter           BigInt
-  verseStart        BigInt?     @map("verse_start")
-  verseEnd          BigInt?     @map("verse_end")
-  currentStage      String      @default("look") @map("current_stage") // look | listen | learn | abide | completed
-  lookNotes         String?     @map("look_notes")
-  lookPromptsJson   String?     @map("look_prompts_json")
-  listenCompleted   Boolean     @default(false) @map("listen_completed")
-  listenDuration    Int?        @map("listen_duration") // seconds chosen
-  listenElapsed     Int?        @map("listen_elapsed") // seconds elapsed mid-timer
-  learnNotes        String?     @map("learn_notes")
-  abideReflection   String?     @map("abide_reflection")
-  abidePrayer       String?     @map("abide_prayer")
-  abideApplication  String?     @map("abide_application")
-  abideTags         String?     @map("abide_tags")
-  strongsWords      String?     @map("strongs_words") // JSON array of studied Strong's words
-  strongsIds        String?     @map("strongs_ids") // Comma-separated Strong's IDs
-  isPublic          Boolean     @default(false) @map("is_public")
-  journalEntryId    BigInt?     @map("journal_entry_id")
-  completed         Boolean     @default(false)
-  createdOn         DateTime    @default(now()) @map("created_on")
-  updatedOn         DateTime    @updatedAt @map("updated_on")
-  user              SystemUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  journalEntry      JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+  id               String        @id @default(uuid())
+  userId           String        @map("user_id")
+  passageRef       String        @map("passage_ref")
+  bookName         String        @map("book_name")
+  chapter          BigInt
+  verseStart       BigInt?       @map("verse_start")
+  verseEnd         BigInt?       @map("verse_end")
+  currentStage     String        @default("look") @map("current_stage") // look | listen | learn | abide | completed
+  lookNotes        String?       @map("look_notes")
+  lookPromptsJson  String?       @map("look_prompts_json")
+  listenCompleted  Boolean       @default(false) @map("listen_completed")
+  listenDuration   Int?          @map("listen_duration") // seconds chosen
+  listenElapsed    Int?          @map("listen_elapsed") // seconds elapsed mid-timer
+  learnNotes       String?       @map("learn_notes")
+  abideReflection  String?       @map("abide_reflection")
+  abidePrayer      String?       @map("abide_prayer")
+  abideApplication String?       @map("abide_application")
+  abideTags        String?       @map("abide_tags")
+  strongsWords     String?       @map("strongs_words") // JSON array of studied Strong's words
+  strongsIds       String?       @map("strongs_ids") // Comma-separated Strong's IDs
+  isPublic         Boolean       @default(false) @map("is_public")
+  journalEntryId   BigInt?       @map("journal_entry_id")
+  completed        Boolean       @default(false)
+  createdOn        DateTime      @default(now()) @map("created_on")
+  updatedOn        DateTime      @updatedAt @map("updated_on")
+  user             SystemUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  journalEntry     JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([userId, completed])
@@ -538,21 +563,21 @@ model BibleTopic {
 }
 
 model TriviaQuestion {
-  id            BigInt     @id @default(autoincrement())
+  id            BigInt         @id @default(autoincrement())
   question      String
-  optionsJson   String     @map("options_json")
-  correctAnswer Int        @map("correct_answer")
+  optionsJson   String         @map("options_json")
+  correctAnswer Int            @map("correct_answer")
   explanation   String?
-  bookName      String?    @map("book_name")
-  chapter       BigInt?    @map("chapter")
-  verseNumber   BigInt?    @map("verse_number")
-  category      String?    @default("general")
-  difficulty    String?    @default("medium") // easy | medium | hard
-  isActive      Boolean    @default(true) @map("is_active")
-  createdBy     String?    @map("created_by")
-  createdOn     DateTime   @default(now()) @map("created_on")
-  updatedBy     String?    @map("updated_by")
-  updatedOn     DateTime   @updatedAt @map("updated_on")
+  bookName      String?        @map("book_name")
+  chapter       BigInt?        @map("chapter")
+  verseNumber   BigInt?        @map("verse_number")
+  category      String?        @default("general")
+  difficulty    String?        @default("medium") // easy | medium | hard
+  isActive      Boolean        @default(true) @map("is_active")
+  createdBy     String?        @map("created_by")
+  createdOn     DateTime       @default(now()) @map("created_on")
+  updatedBy     String?        @map("updated_by")
+  updatedOn     DateTime       @updatedAt @map("updated_on")
   triviaAnswers TriviaAnswer[]
 
   @@index([category])
@@ -571,9 +596,9 @@ model TriviaAnswer {
   user           SystemUser     @relation(fields: [userId], references: [id], onDelete: Cascade)
   question       TriviaQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, questionId])
   @@index([userId])
   @@index([questionId])
-  @@unique([userId, questionId])
   @@map("trivia_answers")
 }
 
@@ -583,7 +608,7 @@ model VerseResource {
   chapter          BigInt
   verseStart       BigInt   @map("verse_start")
   verseEnd         BigInt?  @map("verse_end")
-  commentaries     String?  // JSON array of { author, title, text }
+  commentaries     String? // JSON array of { author, title, text }
   crossReferences  String?  @map("cross_references") // JSON array
   wordStudies      String?  @map("word_studies") // JSON array
   dictionaryTerms  String?  @map("dictionary_terms") // JSON array
@@ -598,4 +623,39 @@ model VerseResource {
   @@unique([bookName, chapter, verseStart])
   @@index([bookName, chapter])
   @@map("verse_resources")
+}
+
+model ChapterStudyTool {
+  id          BigInt  @id @default(autoincrement())
+  bookName    String  @map("book_name")
+  chapter     BigInt
+  toolType    String  @map("tool_type") // COMMAND | PROMISE | WARNING | REPEATED_WORD | TRANSITION | CONTRAST
+  label       String
+  description String?
+  verseRefs   Json    @map("verse_refs") // [{verse, excerpt}]
+  strongsIds  Json?   @map("strongs_ids") // [strongsId, ...]
+  order       Int     @default(0)
+
+  @@unique([bookName, chapter, toolType, label])
+  @@index([bookName, chapter])
+  @@map("chapter_study_tools")
+}
+
+model BookPrologue {
+  bookName          String   @id @map("book_name")
+  author            String?
+  audience          String?
+  dateWritten       String?  @map("date_written")
+  locationWritten   String?  @map("location_written")
+  purpose           String?
+  keyTheme          String?  @map("key_theme")
+  summary           String?
+  mainThemes        Json?    @map("main_themes")
+  christConnection  String?  @map("christ_connection")
+  createdBy         String?  @map("created_by")
+  createdOn         DateTime @default(now()) @map("created_on")
+  updatedBy         String?  @map("updated_by")
+  updatedOn         DateTime @updatedAt @map("updated_on")
+
+  @@map("book_prologues")
 }

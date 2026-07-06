@@ -2,10 +2,24 @@ import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { getVerse } from "../../modules/bible-translations/service.js";
 import { cache } from "../../services/cacheService.js";
-import { translateText, translateLongText, translateMany, translateResult } from "../../utils/translator.js";
+import {
+  translateText,
+  translateLongText,
+  translateMany,
+  translateResult,
+} from "../../utils/translator.js";
+
+const parseLocalDate = (value) => {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(year, month - 1, day);
+  }
+  return new Date(value);
+};
 
 export const addHighlight = async (data, userId) => {
-  const { bookName, chapter, verseNumber, verseNumbers, colorId, note, lang } = data;
+  const { bookName, chapter, verseNumber, verseNumbers, colorId, note, lang } =
+    data;
 
   if (!bookName || !chapter || !colorId) {
     return {
@@ -348,7 +362,7 @@ export const deleteFavorite = async (data, userId) => {
 };
 
 export const getVerseExplanation = async (data) => {
-  const { bookName, chapter, verseNumber, lang = 'en' } = data;
+  const { bookName, chapter, verseNumber, lang = "en" } = data;
 
   if (!bookName || !chapter || !verseNumber)
     return {
@@ -358,12 +372,12 @@ export const getVerseExplanation = async (data) => {
 
   // Try language-specific cache first (avoids re-translating on every request)
   const langCacheKey = `explanation:${bookName}:${chapter}:${verseNumber}:${lang}`;
-  const cachedLang = await cache.get('bible', langCacheKey);
+  const cachedLang = await cache.get("bible", langCacheKey);
   if (cachedLang !== null) return cachedLang;
 
   // Cache the raw record (non-language-specific)
   const record = await cache.getOrSet(
-    'bible',
+    "bible",
     `explanation:${bookName}:${chapter}:${verseNumber}`,
     async () => {
       return prisma.verseExplanation.findUnique({
@@ -379,16 +393,17 @@ export const getVerseExplanation = async (data) => {
     86400,
   );
 
-  if (!record)
-    return { status: 404, message: "Verse explanation not found" };
+  if (!record) return { status: 404, message: "Verse explanation not found" };
 
   const serialized = serializeBigInt(record);
   let explanation = serialized.explanation ?? null;
   let learnMore = serialized.learnMore ?? null;
 
-  if (lang !== 'en') {
+  if (lang !== "en") {
     const [tExplanation, tLearnMore] = await Promise.all([
-      explanation ? translateLongText(explanation, lang) : Promise.resolve(null),
+      explanation
+        ? translateLongText(explanation, lang)
+        : Promise.resolve(null),
       learnMore ? translateLongText(learnMore, lang) : Promise.resolve(null),
     ]);
     explanation = tExplanation ?? explanation;
@@ -400,10 +415,13 @@ export const getVerseExplanation = async (data) => {
     message: "Verse explanation fetched successfully",
     data: { ...serialized, explanation, learnMore },
   };
-  const finalResult = lang !== 'en' ? translateResult(verseExplanationResult, lang) : verseExplanationResult;
+  const finalResult =
+    lang !== "en"
+      ? translateResult(verseExplanationResult, lang)
+      : verseExplanationResult;
 
   // Cache the language-specific result so subsequent requests skip translation
-  await cache.set('bible', langCacheKey, finalResult, 86400);
+  await cache.set("bible", langCacheKey, finalResult, 86400);
 
   return finalResult;
 };
@@ -481,7 +499,7 @@ export const addVerseExplanation = async (data, userId) => {
 };
 
 export const getAllVersesExplanation = async (data) => {
-  const { page = 1, pageSize = 20, bookName, lang = 'en' } = data;
+  const { page = 1, pageSize = 20, bookName, lang = "en" } = data;
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
   const offset = (pageNum - 1) * pageSizeNum;
@@ -499,11 +517,17 @@ export const getAllVersesExplanation = async (data) => {
     prisma.verseExplanation.count({ where: whereClause }),
   ]);
 
-  const serialized = serializeBigInt({ explanations, totalCount, page: pageNum, pageSize: pageSizeNum, totalPages: Math.ceil(totalCount / pageSizeNum) });
+  const serialized = serializeBigInt({
+    explanations,
+    totalCount,
+    page: pageNum,
+    pageSize: pageSizeNum,
+    totalPages: Math.ceil(totalCount / pageSizeNum),
+  });
 
-  if (lang !== 'en' && serialized.explanations?.length > 0) {
-    const expls = serialized.explanations.map((e) => e.explanation || '');
-    const learns = serialized.explanations.map((e) => e.learnMore || '');
+  if (lang !== "en" && serialized.explanations?.length > 0) {
+    const expls = serialized.explanations.map((e) => e.explanation || "");
+    const learns = serialized.explanations.map((e) => e.learnMore || "");
     const [tExpls, tLearns] = await Promise.all([
       translateMany(expls, lang),
       translateMany(learns, lang),
@@ -519,7 +543,7 @@ export const getAllVersesExplanation = async (data) => {
     message: "Verse explanations fetched successfully",
     data: serialized,
   };
-  return lang !== 'en' ? translateResult(result, lang) : result;
+  return lang !== "en" ? translateResult(result, lang) : result;
 };
 
 export const addVerseNote = async (data, userId) => {
@@ -622,58 +646,64 @@ export const deleteVerseNote = async (data, userId) => {
 };
 
 export const getVerseByDate = async (data) => {
-  const { date, lang = 'en' } = data;
+  const { date, lang = "en" } = data;
   if (!date) {
     return { status: 400, message: "Date is required" };
   }
 
   // Try language-specific cache first
   const langCacheKey = `verse-by-date:${date}:${lang}`;
-  const cachedLang = await cache.get('bible', langCacheKey);
+  const cachedLang = await cache.get("bible", langCacheKey);
   if (cachedLang !== null) return cachedLang;
 
   // Cache only the base verse data (non-language-specific)
-  const base = await cache.getOrSet('bible', `verse-by-date:${date}`, async () => {
-    const startDate = new Date(date);
-    startDate.setHours(0, 0, 0, 0);
-    const endDate = new Date(date);
-    endDate.setHours(23, 59, 59, 999);
+  const base = await cache.getOrSet(
+    "bible",
+    `verse-by-date:${date}`,
+    async () => {
+      const startDate = new Date(date);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(date);
+      endDate.setHours(23, 59, 59, 999);
 
-    const dailyVerse = await prisma.dailyVerse.findFirst({
-      where: {
-        displayDate: {
-          gte: startDate,
-          lte: endDate,
+      const dailyVerse = await prisma.dailyVerse.findFirst({
+        where: {
+          displayDate: {
+            gte: startDate,
+            lte: endDate,
+          },
+          isPublished: true,
         },
-        isPublished: true,
-      },
-      orderBy: { displayDate: "asc" },
-    });
+        orderBy: { displayDate: "asc" },
+      });
 
-    if (!dailyVerse) return null;
+      if (!dailyVerse) return null;
 
-    const bibleVersion = dailyVerse.bibleVersion || "KJV";
-    let verseText = "";
-    try {
-      const verseData = await getVerse(
+      const bibleVersion = dailyVerse.bibleVersion || "KJV";
+      let verseText = "";
+      try {
+        const verseData = await getVerse(
+          bibleVersion,
+          dailyVerse.bookName,
+          Number(dailyVerse.chapter),
+          Number(dailyVerse.verseNumber),
+        );
+        verseText = verseData.text || "";
+      } catch (e) {
+        console.warn("Could not fetch verse text for daily verse:", e.message);
+      }
+
+      return {
+        dailyVerse: serializeBigInt(dailyVerse),
         bibleVersion,
-        dailyVerse.bookName,
-        Number(dailyVerse.chapter),
-        Number(dailyVerse.verseNumber),
-      );
-      verseText = verseData.text || "";
-    } catch (e) {
-      console.warn("Could not fetch verse text for daily verse:", e.message);
-    }
+        verseText,
+      };
+    },
+    3600,
+  );
 
-    return {
-      dailyVerse: serializeBigInt(dailyVerse),
-      bibleVersion,
-      verseText,
-    };
-  }, 3600);
-
-  if (!base) return { status: 200, message: "No daily verse found for the given date" };
+  if (!base)
+    return { status: 200, message: "No daily verse found for the given date" };
 
   const { dailyVerse: dv, bibleVersion, verseText } = base;
 
@@ -691,9 +721,11 @@ export const getVerseByDate = async (data) => {
     learnMore = explanationRecord.learnMore ?? learnMore;
   }
 
-  if (lang !== 'en') {
+  if (lang !== "en") {
     const [tExplanation, tLearnMore] = await Promise.all([
-      explanation ? translateLongText(explanation, lang) : Promise.resolve(null),
+      explanation
+        ? translateLongText(explanation, lang)
+        : Promise.resolve(null),
       learnMore ? translateLongText(learnMore, lang) : Promise.resolve(null),
     ]);
     explanation = tExplanation ?? explanation;
@@ -712,10 +744,13 @@ export const getVerseByDate = async (data) => {
       learnMore,
     },
   };
-  const finalResult = lang !== 'en' ? translateResult(verseByDateResult, lang) : verseByDateResult;
+  const finalResult =
+    lang !== "en"
+      ? translateResult(verseByDateResult, lang)
+      : verseByDateResult;
 
   // Cache the language-specific result so subsequent requests skip translation
-  await cache.set('bible', langCacheKey, finalResult, 3600);
+  await cache.set("bible", langCacheKey, finalResult, 3600);
 
   return finalResult;
 };
@@ -738,52 +773,57 @@ async function getVerseExplanationData(bookName, chapter, verseNumber) {
 }
 
 export const getTodaysVerse = async (data = {}) => {
-  const { lang = 'en' } = data;
+  const { lang = "en" } = data;
 
   // Try language-specific cache first
   const langCacheKey = `todays-verse:${lang}`;
-  const cachedLang = await cache.get('bible', langCacheKey);
+  const cachedLang = await cache.get("bible", langCacheKey);
   if (cachedLang !== null) return cachedLang;
 
   // Cache only the base verse data (non-language-specific)
-  const base = await cache.getOrSet('bible', 'todays-verse', async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+  const base = await cache.getOrSet(
+    "bible",
+    "todays-verse",
+    async () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-    let dailyVerse = await prisma.dailyVerse.findFirst({
-      where: { displayDate: { gte: today }, isPublished: true },
-      orderBy: { displayDate: "asc" },
-    });
-
-    if (!dailyVerse) {
-      dailyVerse = await prisma.dailyVerse.findFirst({
-        where: { isPublished: true },
-        orderBy: { displayDate: "desc" },
+      let dailyVerse = await prisma.dailyVerse.findFirst({
+        where: { displayDate: { gte: today }, isPublished: true },
+        orderBy: { displayDate: "asc" },
       });
-    }
 
-    if (!dailyVerse) return null;
+      if (!dailyVerse) {
+        dailyVerse = await prisma.dailyVerse.findFirst({
+          where: { isPublished: true },
+          orderBy: { displayDate: "desc" },
+        });
+      }
 
-    const bibleVersion = dailyVerse.bibleVersion || "KJV";
-    let verseText = "";
-    try {
-      const verseData = await getVerse(
+      if (!dailyVerse) return null;
+
+      const bibleVersion = dailyVerse.bibleVersion || "KJV";
+      let verseText = "";
+      try {
+        const verseData = await getVerse(
+          bibleVersion,
+          dailyVerse.bookName,
+          Number(dailyVerse.chapter),
+          Number(dailyVerse.verseNumber),
+        );
+        verseText = verseData.text || "";
+      } catch (e) {
+        console.warn("Could not fetch verse text for daily verse:", e.message);
+      }
+
+      return {
+        dailyVerse: serializeBigInt(dailyVerse),
         bibleVersion,
-        dailyVerse.bookName,
-        Number(dailyVerse.chapter),
-        Number(dailyVerse.verseNumber),
-      );
-      verseText = verseData.text || "";
-    } catch (e) {
-      console.warn("Could not fetch verse text for daily verse:", e.message);
-    }
-
-    return {
-      dailyVerse: serializeBigInt(dailyVerse),
-      bibleVersion,
-      verseText,
-    };
-  }, 1800);
+        verseText,
+      };
+    },
+    1800,
+  );
 
   if (!base) return { status: 200, message: "No daily verse found for today" };
 
@@ -800,9 +840,11 @@ export const getTodaysVerse = async (data = {}) => {
   let learnMore = explanationRecord?.learnMore ?? dv.learnMore ?? null;
 
   // Translate if non-English
-  if (lang !== 'en') {
+  if (lang !== "en") {
     const [tExplanation, tLearnMore] = await Promise.all([
-      explanation ? translateLongText(explanation, lang) : Promise.resolve(null),
+      explanation
+        ? translateLongText(explanation, lang)
+        : Promise.resolve(null),
       learnMore ? translateLongText(learnMore, lang) : Promise.resolve(null),
     ]);
     explanation = tExplanation ?? explanation;
@@ -821,22 +863,28 @@ export const getTodaysVerse = async (data = {}) => {
       learnMore,
     },
   };
-  const finalResult = lang !== 'en' ? translateResult(todaysVerseResult, lang) : todaysVerseResult;
+  const finalResult =
+    lang !== "en"
+      ? translateResult(todaysVerseResult, lang)
+      : todaysVerseResult;
 
   // Cache the language-specific result so subsequent requests skip translation
-  await cache.set('bible', langCacheKey, finalResult, 1800);
+  await cache.set("bible", langCacheKey, finalResult, 1800);
 
   return finalResult;
 };
 
 export const getDailyVerseByRef = async (data) => {
-  const { bookName, chapter, verseNumber, lang = 'en' } = data || {};
+  const { bookName, chapter, verseNumber, lang = "en" } = data || {};
   if (!bookName || !chapter || !verseNumber) {
-    return { status: 400, message: "bookName, chapter, and verseNumber are required" };
+    return {
+      status: 400,
+      message: "bookName, chapter, and verseNumber are required",
+    };
   }
 
   const base = await cache.getOrSet(
-    'bible',
+    "bible",
     `daily-verse-ref:${bookName}:${chapter}:${verseNumber}`,
     async () => {
       const dailyVerse = await prisma.dailyVerse.findFirst({
@@ -861,7 +909,7 @@ export const getDailyVerseByRef = async (data) => {
   const dv = serializeBigInt(base);
   let reflection = dv.reflection || null;
 
-  if (lang !== 'en' && reflection) {
+  if (lang !== "en" && reflection) {
     reflection = await translateLongText(reflection, lang);
   }
 
@@ -870,30 +918,35 @@ export const getDailyVerseByRef = async (data) => {
     message: "Daily verse found",
     data: { ...dv, reflection },
   };
-  return lang !== 'en' ? translateResult(result, lang) : result;
+  return lang !== "en" ? translateResult(result, lang) : result;
 };
 
 export const getTodaysDevotion = async (data = {}) => {
-  const { lang = 'en' } = data;
+  const { lang = "en" } = data;
 
-  const base = await cache.getOrSet('bible', 'todays-devotion', async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+  const base = await cache.getOrSet(
+    "bible",
+    "todays-devotion",
+    async () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-    let dailyDevotion = await prisma.dailyDevotion.findFirst({
-      where: { displayDate: { gte: today }, isPublished: true },
-      orderBy: { displayDate: "asc" },
-    });
-
-    if (!dailyDevotion) {
-      dailyDevotion = await prisma.dailyDevotion.findFirst({
-        where: { isPublished: true },
-        orderBy: { displayDate: "desc" },
+      let dailyDevotion = await prisma.dailyDevotion.findFirst({
+        where: { displayDate: { gte: today }, isPublished: true },
+        orderBy: { displayDate: "asc" },
       });
-    }
 
-    return dailyDevotion;
-  }, 1800);
+      if (!dailyDevotion) {
+        dailyDevotion = await prisma.dailyDevotion.findFirst({
+          where: { isPublished: true },
+          orderBy: { displayDate: "desc" },
+        });
+      }
+
+      return dailyDevotion;
+    },
+    1800,
+  );
 
   if (!base)
     return { status: 404, message: "No daily devotion found for today" };
@@ -902,7 +955,7 @@ export const getTodaysDevotion = async (data = {}) => {
   let title = dv.title;
   let content = dv.content;
 
-  if (lang !== 'en') {
+  if (lang !== "en") {
     const [tTitle, tContent] = await Promise.all([
       translateLongText(title, lang),
       translateLongText(content, lang),
@@ -916,37 +969,42 @@ export const getTodaysDevotion = async (data = {}) => {
     message: "Today's devotion fetched successfully",
     data: { ...dv, title, content },
   };
-  return lang !== 'en' ? translateResult(result, lang) : result;
+  return lang !== "en" ? translateResult(result, lang) : result;
 };
 
 export const getDevotionByDate = async (data) => {
-  const { date, lang = 'en' } = data;
+  const { date, lang = "en" } = data;
   if (!date) {
     return { status: 400, message: "Date is required" };
   }
 
-  const base = await cache.getOrSet('bible', `devotion-by-date:${date}`, async () => {
-    const startDate = new Date(date);
-    startDate.setHours(0, 0, 0, 0);
-    const endDate = new Date(date);
-    endDate.setHours(23, 59, 59, 999);
+  const base = await cache.getOrSet(
+    "bible",
+    `devotion-by-date:${date}`,
+    async () => {
+      const startDate = new Date(date);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(date);
+      endDate.setHours(23, 59, 59, 999);
 
-    const whereClause = {
-      displayDate: {
-        gte: startDate,
-        lte: endDate,
-      },
-      isPublished: true,
-    };
+      const whereClause = {
+        displayDate: {
+          gte: startDate,
+          lte: endDate,
+        },
+        isPublished: true,
+      };
 
-    const devotions = await prisma.dailyDevotion.findMany({
-      where: whereClause,
-      orderBy: { displayDate: "asc" },
-      take: 1,
-    });
+      const devotions = await prisma.dailyDevotion.findMany({
+        where: whereClause,
+        orderBy: { displayDate: "asc" },
+        take: 1,
+      });
 
-    return devotions.length > 0 ? devotions[0] : null;
-  }, 3600);
+      return devotions.length > 0 ? devotions[0] : null;
+    },
+    3600,
+  );
 
   if (!base)
     return { status: 404, message: "No devotion found for the given date" };
@@ -955,7 +1013,7 @@ export const getDevotionByDate = async (data) => {
   let title = dv.title;
   let content = dv.content;
 
-  if (lang !== 'en') {
+  if (lang !== "en") {
     const [tTitle, tContent] = await Promise.all([
       translateLongText(title, lang),
       translateLongText(content, lang),
@@ -969,7 +1027,7 @@ export const getDevotionByDate = async (data) => {
     message: "Devotion fetched successfully",
     data: { ...dv, title, content },
   };
-  return lang !== 'en' ? translateResult(result, lang) : result;
+  return lang !== "en" ? translateResult(result, lang) : result;
 };
 
 export const getAllDailyDevotionsPublic = async (data) => {
@@ -980,7 +1038,7 @@ export const getAllDailyDevotionsPublic = async (data) => {
     endDate,
     smartDefault,
     futureDays = 2,
-    lang = 'en',
+    lang = "en",
   } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
@@ -1019,10 +1077,16 @@ export const getAllDailyDevotionsPublic = async (data) => {
   const totalPages = Math.ceil(totalElements / pageSize);
 
   // Translate devotion titles and content
-  if (lang !== 'en' && content.length > 0) {
+  if (lang !== "en" && content.length > 0) {
     const [translatedTitles, translatedContent] = await Promise.all([
-      translateMany(content.map((d) => d.title || ''), lang),
-      translateMany(content.map((d) => d.content || ''), lang),
+      translateMany(
+        content.map((d) => d.title || ""),
+        lang,
+      ),
+      translateMany(
+        content.map((d) => d.content || ""),
+        lang,
+      ),
     ]);
     content.forEach((d, i) => {
       d.title = translatedTitles[i] || d.title;
@@ -1045,7 +1109,178 @@ export const getAllDailyDevotionsPublic = async (data) => {
       isLast: pageNum >= totalPages - 1,
     },
   };
-  return lang !== 'en' ? translateResult(result, lang) : result;
+  return lang !== "en" ? translateResult(result, lang) : result;
+};
+
+export const getTodaysExegesis = async (data = {}) => {
+  const { lang = "en" } = data;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let base = await prisma.dailyExegesis.findFirst({
+    where: { displayDate: { gte: today }, isPublished: true },
+    orderBy: { displayDate: "asc" },
+  });
+
+  if (!base) {
+    base = await prisma.dailyExegesis.findFirst({
+      where: { isPublished: true },
+      orderBy: { displayDate: "desc" },
+    });
+  }
+
+  if (!base)
+    return { status: 404, message: "No daily exegesis found for today" };
+
+  const exegesis = serializeBigInt(base);
+
+  if (lang !== "en") {
+    const translated = await translateDailyExegesis(exegesis, lang);
+    return translateResult(
+      {
+        status: 200,
+        message: "Today's exegesis fetched successfully",
+        data: translated,
+      },
+      lang,
+    );
+  }
+
+  return {
+    status: 200,
+    message: "Today's exegesis fetched successfully",
+    data: exegesis,
+  };
+};
+
+export const getExegesisByDate = async (data) => {
+  const { date, lang = "en" } = data;
+  if (!date) return { status: 400, message: "Date is required" };
+
+  const startDate = parseLocalDate(date);
+  startDate.setHours(0, 0, 0, 0);
+  const endDate = parseLocalDate(date);
+  endDate.setHours(23, 59, 59, 999);
+
+  const base = await prisma.dailyExegesis.findFirst({
+    where: {
+      displayDate: { gte: startDate, lte: endDate },
+      isPublished: true,
+    },
+    orderBy: { displayDate: "asc" },
+  });
+
+  if (!base)
+    return { status: 404, message: "No exegesis found for the given date" };
+
+  const exegesis = serializeBigInt(base);
+  const dataOut =
+    lang !== "en" ? await translateDailyExegesis(exegesis, lang) : exegesis;
+  const result = {
+    status: 200,
+    message: "Daily exegesis fetched successfully",
+    data: dataOut,
+  };
+  return lang !== "en" ? translateResult(result, lang) : result;
+};
+
+export const getAllDailyExegesisPublic = async (data) => {
+  const {
+    page = 0,
+    size = 12,
+    startDate,
+    endDate,
+    smartDefault,
+    futureDays = 2,
+    lang = "en",
+  } = data || {};
+  const pageNum = parseInt(page) || 0;
+  const pageSize = Math.min(parseInt(size) || 12, 50);
+
+  const whereClause = { isPublished: true };
+
+  if (startDate || endDate) {
+    whereClause.displayDate = {};
+    if (startDate) whereClause.displayDate.gte = new Date(startDate);
+    if (endDate) whereClause.displayDate.lte = new Date(endDate);
+  }
+
+  if (smartDefault) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const futureDate = new Date(today);
+    futureDate.setDate(futureDate.getDate() + (futureDays || 2));
+
+    whereClause.OR = [
+      { displayDate: { gte: today, lte: futureDate }, isPublished: true },
+      { displayDate: { lt: today }, isPublished: true },
+    ];
+  }
+
+  const [items, totalElements] = await Promise.all([
+    prisma.dailyExegesis.findMany({
+      where: whereClause,
+      orderBy: { displayDate: "desc" },
+      skip: pageNum * pageSize,
+      take: pageSize,
+    }),
+    prisma.dailyExegesis.count({ where: whereClause }),
+  ]);
+
+  let content = serializeBigInt(items);
+  if (lang !== "en" && content.length > 0) {
+    content = await Promise.all(
+      content.map((item) => translateDailyExegesis(item, lang)),
+    );
+  }
+
+  const totalPages = Math.ceil(totalElements / pageSize);
+  const result = {
+    status: 200,
+    message: "Daily exegesis fetched successfully",
+    data: {
+      content,
+      currentPage: pageNum,
+      pageSize,
+      totalElements,
+      totalPages,
+      hasNext: pageNum < totalPages - 1,
+      hasPrevious: pageNum > 0,
+      isFirst: pageNum === 0,
+      isLast: pageNum >= totalPages - 1,
+    },
+  };
+
+  return lang !== "en" ? translateResult(result, lang) : result;
+};
+
+const translateDailyExegesis = async (item, lang) => {
+  const fields = [
+    item.title,
+    item.introduction || "",
+    item.contextSummary || "",
+    item.teachingBody || "",
+    item.application || "",
+    item.prayer || "",
+  ];
+  const [
+    title,
+    introduction,
+    contextSummary,
+    teachingBody,
+    application,
+    prayer,
+  ] = await translateMany(fields, lang);
+  return {
+    ...item,
+    title: title || item.title,
+    introduction: introduction || item.introduction,
+    contextSummary: contextSummary || item.contextSummary,
+    teachingBody: teachingBody || item.teachingBody,
+    application: application || item.application,
+    prayer: prayer || item.prayer,
+  };
 };
 
 export const getHomeStats = async (userId) => {
@@ -1077,8 +1312,8 @@ export const getHomeStats = async (userId) => {
 };
 
 /** Format a date as a locale-aware relative time string (Node Intl is guaranteed) */
-function formatActivityTime(time, lang = 'en') {
-  if (!time) return '';
+function formatActivityTime(time, lang = "en") {
+  if (!time) return "";
   const date = new Date(time);
   const now = new Date();
 
@@ -1096,27 +1331,33 @@ function formatActivityTime(time, lang = 'en') {
     date.getFullYear() === yesterday.getFullYear();
 
   if (isToday)
-    return date.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString(lang, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   if (isYesterday) {
     try {
-      return new Intl.RelativeTimeFormat(lang, { numeric: 'auto' }).format(-1, 'day');
+      return new Intl.RelativeTimeFormat(lang, { numeric: "auto" }).format(
+        -1,
+        "day",
+      );
     } catch {
-      return date.toLocaleDateString(lang, { weekday: 'long' });
+      return date.toLocaleDateString(lang, { weekday: "long" });
     }
   }
 
   const diffDays = (now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24);
-  if (diffDays < 7) return date.toLocaleDateString(lang, { weekday: 'short' });
+  if (diffDays < 7) return date.toLocaleDateString(lang, { weekday: "short" });
 
   return date.toLocaleDateString(lang, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
   });
 }
 
-export const getRecentActivity = async (userId, limit = 10, lang = 'en') => {
+export const getRecentActivity = async (userId, limit = 10, lang = "en") => {
   const limitNum = Math.min(parseInt(limit) || 10, 20);
 
   const [
@@ -1155,10 +1396,11 @@ export const getRecentActivity = async (userId, limit = 10, lang = 'en') => {
   ]);
 
   // Translate plan titles upfront
-  const planTitles = planProgress.map((p) => p.readingPlan?.title || "Reading Plan");
-  const translatedPlanTitles = lang !== 'en'
-    ? await translateMany(planTitles, lang)
-    : planTitles;
+  const planTitles = planProgress.map(
+    (p) => p.readingPlan?.title || "Reading Plan",
+  );
+  const translatedPlanTitles =
+    lang !== "en" ? await translateMany(planTitles, lang) : planTitles;
 
   const allActivities = [
     ...recentReads.map((r) => ({
@@ -1240,7 +1482,9 @@ export const getRecentActivity = async (userId, limit = 10, lang = 'en') => {
     message: "Recent activity fetched successfully",
     data: serializeBigInt(activities),
   };
-  return lang !== 'en' ? translateResult(recentActivityResult, lang) : recentActivityResult;
+  return lang !== "en"
+    ? translateResult(recentActivityResult, lang)
+    : recentActivityResult;
 };
 
 export const deleteVerseExplanation = async (data, userId) => {

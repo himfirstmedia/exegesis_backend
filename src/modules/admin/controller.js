@@ -7,23 +7,51 @@ export const getUsersByAdmin = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get users by admin error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error fetching users: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error fetching users: " + error.message,
+        }),
+      );
   }
 };
 
 export const updateUser = async (req, res) => {
   try {
     const adminId = req.user.id;
-    console.log("updateUser - adminId type:", typeof adminId, "value:", adminId);
-    const bodyStr = JSON.stringify(req.body, (k, v) => typeof v === "bigint" ? v.toString() : v);
+    console.log(
+      "updateUser - adminId type:",
+      typeof adminId,
+      "value:",
+      adminId,
+    );
+    const bodyStr = JSON.stringify(req.body, (k, v) =>
+      typeof v === "bigint" ? v.toString() : v,
+    );
     console.log("updateUser - body:", bodyStr);
     const result = await adminService.updateUser(req.body, adminId);
-    console.log("updateUser result - status:", result.status, "message:", result.message, "hasData:", !!result.data);
+    console.log(
+      "updateUser result - status:",
+      result.status,
+      "message:",
+      result.message,
+      "hasData:",
+      !!result.data,
+    );
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Update user error:", error);
     const errorMsg = error instanceof Error ? error.message : String(error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error updating user: " + errorMsg }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error updating user: " + errorMsg,
+        }),
+      );
   }
 };
 
@@ -33,7 +61,14 @@ export const deleteUser = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Delete user error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error deleting user: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error deleting user: " + error.message,
+        }),
+      );
   }
 };
 
@@ -43,17 +78,34 @@ export const toggleUserStatus = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Toggle user status error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error toggling user status: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error toggling user status: " + error.message,
+        }),
+      );
   }
 };
 
 export const toggleUserVerification = async (req, res) => {
   try {
-    const result = await adminService.toggleUserVerification(req.body, req.user.id);
+    const result = await adminService.toggleUserVerification(
+      req.body,
+      req.user.id,
+    );
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Toggle user verification error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error toggling user verification: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error toggling user verification: " + error.message,
+        }),
+      );
   }
 };
 
@@ -63,7 +115,14 @@ export const getAdminDashboardStats = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Dashboard stats error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error fetching dashboard stats: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error fetching dashboard stats: " + error.message,
+        }),
+      );
   }
 };
 
@@ -73,7 +132,14 @@ export const getUserActivity = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get user activity error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error fetching user activity: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error fetching user activity: " + error.message,
+        }),
+      );
   }
 };
 
@@ -83,7 +149,14 @@ export const getAllActivity = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get all activity error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error fetching activity: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error fetching activity: " + error.message,
+        }),
+      );
   }
 };
 
@@ -93,7 +166,14 @@ export const deleteActivity = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Delete activity error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error deleting activity: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error deleting activity: " + error.message,
+        }),
+      );
   }
 };
 
@@ -103,7 +183,14 @@ export const addDailyVerse = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Add daily verse error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error adding daily verse: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error adding daily verse: " + error.message,
+        }),
+      );
   }
 };
 
@@ -113,7 +200,14 @@ export const getAllDailyVerses = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get all daily verses error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error fetching daily verses: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error fetching daily verses: " + error.message,
+        }),
+      );
   }
 };
 
@@ -123,7 +217,14 @@ export const deleteDailyVerse = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Delete daily verse error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error deleting daily verse: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error deleting daily verse: " + error.message,
+        }),
+      );
   }
 };
 
@@ -133,7 +234,14 @@ export const addDailyDevotion = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Add daily devotion error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error adding daily devotion: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error adding daily devotion: " + error.message,
+        }),
+      );
   }
 };
 
@@ -143,7 +251,14 @@ export const getAllDailyDevotions = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get all daily devotions error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error fetching daily devotions: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error fetching daily devotions: " + error.message,
+        }),
+      );
   }
 };
 
@@ -153,7 +268,14 @@ export const getSiteSetting = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Get site setting error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error fetching setting: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error fetching setting: " + error.message,
+        }),
+      );
   }
 };
 
@@ -163,7 +285,14 @@ export const setSiteSetting = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Set site setting error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error saving setting: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error saving setting: " + error.message,
+        }),
+      );
   }
 };
 
@@ -173,6 +302,64 @@ export const deleteDailyDevotion = async (req, res) => {
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error("Delete daily devotion error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Error deleting daily devotion: " + error.message }));
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error deleting daily devotion: " + error.message,
+        }),
+      );
+  }
+};
+
+export const addDailyExegesis = async (req, res) => {
+  try {
+    const result = await adminService.addDailyExegesis(req.body, req.user.id);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Add daily exegesis error:", error);
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error adding daily exegesis: " + error.message,
+        }),
+      );
+  }
+};
+
+export const getAllDailyExegesis = async (req, res) => {
+  try {
+    const result = await adminService.getAllDailyExegesis(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Get all daily exegesis error:", error);
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error fetching daily exegesis: " + error.message,
+        }),
+      );
+  }
+};
+
+export const deleteDailyExegesis = async (req, res) => {
+  try {
+    const result = await adminService.deleteDailyExegesis(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Delete daily exegesis error:", error);
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error deleting daily exegesis: " + error.message,
+        }),
+      );
   }
 };

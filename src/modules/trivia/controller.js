@@ -80,3 +80,45 @@ export const getUserStats = async (req, res) => {
     return res.status(500).json(formatApiResponse({ status: 500, message: 'Error fetching stats: ' + error.message }));
   }
 };
+
+// ── Admin Analytics ──────────────────────────────────────────────────────────
+
+export const getAdminOverviewStats = async (req, res) => {
+  try {
+    const result = await triviaService.getAdminOverviewStats();
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[TriviaController] getAdminOverviewStats error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error fetching overview stats: ' + error.message }));
+  }
+};
+
+export const getUserPerformanceList = async (req, res) => {
+  try {
+    const result = await triviaService.getUserPerformanceList(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[TriviaController] getUserPerformanceList error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error fetching user performance: ' + error.message }));
+  }
+};
+
+export const getUserPerformanceDetail = async (req, res) => {
+  try {
+    const result = await triviaService.getUserPerformanceDetail(req.body.userId);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[TriviaController] getUserPerformanceDetail error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error fetching user detail: ' + error.message }));
+  }
+};
+
+export const getQuestionPerformanceStats = async (req, res) => {
+  try {
+    const result = await triviaService.getQuestionPerformanceStats(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[TriviaController] getQuestionPerformanceStats error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error fetching question stats: ' + error.message }));
+  }
+};

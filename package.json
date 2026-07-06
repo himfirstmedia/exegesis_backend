@@ -12,6 +12,7 @@
     "seed-reading-plans": "node prisma/seed-reading-plans.js",
     "seed-daily-verses": "node prisma/seed-daily-verses.js",
     "seed-trivia": "node prisma/seed-trivia.js",
+    "seed-book-prologues": "node prisma/seed-book-prologues.js",
   "postinstall": "npx prisma generate"
   },
   "keywords": [],
