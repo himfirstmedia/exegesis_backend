@@ -625,6 +625,46 @@ export const getUserJournalEntriesForAdmin = async (data, adminId) => {
   };
 };
 
+export const setJournalEntryPublicationForAdmin = async (data, adminId) => {
+  const { id, isPublished } = data;
+  if (!id || typeof isPublished !== "boolean") {
+    return { returnCode: 400, returnMessage: "id and isPublished are required" };
+  }
+
+  const existing = await prisma.journalEntry.findUnique({
+    where: { id: BigInt(id) },
+  });
+
+  if (!existing) {
+    return { returnCode: 404, returnMessage: "Journal entry not found" };
+  }
+
+  const entry = await prisma.journalEntry.update({
+    where: { id: BigInt(id) },
+    data: {
+      isPublished,
+      updatedBy: adminId,
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          username: true,
+          email: true,
+        },
+      },
+    },
+  });
+
+  return {
+    returnCode: 200,
+    returnMessage: isPublished ? "Journal entry approved" : "Journal entry unpublished",
+    returnData: serializeBigInt(entry),
+  };
+};
+
 // ── Export Functions ─────────────────────────────────────────────────────────
 
 export const exportAllEntries = async (userId, format) => {
