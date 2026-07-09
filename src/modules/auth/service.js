@@ -1,10 +1,12 @@
 import { prisma } from "../../config/db.js";
 import bcrypt from "bcryptjs";
+import Stripe from "stripe";
 import { generateToken, verifyToken, generateSixDigitCode, serializeBigInt } from "../../utils/helpers.js";
 import { emailTemplates } from "../../utils/emailTemplates.js";
 import { OAuth2Client } from "google-auth-library";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export const googleLogin = async (data, deviceInfo = null) => {
   const { idToken, email, firstName, lastName, photoUrl } = data;
@@ -66,6 +68,8 @@ export const googleLogin = async (data, deviceInfo = null) => {
         profilePhotoUrl: existingUser.profilePhotoUrl,
         userRole: Number(existingUser.userRole),
         roleName: role?.roleName || "Member",
+        subscriptionTier: existingUser.subscriptionTier,
+        accessExpiresAt: existingUser.accessExpiresAt ? existingUser.accessExpiresAt.toISOString() : null,
       },
     };
   }
@@ -137,6 +141,8 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
           profilePhotoUrl: updatedUser.profilePhotoUrl,
           userRole: Number(updatedUser.userRole),
           roleName: role?.roleName || "Member",
+          subscriptionTier: updatedUser.subscriptionTier,
+          accessExpiresAt: updatedUser.accessExpiresAt ? updatedUser.accessExpiresAt.toISOString() : null,
         },
       };
     }
@@ -159,8 +165,24 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
       status: true,
       loginCount: 0n,
       profilePhotoUrl: photoUrl || null,
+      subscriptionTier: "free",
     },
   });
+
+  // Create Stripe customer instantly so the free tier is linked from the start
+  try {
+    const stripeCustomer = await stripe.customers.create({
+      email: user.email,
+      name: `${user.firstName} ${user.lastName}`.trim(),
+      metadata: { userId: user.id, tier: "free" },
+    });
+    await prisma.systemUser.update({
+      where: { id: user.id },
+      data: { stripeCustomerId: stripeCustomer.id },
+    });
+  } catch (stripeError) {
+    console.warn("[Auth] Failed to create Stripe customer during Google registration:", stripeError.message);
+  }
 
   const role = await prisma.role.findFirst({ where: { id: user.userRole } });
 
@@ -193,6 +215,8 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
       profilePhotoUrl: user.profilePhotoUrl,
       userRole: Number(user.userRole),
       roleName: role?.roleName || "Member",
+      subscriptionTier: user.subscriptionTier,
+      accessExpiresAt: user.accessExpiresAt ? user.accessExpiresAt.toISOString() : null,
     },
   };
 };
@@ -232,8 +256,24 @@ export const register = async (data) => {
       emailVerified: false,
       status: true,
       loginCount: 0n,
+      subscriptionTier: "free",
     },
   });
+
+  // Create Stripe customer instantly so the free tier is linked from the start
+  try {
+    const stripeCustomer = await stripe.customers.create({
+      email: user.email,
+      name: `${user.firstName} ${user.lastName}`.trim(),
+      metadata: { userId: user.id, tier: "free" },
+    });
+    await prisma.systemUser.update({
+      where: { id: user.id },
+      data: { stripeCustomerId: stripeCustomer.id },
+    });
+  } catch (stripeError) {
+    console.warn("[Auth] Failed to create Stripe customer during registration:", stripeError.message);
+  }
 
   await prisma.verification.create({
     data: {
@@ -457,6 +497,11 @@ export const login = async (data, deviceInfo = null) => {
       profilePhotoUrl: user.profilePhotoUrl,
       userRole: Number(user.userRole),
       roleName: role?.roleName || "Member",
+      // Include subscription info so the client doesn't need a separate
+      // /subscriptions/status call right after login — eliminates the race
+      // condition where gated screens see tier='free' before the fetch resolves.
+      subscriptionTier: user.subscriptionTier,
+      accessExpiresAt: user.accessExpiresAt ? user.accessExpiresAt.toISOString() : null,
     },
   };
 };

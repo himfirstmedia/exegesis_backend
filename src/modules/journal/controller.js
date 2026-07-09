@@ -201,7 +201,8 @@ export const exportAllEntries = async (req, res) => {
       return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
     }
     const format = req.body?.format || 'txt';
-    const result = await journalService.exportAllEntries(userId, format);
+    const ids = req.body?.ids;
+    const result = await journalService.exportAllEntries(userId, format, ids);
     return res.status(result.returnCode || 200).json(result);
   } catch (error) {
     console.error("Export all entries error:", error);

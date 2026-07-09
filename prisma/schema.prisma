@@ -36,10 +36,18 @@ model SystemUser {
   isLoggedIn                   Boolean            @default(false) @map("is_logged_in")
   sessionId                    String?            @map("session_id")
   userRole                     BigInt?            @map("user_role")
+  accountStatus                String             @default("active") @map("account_status") // active | disabled | suspended
+  subscriptionTier             String             @default("free") @map("subscription_tier") // free | legacy_sower | covenant_sower
+  accessExpiresAt              DateTime?          @map("access_expires_at")
+  stripeCustomerId             String?            @unique @map("stripe_customer_id")
+  stripeSubscriptionId         String?            @unique @map("stripe_subscription_id")
+  legacySowerSlot              Int?               @map("legacy_sower_slot")
+  supporterBadgeText           String?            @map("supporter_badge_text")
   createdOn                    DateTime           @default(now()) @map("created_on")
   updatedOn                    DateTime           @updatedAt @map("updated_on")
   createdBy                    String?            @map("created_by")
   updatedBy                    String?            @map("updated_by")
+  subscriptionEvents           SubscriptionEvent[]
   activities                   Activity[]
   dailyDevotionsCreated        DailyDevotion[]    @relation("DailyDevotionCreator")
   dailyExegesisCreated         DailyExegesis[]    @relation("DailyExegesisCreator")
@@ -57,6 +65,40 @@ model SystemUser {
   verifications                Verification[]
 
   @@map("system_users")
+}
+
+model SubscriptionEvent {
+  id              BigInt      @id @default(autoincrement())
+  userId          String      @map("user_id")
+  eventType       String      @map("event_type") // created | renewed | cancelled | expired | upgraded | downgraded
+  tier            String      // free | legacy_sower | covenant_sower
+  stripeEventId   String?     @map("stripe_event_id")
+  metadata        Json?
+  createdOn       DateTime    @default(now()) @map("created_on")
+  user            SystemUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdOn])
+  @@map("subscription_events")
+}
+
+model SubscriptionTier {
+  id             String   @id
+  name           String   @unique
+  description    String?
+  price          Float    @default(0)
+  currency       String   @default("usd")
+  interval       String   @default("year") // month | year | once | none
+  stripeProductId String?  @map("stripe_product_id")
+  stripePriceId  String?  @map("stripe_price_id")
+  features       Json?
+  isActive       Boolean  @default(true) @map("is_active")
+  sortOrder      Int      @default(0) @map("sort_order")
+  maxSlots       Int?     @map("max_slots") // null = unlimited
+  createdOn      DateTime @default(now()) @map("created_on")
+  updatedOn      DateTime @updatedAt @map("updated_on")
+
+  @@map("subscription_tiers")
 }
 
 model Role {
@@ -484,15 +526,17 @@ model StrongsDictionary {
 }
 
 model SearchIndex {
-  id          BigInt @id @default(autoincrement())
+  id          BigInt   @id @default(autoincrement())
   translation String
-  bookNumber  Int    @map("book_number")
-  bookName    String @map("book_name")
+  bookNumber  Int      @map("book_number")
+  bookName    String   @map("book_name")
   chapter     Int
   verse       Int
-  verseText   String @map("verse_text")
+  verseText   String   @map("verse_text")
+  verseTsv    Unsupported("tsvector")? @map("verse_tsv")
 
   @@index([translation, bookNumber])
+  @@index([verseTsv], type: Gin)
   @@map("search_index")
 }
 
@@ -639,6 +683,21 @@ model ChapterStudyTool {
   @@unique([bookName, chapter, toolType, label])
   @@index([bookName, chapter])
   @@map("chapter_study_tools")
+}
+
+model PopularSearchLog {
+  id          BigInt   @id @default(autoincrement())
+  query       String
+  scope       String   @default("bible") // bible | strongs | journal | topics | lemma
+  language    String   @default("en")
+  userId      String?  @map("user_id")
+  ipAddress   String?  @map("ip_address")
+  createdOn   DateTime @default(now()) @map("created_on")
+
+  @@index([createdOn])
+  @@index([query, scope, createdOn])
+  @@index([scope, createdOn])
+  @@map("popular_search_log")
 }
 
 model BookPrologue {

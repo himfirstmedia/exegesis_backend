@@ -9,6 +9,7 @@ import readingPlanRouter from "./modules/readingPlan/route.js";
 import journalRouter from "./modules/journal/route.js";
 import { formatApiResponse } from "./utils/helpers.js";
 import { startEmailScheduler } from "./services/emailScheduler.js";
+import { startPopularSearchCleanup } from "./services/popularSearchCleanup.js";
 import translationRouter from "./modules/bible-translations/route.js"
 import ttsRouter from "./modules/tts/route.js"
 import strongsRouter from "./modules/strongs/route.js"
@@ -16,6 +17,9 @@ import exegesisRouter from "./modules/exegesis/route.js"
 import triviaRouter from "./modules/trivia/route.js"
 import studyToolsRouter from "./modules/study-tools/route.js"
 import bookProloguesRouter from "./modules/book-prologues/route.js"
+import subscriptionsRouter from "./modules/subscriptions/routes.js"
+import popularSearchesRouter from "./modules/popular-searches/route.js"
+import { handleStripeWebhook } from "./modules/subscriptions/webhook.js"
 
 config();
 connectDB();
@@ -54,6 +58,9 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Stripe webhook needs raw body for signature verification (must be BEFORE json parser)
+app.use("/webhooks/stripe", express.raw({ type: "application/json" }), handleStripeWebhook);
+
 app.use("/auth", authRouter);
 app.use("/admin", adminRouter);
 app.use("/bible", bibleRouter);
@@ -64,8 +71,10 @@ app.use("/tts", ttsRouter)
 app.use("/strongs", strongsRouter)
 app.use("/exegesis", exegesisRouter)
 app.use("/trivia", triviaRouter)
-app.use("/", studyToolsRouter)
+app.use("/study-tools", studyToolsRouter)
 app.use("/book-prologues", bookProloguesRouter)
+app.use("/subscriptions", subscriptionsRouter)
+app.use("/popular-searches", popularSearchesRouter)
 
 app.get("/health", (req, res) => {
   res.send(
@@ -80,9 +89,9 @@ app.get("/health", (req, res) => {
 const PORT = process.env.PORT || 5001;
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Exegesis server running on port ${PORT}`);
-  startEmailScheduler();
-});
+  console.log(`Exegesis server running on port ${PORT}`);    startEmailScheduler();
+    startPopularSearchCleanup();
+  });
 
 process.on("unhandledRejection", (error) => {
   console.error("Unhandled Rejection:", error);
