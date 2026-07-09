@@ -49,6 +49,76 @@ router.post(
   requireAdmin,
   adminController.getUserActivity,
 );
+
+// ── Subscription Tier CRUD ──────────────────────────────────────────────────
+router.post(
+  "/subscription-tiers/seed",
+  authenticate,
+  requireAdmin,
+  adminController.seedSubscriptionTiers,
+);
+router.post(
+  "/subscription-tiers/create",
+  authenticate,
+  requireAdmin,
+  adminController.createSubscriptionTier,
+);
+router.post(
+  "/subscription-tiers/update",
+  authenticate,
+  requireAdmin,
+  adminController.updateSubscriptionTier,
+);
+router.post(
+  "/subscription-tiers/delete",
+  authenticate,
+  requireAdmin,
+  adminController.deleteSubscriptionTier,
+);
+router.post(
+  "/subscription-tiers/list",
+  authenticate,
+  requireAdmin,
+  adminController.listSubscriptionTiers,
+);
+router.post(
+  "/subscription-tiers/sync-stripe",
+  authenticate,
+  requireAdmin,
+  adminController.syncStripeTiers,
+);
+
+// ── User Subscription Management ────────────────────────────────────────────
+router.post(
+  "/get-subscriptions-users",
+  authenticate,
+  requireAdmin,
+  adminController.getSubscribedUsers,
+);
+router.post(
+  "/sync-stripe-users",
+  authenticate,
+  requireAdmin,
+  adminController.syncStripeSubscribers,
+);
+router.post(
+  "/subscriptions/update-user",
+  authenticate,
+  requireAdmin,
+  adminController.updateUserSubscription,
+);
+router.post(
+  "/subscriptions/suspend",
+  authenticate,
+  requireAdmin,
+  adminController.suspendUserSubscription,
+);
+router.post(
+  "/subscriptions/refund",
+  authenticate,
+  requireAdmin,
+  adminController.refundUserSubscription,
+);
 router.post(
   "/get-all-activity",
   authenticate,

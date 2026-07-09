@@ -4,8 +4,11 @@ import {
   authenticate,
   requireAdmin,
 } from "../../middlewares/auth.middleware.js";
+import { requireTier } from "../../middlewares/gating.middleware.js";
 
 const router = express.Router();
+
+const authAndTier = [authenticate, requireTier('legacy_sower')];
 
 router.post(
   "/create",
@@ -31,34 +34,34 @@ router.post(
   requireAdmin,
   readingPlanController.addQuizQuestions,
 );
-router.post("/get-all", authenticate, readingPlanController.getAll);
-router.post("/by-category", authenticate, readingPlanController.getPlansByCategory);
-router.post("/start", authenticate, readingPlanController.start);
-router.post("/my-progress", authenticate, readingPlanController.myProgress);
+router.post("/get-all", ...authAndTier, readingPlanController.getAll);
+router.post("/by-category", ...authAndTier, readingPlanController.getPlansByCategory);
+router.post("/start", ...authAndTier, readingPlanController.start);
+router.post("/my-progress", ...authAndTier, readingPlanController.myProgress);
 router.post(
   "/get-user-plans",
-  authenticate,
+  ...authAndTier,
   readingPlanController.getUserPlans,
 );
-router.post("/plan-progress", authenticate, readingPlanController.planProgress);
+router.post("/plan-progress", ...authAndTier, readingPlanController.planProgress);
 router.post(
   "/daily-assignment",
-  authenticate,
+  ...authAndTier,
   readingPlanController.dailyAssignment,
 );
 router.post(
   "/all-assignments",
-  authenticate,
+  ...authAndTier,
   readingPlanController.allAssignments,
 );
-router.post("/complete-day", authenticate, readingPlanController.completeDay);
-router.post("/submit-answer", authenticate, readingPlanController.submitAnswer);
+router.post("/complete-day", ...authAndTier, readingPlanController.completeDay);
+router.post("/submit-answer", ...authAndTier, readingPlanController.submitAnswer);
 router.post(
   "/quiz-questions",
-  authenticate,
+  ...authAndTier,
   readingPlanController.quizQuestions,
 );
-router.post("/quiz-stats", authenticate, readingPlanController.quizStats);
+router.post("/quiz-stats", ...authAndTier, readingPlanController.quizStats);
 router.post(
   "/update",
   authenticate,
@@ -83,11 +86,11 @@ router.post(
   requireAdmin,
   readingPlanController.updateAssignment,
 );
-router.post("/plan-detail", authenticate, readingPlanController.planDetail);
-router.post("/remove", authenticate, readingPlanController.remove);
+router.post("/plan-detail", ...authAndTier, readingPlanController.planDetail);
+router.post("/remove", ...authAndTier, readingPlanController.remove);
 router.post(
   "/day-quiz-answers",
-  authenticate,
+  ...authAndTier,
   readingPlanController.dayQuizAnswers,
 );
 router.post(

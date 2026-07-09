@@ -1,8 +1,38 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
+import crypto from "node:crypto";
 
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const ELEVENLABS_ENABLED = process.env.ELEVENLABS_ENABLED === "true";
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
+
+// ── In-memory TTS cache ────────────────────────────────────────────────────
+const TTS_CACHE = new Map();
+const CACHE_MAX = 50;
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+const getCacheKey = (text, voiceId, speed) => {
+  const hash = crypto.createHash("md5").update(text).digest("hex");
+  return `${hash}:${voiceId || "default"}:${speed || 1.0}`;
+};
+
+const getFromCache = (key) => {
+  const entry = TTS_CACHE.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.time > CACHE_TTL_MS) {
+    TTS_CACHE.delete(key);
+    return null;
+  }
+  entry.time = Date.now(); // refresh on access
+  return entry.buffer;
+};
+
+const setInCache = (key, buffer) => {
+  if (TTS_CACHE.size >= CACHE_MAX) {
+    const oldest = TTS_CACHE.keys().next().value;
+    if (oldest) TTS_CACHE.delete(oldest);
+  }
+  TTS_CACHE.set(key, { buffer, time: Date.now() });
+};
 
 // ── Edge TTS voices (free, Microsoft Neural) ──────────────────────────────
 const EDGE_VOICES = [
@@ -78,6 +108,10 @@ export const getVoices = async () => {
 // ── Edge TTS synthesis ─────────────────────────────────────────────────────
 
 const synthesizeEdge = async (text, voiceId = DEFAULT_EDGE_VOICE, speed = 1.0) => {
+  const cacheKey = getCacheKey(text, voiceId, speed);
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
   const tts = new MsEdgeTTS();
   await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
@@ -94,12 +128,18 @@ const synthesizeEdge = async (text, voiceId = DEFAULT_EDGE_VOICE, speed = 1.0) =
     audioStream.on("error", reject);
   });
 
-  return Buffer.concat(chunks);
+  const buffer = Buffer.concat(chunks);
+  setInCache(cacheKey, buffer);
+  return buffer;
 };
 
 // ── ElevenLabs synthesis ───────────────────────────────────────────────────
 
 const synthesizeElevenLabs = async (text, voiceId, speed = 1.0) => {
+  const cacheKey = getCacheKey(text, voiceId, speed);
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
   const body = {
     text,
     model_id: ELEVENLABS_MODEL,
@@ -127,7 +167,9 @@ const synthesizeElevenLabs = async (text, voiceId, speed = 1.0) => {
     throw new Error(`ElevenLabs API error (${response.status}): ${err}`);
   }
 
-  return Buffer.from(await response.arrayBuffer());
+  const buffer = Buffer.from(await response.arrayBuffer());
+  setInCache(cacheKey, buffer);
+  return buffer;
 };
 
 // ── Main synthesize ────────────────────────────────────────────────────────

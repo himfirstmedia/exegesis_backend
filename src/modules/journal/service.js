@@ -1,6 +1,7 @@
 import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { cache } from "../../services/cacheService.js";
+import PDFDocument from "pdfkit";
 
 
 export const createJournalEntry = async (data, userId) => {
@@ -667,9 +668,13 @@ export const setJournalEntryPublicationForAdmin = async (data, adminId) => {
 
 // ── Export Functions ─────────────────────────────────────────────────────────
 
-export const exportAllEntries = async (userId, format) => {
+export const exportAllEntries = async (userId, format, ids) => {
+  const whereClause = { userId };
+  if (ids && Array.isArray(ids) && ids.length > 0) {
+    whereClause.id = { in: ids.map((id) => BigInt(id)) };
+  }
   const entries = await prisma.journalEntry.findMany({
-    where: { userId },
+    where: whereClause,
     orderBy: { createdOn: "desc" },
   });
 
@@ -684,6 +689,120 @@ export const exportAllEntries = async (userId, format) => {
         content: base64,
         filename: `legacy-ledger-${new Date().toISOString().split('T')[0]}.json`,
         mimeType: 'application/json',
+        entryCount: serialized.length,
+      },
+    };
+  }
+
+  if (format === 'pdf') {
+    const doc = new PDFDocument({ margin: 50 });
+    const buffers = [];
+
+    doc.on('data', chunk => buffers.push(chunk));
+
+    doc.fontSize(28).font('Helvetica-Bold').text('Legacy Ledger', { align: 'center' });
+    doc.fontSize(14).font('Helvetica').fillColor('#666666').text('Exegesis — Personal Study Archive', { align: 'center' });
+    doc.moveDown(0.5);
+    doc.fontSize(10).fillColor('#999999').text(`Generated: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`, { align: 'center' });
+    doc.moveDown(0.3);
+    doc.fontSize(10).fillColor('#999999').text(`Total Entries: ${serialized.length}`, { align: 'center' });
+    doc.moveDown(1.5);
+
+    const lineY = doc.y;
+    doc.moveTo(50, lineY).lineTo(545, lineY).strokeColor('#CCCCCC').stroke();
+    doc.moveDown(1);
+
+    serialized.forEach((entry, idx) => {
+      const entryNum = idx + 1;
+      const catColor = entry.category === 'study' ? '#3B82F6' : entry.category === 'prayer' ? '#8B5CF6' : entry.category === 'gratitude' ? '#F59E0B' : entry.category === 'reflection' ? '#10B981' : entry.category === 'application' ? '#EF4444' : '#6B7280';
+
+      if (doc.y > 620) doc.addPage();
+
+      doc.fontSize(18).font('Helvetica-Bold').fillColor('#333333').text(`Entry #${entryNum}`, { continued: false });
+      doc.moveDown(0.2);
+
+      const dateStr = new Date(entry.createdOn).toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' });
+      doc.fontSize(10).font('Helvetica').fillColor('#888888').text(dateStr);
+      doc.moveDown(0.15);
+
+      if (entry.bookName) {
+        const ref = `${entry.bookName} ${entry.chapter || ''}${entry.verseNumber ? ':' + entry.verseNumber : ''}`;
+        doc.fontSize(10).font('Helvetica-Oblique').fillColor('#555555').text(`Scripture: ${ref}`);
+        doc.moveDown(0.1);
+      }
+
+      doc.fontSize(9).font('Helvetica').fillColor(catColor).text(`Category: ${entry.category.charAt(0).toUpperCase() + entry.category.slice(1)}  |  Source: ${entry.source === 'exegesis-lab' ? 'Exegesis Lab' : 'Manual'}  |  Privacy: ${entry.isPublished ? 'Public' : 'Private'}`);
+      doc.moveDown(0.1);
+
+      if (entry.title) {
+        doc.moveDown(0.1);
+        doc.fontSize(14).font('Helvetica-Bold').fillColor('#333333').text(entry.title);
+        doc.moveDown(0.15);
+      }
+
+      if (entry.content) {
+        doc.fontSize(11).font('Helvetica').fillColor('#444444').text(entry.content, { align: 'left', lineGap: 4 });
+        doc.moveDown(0.3);
+      }
+
+      if (entry.reflection) {
+        if (doc.y > 620) doc.addPage();
+        doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text('Reflection');
+        doc.fontSize(10).font('Helvetica').fillColor('#555555').text(entry.reflection, { lineGap: 3 });
+        doc.moveDown(0.2);
+      }
+
+      if (entry.prayers) {
+        if (doc.y > 620) doc.addPage();
+        doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text('Prayer');
+        doc.fontSize(10).font('Helvetica').fillColor('#555555').text(entry.prayers, { lineGap: 3 });
+        doc.moveDown(0.2);
+      }
+
+      if (entry.application) {
+        if (doc.y > 620) doc.addPage();
+        doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text('Application');
+        doc.fontSize(10).font('Helvetica').fillColor('#555555').text(entry.application, { lineGap: 3 });
+        doc.moveDown(0.2);
+      }
+
+      if (entry.strongsWords) {
+        try {
+          const words = typeof entry.strongsWords === 'string' ? JSON.parse(entry.strongsWords) : entry.strongsWords;
+          if (Array.isArray(words) && words.length > 0) {
+            doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text("Strong's Words Studied:");
+            doc.moveDown(0.1);
+            words.forEach(w => {
+              doc.fontSize(9).font('Helvetica').fillColor('#555555').text(`  • ${w.surfaceText || w.strongsId} (${w.strongsId})${w.lemma ? ` — ${w.lemma}` : ''}`);
+            });
+            doc.moveDown(0.2);
+          }
+        } catch (e) {}
+      }
+
+      if (entry.tags) {
+        doc.fontSize(9).font('Helvetica').fillColor('#888888').text(`Tags: ${entry.tags}`);
+        doc.moveDown(0.2);
+      }
+
+      if (idx < serialized.length - 1) {
+        const sepY = doc.y;
+        doc.moveTo(80, sepY).lineTo(520, sepY).strokeColor('#E0E0E0').stroke();
+        doc.moveDown(1);
+      }
+    });
+
+    doc.end();
+
+    const pdfBuffer = Buffer.concat(buffers);
+    const base64 = pdfBuffer.toString('base64');
+
+    return {
+      returnCode: 200,
+      returnData: {
+        content: base64,
+        filename: `legacy-ledger-${new Date().toISOString().split('T')[0]}.pdf`,
+        mimeType: 'application/pdf',
         entryCount: serialized.length,
       },
     };
@@ -790,6 +909,89 @@ export const exportOneEntry = async (id, userId, format) => {
     };
   }
 
+  if (format === 'pdf') {
+    const doc = new PDFDocument({ margin: 50 });
+    const buffers = [];
+    doc.on('data', chunk => buffers.push(chunk));
+
+    const catColor = entry.category === 'study' ? '#3B82F6' : entry.category === 'prayer' ? '#8B5CF6' : entry.category === 'gratitude' ? '#F59E0B' : entry.category === 'reflection' ? '#10B981' : entry.category === 'application' ? '#EF4444' : '#6B7280';
+
+    doc.fontSize(22).font('Helvetica-Bold').fillColor('#333333').text('Exegesis Legacy Ledger', { align: 'center' });
+    doc.moveDown(0.1);
+    doc.fontSize(10).font('Helvetica').fillColor('#999999').text('Single Entry Export', { align: 'center' });
+    doc.moveDown(1);
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor('#CCCCCC').stroke();
+    doc.moveDown(1);
+
+    doc.fontSize(18).font('Helvetica-Bold').fillColor('#333333').text(entry.title || 'Untitled Entry');
+    doc.moveDown(0.2);
+
+    const dateStr = new Date(entry.createdOn).toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' });
+    doc.fontSize(10).font('Helvetica').fillColor('#888888').text(dateStr);
+    doc.moveDown(0.15);
+
+    if (entry.bookName) {
+      const ref = `${entry.bookName} ${entry.chapter || ''}${entry.verseNumber ? ':' + entry.verseNumber : ''}`;
+      doc.fontSize(10).font('Helvetica-Oblique').fillColor('#555555').text(`Scripture: ${ref}`);
+      doc.moveDown(0.1);
+    }
+
+    doc.fontSize(9).font('Helvetica').fillColor(catColor).text(`Category: ${entry.category.charAt(0).toUpperCase() + entry.category.slice(1)}  |  Source: ${entry.source === 'exegesis-lab' ? 'Exegesis Lab' : 'Manual'}  |  Privacy: ${entry.isPublished ? 'Public' : 'Private'}`);
+    doc.moveDown(0.3);
+
+    if (entry.content) {
+      doc.fontSize(11).font('Helvetica').fillColor('#444444').text(entry.content, { lineGap: 4 });
+      doc.moveDown(0.3);
+    }
+
+    if (entry.reflection) {
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text('Reflection');
+      doc.fontSize(10).font('Helvetica').fillColor('#555555').text(entry.reflection, { lineGap: 3 });
+      doc.moveDown(0.2);
+    }
+
+    if (entry.prayers) {
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text('Prayer');
+      doc.fontSize(10).font('Helvetica').fillColor('#555555').text(entry.prayers, { lineGap: 3 });
+      doc.moveDown(0.2);
+    }
+
+    if (entry.application) {
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text('Application');
+      doc.fontSize(10).font('Helvetica').fillColor('#555555').text(entry.application, { lineGap: 3 });
+      doc.moveDown(0.2);
+    }
+
+    if (entry.strongsWords) {
+      try {
+        const words = typeof entry.strongsWords === 'string' ? JSON.parse(entry.strongsWords) : entry.strongsWords;
+        if (Array.isArray(words) && words.length > 0) {
+          doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text("Strong's Words Studied:");
+          words.forEach(w => {
+            doc.fontSize(9).font('Helvetica').fillColor('#555555').text(`  • ${w.surfaceText || w.strongsId} (${w.strongsId})${w.lemma ? ` — ${w.lemma}` : ''}`);
+          });
+        }
+      } catch (e) {}
+    }
+
+    if (entry.tags) {
+      doc.moveDown(0.2);
+      doc.fontSize(9).font('Helvetica').fillColor('#888888').text(`Tags: ${entry.tags}`);
+    }
+
+    doc.end();
+    const pdfBuffer = Buffer.concat(buffers);
+    const slug = (entry.bookName || 'entry').toLowerCase().replace(/\s+/g, '-');
+    return {
+      returnCode: 200,
+      returnData: {
+        content: pdfBuffer.toString('base64'),
+        filename: `${slug}-${new Date(entry.createdOn).toISOString().split('T')[0]}.pdf`,
+        mimeType: 'application/pdf',
+      },
+    };
+  }
+
   // Default: txt format
   const lines = [];
   lines.push('╔═══ EXEGESIS LEGACY LEDGER ═══╗');
@@ -856,6 +1058,8 @@ export const getPublicEntries = async (data, userId) => {
     search,
     bookName,
     category,
+    startDate,
+    endDate,
     page = 1,
     pageSize = 20,
   } = data;
@@ -879,6 +1083,12 @@ export const getPublicEntries = async (data, userId) => {
 
   if (bookName) whereClause.bookName = bookName;
   if (category) whereClause.category = category;
+
+  if (startDate || endDate) {
+    whereClause.createdOn = {};
+    if (startDate) whereClause.createdOn.gte = new Date(startDate);
+    if (endDate) whereClause.createdOn.lte = new Date(endDate);
+  }
 
   const [entries, totalCount] = await Promise.all([
     prisma.journalEntry.findMany({
