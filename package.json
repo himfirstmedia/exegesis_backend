@@ -6,13 +6,17 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon src/server.js",
-    "start": "npx prisma db push && node src/server.js",
+    "start": "npx prisma db push --accept-data-loss && node src/server.js",
     "seedmovies": "node prisma/seed.js",
     "seed-explanations": "node prisma/seed-explanations.js",
     "seed-reading-plans": "node prisma/seed-reading-plans.js",
     "seed-daily-verses": "node prisma/seed-daily-verses.js",
     "seed-trivia": "node prisma/seed-trivia.js",
     "seed-book-prologues": "node prisma/seed-book-prologues.js",
+    "seed-daily-exegesis": "node prisma/seed-daily-exegesis.js",
+    "seed-strongs": "node prisma/seed-strongs.js",
+    "seed-verse-resources": "node prisma/seed-verse-resources.js",
+    "seed-journal": "node prisma/seed-journal.js",
     "postinstall": "npx prisma generate"
   },
   "keywords": [],
