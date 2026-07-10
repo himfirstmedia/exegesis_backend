@@ -1,4 +1,5 @@
 import { translateText } from "../../utils/translator.js";
+import { formatApiResponse } from "../../utils/helpers.js";
 import {
   getAllTranslations,
   getTranslationInfo,
@@ -386,10 +387,10 @@ export const searchCross = async (req, res) => {
     const { query, translations, bookName, limit, offset } = req.body;
 
     if (!query || query.trim().length < 2) {
-      return res.status(400).json({
-        success: false,
-        message: 'Query must be at least 2 characters',
-      });
+      return res.status(400).json(formatApiResponse({
+        status: 400,
+        message: 'Search query must be at least 2 characters',
+      }));
     }
 
     const maxLimit = Math.min(parseInt(limit) || 50, 200);
@@ -413,6 +414,8 @@ export const searchCross = async (req, res) => {
     if (bookName) {
       conditions.push(`LOWER(book_name) = LOWER(${addParam(bookName)})`);
     }
+
+    let results;
 
     // Try tsvector search first, fall back to ILIKE if verse_tsv column doesn't exist
     try {
@@ -453,14 +456,11 @@ export const searchCross = async (req, res) => {
         rank: row.rank ? Number(row.rank) : 0,
       }));
 
-      return res.json({
-        success: true,
-        query: searchTerm,
-        total,
-        page: Math.floor(skip / maxLimit) + 1,
-        limit: maxLimit,
-        data: results,
-      });
+      return res.json(formatApiResponse({
+        status: 200,
+        message: "OK",
+        data: { query: searchTerm, total, page: Math.floor(skip / maxLimit) + 1, limit: maxLimit, data: results },
+      }));
     } catch (tsErr) {
       // verse_tsv column doesn't exist yet — fall back to ILIKE across translations
       console.warn('[searchCross] verse_tsv not available, falling back to ILIKE');
@@ -517,18 +517,18 @@ export const searchCross = async (req, res) => {
         rank: 0,
       }));
 
-      return res.json({
-        success: true,
-        query: searchTerm,
-        total: ilikeTotal,
-        page: Math.floor(skip / maxLimit) + 1,
-        limit: maxLimit,
-        data: results,
-      });
+      return res.json(formatApiResponse({
+        status: 200,
+        message: "OK",
+        data: { query: searchTerm, total: ilikeTotal, page: Math.floor(skip / maxLimit) + 1, limit: maxLimit, data: results },
+      }));
     }
   } catch (error) {
     console.error('[searchCross] error:', error);
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json(formatApiResponse({
+      status: 500,
+      message: error.message,
+    }));
   }
 };
 
@@ -538,10 +538,10 @@ export const searchFTS = async (req, res) => {
     const { query, limit, offset, bookName } = req.body;
 
     if (!query || query.trim().length < 2) {
-      return res.status(400).json({
-        success: false,
+      return res.status(400).json(formatApiResponse({
+        status: 400,
         message: 'Search query must be at least 2 characters',
-      });
+      }));
     }
 
     const maxLimit = Math.min(parseInt(limit) || 50, 200);
@@ -584,19 +584,16 @@ export const searchFTS = async (req, res) => {
 
     const data = await prisma.$queryRawUnsafe(dataSql, ...params);
 
-    return res.status(200).json({
-      success: true,
-      query,
-      total,
-      page: Math.floor(skip / maxLimit) + 1,
-      limit: maxLimit,
-      data,
-    });
+    return res.status(200).json(formatApiResponse({
+      status: 200,
+      message: "OK",
+      data: { query, total, page: Math.floor(skip / maxLimit) + 1, limit: maxLimit, data },
+    }));
   } catch (error) {
     console.error('FTS search error:', error);
-    return res.status(500).json({
-      success: false,
+    return res.status(500).json(formatApiResponse({
+      status: 500,
       message: error.message,
-    });
+    }));
   }
 };
