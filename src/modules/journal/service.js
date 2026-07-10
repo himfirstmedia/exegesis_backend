@@ -792,20 +792,22 @@ export const exportAllEntries = async (userId, format, ids) => {
       }
     });
 
-    doc.end();
-
-    const pdfBuffer = Buffer.concat(buffers);
-    const base64 = pdfBuffer.toString('base64');
-
-    return {
-      returnCode: 200,
-      returnData: {
-        content: base64,
-        filename: `legacy-ledger-${new Date().toISOString().split('T')[0]}.pdf`,
-        mimeType: 'application/pdf',
-        entryCount: serialized.length,
-      },
-    };
+    return new Promise((resolve) => {
+      doc.on('end', () => {
+        const pdfBuffer = Buffer.concat(buffers);
+        const base64 = pdfBuffer.toString('base64');
+        resolve({
+          returnCode: 200,
+          returnData: {
+            content: base64,
+            filename: `legacy-ledger-${new Date().toISOString().split('T')[0]}.pdf`,
+            mimeType: 'application/pdf',
+            entryCount: serialized.length,
+          },
+        });
+      });
+      doc.end();
+    });
   }
 
   // Default: txt format
@@ -979,17 +981,21 @@ export const exportOneEntry = async (id, userId, format) => {
       doc.fontSize(9).font('Helvetica').fillColor('#888888').text(`Tags: ${entry.tags}`);
     }
 
-    doc.end();
-    const pdfBuffer = Buffer.concat(buffers);
     const slug = (entry.bookName || 'entry').toLowerCase().replace(/\s+/g, '-');
-    return {
-      returnCode: 200,
-      returnData: {
-        content: pdfBuffer.toString('base64'),
-        filename: `${slug}-${new Date(entry.createdOn).toISOString().split('T')[0]}.pdf`,
-        mimeType: 'application/pdf',
-      },
-    };
+    return new Promise((resolve) => {
+      doc.on('end', () => {
+        const pdfBuffer = Buffer.concat(buffers);
+        resolve({
+          returnCode: 200,
+          returnData: {
+            content: pdfBuffer.toString('base64'),
+            filename: `${slug}-${new Date(entry.createdOn).toISOString().split('T')[0]}.pdf`,
+            mimeType: 'application/pdf',
+          },
+        });
+      });
+      doc.end();
+    });
   }
 
   // Default: txt format

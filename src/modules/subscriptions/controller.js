@@ -249,34 +249,321 @@ export const createPortalSession = async (req, res) => {
   }
 };
 
+// ─── Stripe tier cache (in-memory, 5-min TTL) ─────────────────────────────────
+
+let stripeTiersCache = null;
+let stripeTiersCacheTime = 0;
+const STRIPE_TIERS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Maps our internal tier IDs to Stripe price IDs from env vars.
+// Monthly variants are fetched alongside yearly for completeness.
+const TIER_PRICE_MAP = {
+  legacy_sower: {
+    yearly: process.env.STRIPE_LEGACY_SOWER_PRICE_ID,
+    monthly: process.env.STRIPE_LEGACY_SOWER_MONTHLY_PRICE_ID,
+  },
+  covenant_sower: {
+    yearly: process.env.STRIPE_COVENANT_SOWER_PRICE_ID,
+    monthly: process.env.STRIPE_COVENANT_SOWER_MONTHLY_PRICE_ID,
+  },
+};
+
+// ─── Hardcoded fallback (used when both Stripe and DB are unreachable) ────
+
+const FALLBACK_TIERS = [
+  {
+    id: "free",
+    name: "Free",
+    price: 0,
+    currency: "usd",
+    interval: "none",
+    features: ["Bible reading", "Daily verse", "Basic tools"],
+    isActive: true,
+    sortOrder: 0,
+  },
+  {
+    id: "legacy_sower",
+    name: "Legacy Sower",
+    price: 33.33,
+    currency: "usd",
+    interval: "year",
+    features: [
+      "Advanced word study (Strong's Concordance)",
+      "In-depth verse explanations",
+      "Lab (AI-assisted study)",
+      "Higher-rate API access",
+      "Legacy badge",
+    ],
+    isActive: true,
+    sortOrder: 1,
+  },
+  {
+    id: "legacy_sower_monthly",
+    name: "Legacy Sower",
+    price: 3.33,
+    currency: "usd",
+    interval: "month",
+    features: [
+      "Advanced word study (Strong's Concordance)",
+      "In-depth verse explanations",
+      "Lab (AI-assisted study)",
+      "Higher-rate API access",
+      "Legacy badge",
+    ],
+    isActive: true,
+    sortOrder: 1,
+  },
+  {
+    id: "covenant_sower",
+    name: "Covenant Sower",
+    price: 77.77,
+    currency: "usd",
+    interval: "year",
+    features: [
+      "Everything in Legacy Sower",
+      "Priority support",
+      "Covenant badge",
+    ],
+    isActive: true,
+    sortOrder: 2,
+  },
+  {
+    id: "covenant_sower_monthly",
+    name: "Covenant Sower",
+    price: 7.77,
+    currency: "usd",
+    interval: "month",
+    features: [
+      "Everything in Legacy Sower",
+      "Priority support",
+      "Covenant badge",
+    ],
+    isActive: true,
+    sortOrder: 2,
+  },
+];
+
+// ─── buildTiersFromStripe ─────────────────────────────────────────────────────
+// Fetches products + prices from Stripe so the app always shows
+// real-time plan names, prices, and features without manual DB sync.
+
+async function buildTiersFromStripe() {
+  if (
+    stripeTiersCache &&
+    Date.now() - stripeTiersCacheTime < STRIPE_TIERS_CACHE_TTL
+  ) {
+    return stripeTiersCache;
+  }
+
+  const tiers = [];
+
+  for (const [tierId, priceIds] of Object.entries(TIER_PRICE_MAP)) {
+    // Fetch the yearly price (primary source for product metadata)
+    const yearlyPriceId = priceIds.yearly;
+    if (!yearlyPriceId) continue;
+
+    let yearlyPrice;
+    try {
+      yearlyPrice = await stripe.prices.retrieve(yearlyPriceId, {
+        expand: ["product"],
+      });
+    } catch (e) {
+      console.warn(`[Stripe] Failed to retrieve yearly price ${yearlyPriceId} for ${tierId}:`, e.message);
+      continue;
+    }
+
+    const product = yearlyPrice.product;
+
+    // Parse features from product metadata (expected as JSON string array)
+    let features = [];
+    try {
+      if (product.metadata?.features) {
+        features = JSON.parse(product.metadata.features);
+      }
+    } catch {
+      // non-fatal; leave features empty
+    }
+
+    const shared = {
+      name: product.name,
+      description: product.description || undefined,
+      currency: yearlyPrice.currency,
+      features,
+      isActive: product.active,
+      sortOrder: parseInt(product.metadata?.sortOrder || String(tiers.length + 1), 10),
+      maxSlots: product.metadata?.maxSlots
+        ? parseInt(product.metadata.maxSlots, 10)
+        : undefined,
+      stripeProductId: product.id,
+    };
+
+    // Yearly entry
+    tiers.push({
+      id: tierId,
+      ...shared,
+      price: yearlyPrice.unit_amount / 100,
+      interval: yearlyPrice.recurring?.interval || "year",
+      stripePriceId: yearlyPrice.id,
+    });
+
+    // Monthly entry (separate price ID from env vars)
+    const monthlyPriceId = priceIds.monthly;
+    if (monthlyPriceId) {
+      try {
+        const monthlyPrice = await stripe.prices.retrieve(monthlyPriceId);
+        tiers.push({
+          id: `${tierId}_monthly`,
+          ...shared,
+          price: monthlyPrice.unit_amount / 100,
+          interval: monthlyPrice.recurring?.interval || "month",
+          stripePriceId: monthlyPrice.id,
+        });
+      } catch (e) {
+        console.warn(`[Stripe] Failed to retrieve monthly price ${monthlyPriceId} for ${tierId}:`, e.message);
+      }
+    }
+  }
+
+  if (tiers.length === 0) return [];
+
+  // Sort by sortOrder from product metadata
+  tiers.sort((a, b) => a.sortOrder - b.sortOrder);
+
+  // Prepend the free tier (not in Stripe)
+  tiers.unshift({
+    id: "free",
+    name: "Free",
+    price: 0,
+    currency: "usd",
+    interval: "none",
+    features: ["Bible reading", "Daily verse", "Basic tools"],
+    isActive: true,
+    sortOrder: 0,
+  });
+
+  stripeTiersCache = tiers;
+  stripeTiersCacheTime = Date.now();
+  return tiers;
+}
+
 // ─── listTiers ────────────────────────────────────────────────────────────────
 
 export const listTiers = async (req, res) => {
   try {
-    const tiers = await prisma.subscriptionTier.findMany({ orderBy: { sortOrder: "asc" } });
-    return res.json(formatApiResponse({ status: 200, message: "Tiers retrieved", data: { tiers } }));
+    // 1. Try Stripe first — real-time prices from the source of truth
+    const fromStripe = await buildTiersFromStripe();
+    if (fromStripe.length > 0) {
+      return res.json(
+        formatApiResponse({ status: 200, message: "Tiers retrieved", data: { tiers: fromStripe } }),
+      );
+    }
+
+    // 2. Fallback to DB
+    let tiers = await prisma.subscriptionTier.findMany({ orderBy: { sortOrder: "asc" } });
+    if (tiers && tiers.length > 0) {
+      return res.json(
+        formatApiResponse({ status: 200, message: "Tiers retrieved", data: { tiers } }),
+      );
+    }
+
+    // 3. Last resort — hardcoded defaults so the app never breaks
+    return res.json(
+      formatApiResponse({ status: 200, message: "Tiers retrieved (fallback)", data: { tiers: FALLBACK_TIERS } }),
+    );
   } catch (error) {
     console.error("[SubscriptionController] listTiers error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Failed to retrieve tiers" }));
+    return res.json(
+      formatApiResponse({ status: 200, message: "Tiers retrieved (fallback)", data: { tiers: FALLBACK_TIERS } }),
+    );
   }
+};
+
+// ─── Resolve a Stripe price ID to an internal tier ID ─────────────────────────
+
+const resolveTierFromPriceId = async (priceId, interval) => {
+  if (!priceId) return null;
+
+  const tier = await prisma.subscriptionTier.findFirst({
+    where: { stripePriceId: priceId },
+  });
+  if (tier) return tier.id;
+
+  // Fallback: check env var mapping (TIER_PRICE_MAP)
+  for (const [tierId, prices] of Object.entries(TIER_PRICE_MAP)) {
+    if (prices.yearly === priceId) return tierId;
+    if (prices.monthly === priceId) return `${tierId}_monthly`;
+  }
+
+  try {
+    const price = await stripe.prices.retrieve(priceId, { expand: ["product"] });
+    const product = price.product;
+    if (product && typeof product === "object" && !product.deleted) {
+      if (product.metadata?.tierId) return product.metadata.tierId;
+      const slug = product.name
+        ?.toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_|_$/g, "");
+      if (slug) return interval === "month" ? `${slug}_monthly` : slug;
+    }
+  } catch { /* non-fatal */ }
+
+  return null;
 };
 
 // ─── getSubscriptionStatus ────────────────────────────────────────────────────
 
 export const getSubscriptionStatus = async (req, res) => {
   try {
-    const user = await prisma.systemUser.findUnique({
+    let user = await prisma.systemUser.findUnique({
       where: { id: req.user.id },
       select: {
         subscriptionTier: true,
         accessExpiresAt: true,
         stripeCustomerId: true,
+        stripeSubscriptionId: true,
         legacySowerSlot: true,
       },
     });
 
     if (!user) {
       return res.status(404).json(formatApiResponse({ status: 404, message: "User not found" }));
+    }
+
+    // ── Stripe reconciliation ─────────────────────────────────────────────
+    // If DB says free but user has a Stripe customer ID, check Stripe
+    // directly for active subscriptions. This handles the case where the
+    // webhook hasn't fired yet or was missed.
+    if (user.subscriptionTier === "free" && user.stripeCustomerId && !user.stripeSubscriptionId) {
+      try {
+        const subscriptions = await stripe.subscriptions.list({
+          customer: user.stripeCustomerId,
+          status: "active",
+          limit: 1,
+        });
+        if (subscriptions.data.length > 0) {
+          const sub = subscriptions.data[0];
+          const priceId = sub.items?.data?.[0]?.price?.id;
+          const interval = sub.items?.data?.[0]?.price?.recurring?.interval;
+          const tierId = await resolveTierFromPriceId(priceId, interval) || "free";
+          const periodEnd = sub.current_period_end
+            ? new Date(sub.current_period_end * 1000)
+            : null;
+
+          await prisma.systemUser.update({
+            where: { id: req.user.id },
+            data: {
+              subscriptionTier: tierId,
+              stripeSubscriptionId: sub.id,
+              ...(periodEnd && { accessExpiresAt: periodEnd }),
+            },
+          });
+
+          user = { ...user, subscriptionTier: tierId, accessExpiresAt: periodEnd };
+          console.log(`[StripeReconciliation] Synced user ${req.user.id} → ${tierId}`);
+        }
+      } catch (stripeErr) {
+        console.warn("[StripeReconciliation] Failed to sync from Stripe:", stripeErr.message);
+      }
     }
 
     let tierMeta = null;

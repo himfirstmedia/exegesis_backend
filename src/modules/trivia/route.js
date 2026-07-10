@@ -14,7 +14,7 @@ router.post('/create', authenticate, requireAdmin, triviaController.createQuesti
 router.post('/update', authenticate, requireAdmin, triviaController.updateQuestion);
 router.post('/delete', authenticate, requireAdmin, triviaController.deleteQuestion);
 router.post('/get', authenticate, triviaController.getQuestion);
-router.post('/get-all', authenticate, requireAdmin, triviaController.getAllQuestions);
+router.post('/get-all', authenticate, triviaController.getAllQuestions);
 
 // Admin analytics (authenticated + admin)
 router.post('/admin/overview', authenticate, requireAdmin, triviaController.getAdminOverviewStats);

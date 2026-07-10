@@ -1,16 +1,16 @@
-import { extractToken, verifyToken } from "../utils/helpers.js";
+import { extractToken, verifyToken, formatApiResponse } from "../utils/helpers.js";
 import { prisma } from "../config/db.js";
 
 export const authenticate = async (req, res, next) => {
   try {
     const token = extractToken(req.headers.authorization);
     if (!token) {
-      return res.status(401).json({ status: 401, message: "No token provided" });
+      return res.status(401).json(formatApiResponse({ status: 401, message: "No token provided" }));
     }
 
     const decoded = verifyToken(token);
     if (!decoded) {
-      return res.status(401).json({ status: 401, message: "Invalid or expired token" });
+      return res.status(401).json(formatApiResponse({ status: 401, message: "Invalid or expired token" }));
     }
 
     // Lightweight status check — single field, primary key lookup
@@ -20,18 +20,18 @@ export const authenticate = async (req, res, next) => {
     });
 
     if (!userStatus) {
-      return res.status(401).json({ status: 401, message: "User not found" });
+      return res.status(401).json(formatApiResponse({ status: 401, message: "User not found" }));
     }
 
     if (!userStatus.status) {
-      return res.status(403).json({ status: 403, message: "Account is disabled" });
+      return res.status(403).json(formatApiResponse({ status: 403, message: "Account is disabled" }));
     }
 
     req.user = decoded;
     next();
   } catch (error) {
     console.error("Auth middleware error:", error);
-    return res.status(500).json({ status: 500, message: "Authentication error" });
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Authentication error" }));
   }
 };
 
@@ -53,7 +53,7 @@ export const optionalAuth = async (req, res, next) => {
 
 export const requireAdmin = async (req, res, next) => {
   if (!req.user || Number(req.user.userRole) !== 1) {
-    return res.status(403).json({ status: 403, message: "Admin access required" });
+    return res.status(403).json(formatApiResponse({ status: 403, message: "Admin access required" }));
   }
   next();
 };
