@@ -5,22 +5,21 @@ import { requireTier } from "../../middlewares/gating.middleware.js";
 
 const router = express.Router();
 
-const authOnly = [authenticate];
 const authAndTier = [authenticate, requireTier('legacy_sower')];
 
-router.post("/create", ...authOnly, journalController.createJournalEntry);
-router.post("/update", ...authOnly, journalController.updateJournalEntry);
-router.post("/delete", ...authOnly, journalController.deleteJournalEntry);
-router.post("/get", ...authOnly, journalController.getJournalEntry);
-router.post("/get-all", ...authOnly, journalController.getAllJournalEntries);
-router.post("/get-by-verse", ...authOnly, journalController.getJournalEntriesByVerse);
-router.post("/toggle-favorite", ...authOnly, journalController.toggleFavorite);
-router.post("/stats", ...authOnly, journalController.getJournalStats);
+router.post("/create", ...authAndTier, journalController.createJournalEntry);
+router.post("/update", ...authAndTier, journalController.updateJournalEntry);
+router.post("/delete", ...authAndTier, journalController.deleteJournalEntry);
+router.post("/get", ...authAndTier, journalController.getJournalEntry);
+router.post("/get-all", ...authAndTier, journalController.getAllJournalEntries);
+router.post("/get-by-verse", ...authAndTier, journalController.getJournalEntriesByVerse);
+router.post("/toggle-favorite", ...authAndTier, journalController.toggleFavorite);
+router.post("/stats", ...authAndTier, journalController.getJournalStats);
 
-router.post("/export-all", ...authOnly, journalController.exportAllEntries);
-router.post("/export-one", ...authOnly, journalController.exportOneEntry);
-router.post("/get-public", ...authOnly, journalController.getPublicEntries);
-router.post("/search-by-strongs", ...authOnly, journalController.searchEntriesByStrongs);
+router.post("/export-all", ...authAndTier, journalController.exportAllEntries);
+router.post("/export-one", ...authAndTier, journalController.exportOneEntry);
+router.post("/get-public", ...authAndTier, journalController.getPublicEntries);
+router.post("/search-by-strongs", ...authAndTier, journalController.searchEntriesByStrongs);
 
 router.post("/prompts/create", authenticate, requireAdmin, journalController.createJournalPrompt);
 router.post("/prompts/update", authenticate, requireAdmin, journalController.updateJournalPrompt);
