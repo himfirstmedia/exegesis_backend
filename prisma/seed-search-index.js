@@ -113,17 +113,20 @@ async function indexTranslation(shortId) {
     const books = Array.isArray(testament.book) ? testament.book : [testament.book];
 
     for (const book of books) {
+      if (!book.$) continue;
       const bookNum = parseInt(book.$.number);
       const bookName = BOOK_NAMES[bookNum];
-      const chapters = Array.isArray(book.chapter) ? book.chapter : [book.chapter];
+      const chapters = book.chapter ? (Array.isArray(book.chapter) ? book.chapter : [book.chapter]) : [];
 
       for (const chapter of chapters) {
+        if (!chapter.$) continue;
         const chapterNum = parseInt(chapter.$.number);
-        const verses = Array.isArray(chapter.verse) ? chapter.verse : [chapter.verse];
+        const verses = chapter.verse ? (Array.isArray(chapter.verse) ? chapter.verse : [chapter.verse]) : [];
 
         for (const verse of verses) {
           const verseNum = parseInt(verse.$.number);
-          const text = (typeof verse === 'string' ? verse : (verse._ || verse)).trim();
+          const raw = typeof verse === 'string' ? verse : (verse._ || '');
+          const text = raw.trim();
 
           if (text) {
             batch.push({

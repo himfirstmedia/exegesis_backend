@@ -530,36 +530,58 @@ export const getSubscriptionStatus = async (req, res) => {
     }
 
     // ── Stripe reconciliation ─────────────────────────────────────────────
-    // If DB says free but user has a Stripe customer ID, check Stripe
-    // directly for active subscriptions. This handles the case where the
-    // webhook hasn't fired yet or was missed.
-    if (user.subscriptionTier === "free" && user.stripeCustomerId && !user.stripeSubscriptionId) {
+    // If DB says free, search Stripe for the user's email to find any
+    // active subscriptions. Handles:
+    //   1. Normal flow: user has stripeCustomerId but webhook missed.
+    //   2. Missing customer: search by email, may find multiple customers.
+    //   3. Multiple subs: pick the highest tier (e.g. covenant_sower > legacy_sower).
+    if (user.subscriptionTier === "free" && req.user?.email) {
       try {
-        const subscriptions = await stripe.subscriptions.list({
-          customer: user.stripeCustomerId,
-          status: "active",
-          limit: 1,
-        });
-        if (subscriptions.data.length > 0) {
-          const sub = subscriptions.data[0];
+        // Find ALL Stripe customers for this email (user may have multiple)
+        const customers = await stripe.customers.list({ email: req.user.email, limit: 5 });
+        if (customers.data.length === 0) return;
+
+        // Collect active subscriptions from all customers
+        const allSubs = [];
+        for (const c of customers.data) {
+          const subs = await stripe.subscriptions.list({ customer: c.id, status: "active", limit: 10 });
+          allSubs.push(...subs.data.map(s => ({ ...s, _customerId: c.id })));
+        }
+        if (allSubs.length === 0) return;
+
+        // Pick the highest-tier subscription
+        let bestSub = null;
+        let bestOrder = -1;
+        const TIER_ORDER = { free: 0, legacy_sower: 1, covenant_sower: 2 };
+
+        for (const sub of allSubs) {
           const priceId = sub.items?.data?.[0]?.price?.id;
           const interval = sub.items?.data?.[0]?.price?.recurring?.interval;
           const tierId = await resolveTierFromPriceId(priceId, interval) || "free";
-          const periodEnd = sub.current_period_end
-            ? new Date(sub.current_period_end * 1000)
+          const order = TIER_ORDER[tierId.replace(/_monthly$/, "")] ?? 0;
+          if (order > bestOrder) {
+            bestOrder = order;
+            bestSub = { sub, tierId };
+          }
+        }
+
+        if (bestSub) {
+          const periodEnd = bestSub.sub.current_period_end
+            ? new Date(bestSub.sub.current_period_end * 1000)
             : null;
 
           await prisma.systemUser.update({
             where: { id: req.user.id },
             data: {
-              subscriptionTier: tierId,
-              stripeSubscriptionId: sub.id,
+              subscriptionTier: bestSub.tierId,
+              stripeCustomerId: bestSub.sub._customerId,
+              stripeSubscriptionId: bestSub.sub.id,
               ...(periodEnd && { accessExpiresAt: periodEnd }),
             },
           });
 
-          user = { ...user, subscriptionTier: tierId, accessExpiresAt: periodEnd };
-          console.log(`[StripeReconciliation] Synced user ${req.user.id} → ${tierId}`);
+          user = { ...user, subscriptionTier: bestSub.tierId, accessExpiresAt: periodEnd, stripeCustomerId: bestSub.sub._customerId, stripeSubscriptionId: bestSub.sub.id };
+          console.log(`[StripeReconciliation] Synced user ${req.user.id} → ${bestSub.tierId} (customer: ${bestSub.sub._customerId})`);
         }
       } catch (stripeErr) {
         console.warn("[StripeReconciliation] Failed to sync from Stripe:", stripeErr.message);
