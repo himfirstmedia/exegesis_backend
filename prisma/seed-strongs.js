@@ -217,6 +217,123 @@ const VERSE_WORDS_ROMANS_8_28 = [
   { translation: 'Berean', bookName: 'Romans', chapter: 8, verse: 28, wordOrder: 26, surfaceText: '.', strongsId: null, lemma: null, morphology: null },
 ];
 
+// ── Verse Word Studies (admin explanations attached to specific verses) ────
+
+const VERSE_WORD_STUDIES = [
+  // John 3:16 word studies
+  {
+    strongsId: 'G0025',
+    bookName: 'John',
+    chapter: 3,
+    verse: 16,
+    translation: 'BSB',
+    surfaceText: 'loved',
+    adminExplanation: 'Unconditional, self-sacrificing love — the verb form describing God\'s action toward the world. This is not mere affection but a deliberate choice to give His Son for humanity\'s redemption.',
+  },
+  {
+    strongsId: 'G0166',
+    bookName: 'John',
+    chapter: 3,
+    verse: 16,
+    translation: 'BSB',
+    surfaceText: 'eternal',
+    adminExplanation: 'Describes the quality and duration of the life believers receive — not just endless existence but a new quality of life that begins now and continues forever. It is the life of the age to come breaking into the present.',
+  },
+  {
+    strongsId: 'G2222',
+    bookName: 'John',
+    chapter: 3,
+    verse: 16,
+    translation: 'BSB',
+    surfaceText: 'life',
+    adminExplanation: 'The life that God gives through Christ — spiritual, eternal, abundant life. In John\'s Gospel, this word carries the deepest theological meaning of being united with Christ.',
+  },
+  {
+    strongsId: 'G3439',
+    bookName: 'John',
+    chapter: 3,
+    verse: 16,
+    translation: 'BSB',
+    surfaceText: 'only',
+    adminExplanation: 'Unique, one-of-a-kind, the only one of its kind. Emphasizes the unparalleled and unique relationship Jesus has with the Father as the eternal Son.',
+  },
+  {
+    strongsId: 'G4100',
+    bookName: 'John',
+    chapter: 3,
+    verse: 16,
+    translation: 'BSB',
+    surfaceText: 'believes',
+    adminExplanation: 'To trust in, to rely on, to have faith in. In John\'s Gospel, this is the single condition for receiving eternal life — not works, not heritage, but personal trust in Christ.',
+  },
+  // Genesis 1:1 word studies
+  {
+    strongsId: 'H7225',
+    bookName: 'Genesis',
+    chapter: 1,
+    verse: 1,
+    translation: 'BSB',
+    surfaceText: 'In',
+    adminExplanation: 'Refers to the first or best portion of something. In Genesis 1:1, it marks the starting point of creation — the beginning of time, space, and matter as we know them. God existed before this beginning.',
+  },
+  {
+    strongsId: 'H0430',
+    bookName: 'Genesis',
+    chapter: 1,
+    verse: 1,
+    translation: 'BSB',
+    surfaceText: 'God',
+    adminExplanation: 'The plural form used for the one true God of Israel, suggesting majesty, fullness, and the complexity of the divine nature. Often seen as a hint of the Trinity in the Old Testament.',
+  },
+  {
+    strongsId: 'H1254',
+    bookName: 'Genesis',
+    chapter: 1,
+    verse: 1,
+    translation: 'BSB',
+    surfaceText: 'created',
+    adminExplanation: 'Exclusively used for divine creation — to bring something entirely new into existence out of nothing (creatio ex nihilo). Never used of human creative activity in the Hebrew Bible.',
+  },
+  // Psalm 23:1 word studies
+  {
+    strongsId: 'H3068',
+    bookName: 'Psalms',
+    chapter: 23,
+    verse: 1,
+    translation: 'BSB',
+    surfaceText: 'LORD',
+    adminExplanation: 'The sacred personal name of God, YHWH, revealed to Moses at the burning bush. Represents God\'s covenant relationship with His people — He is not just any god but the God who keeps promises.',
+  },
+  {
+    strongsId: 'H7462',
+    bookName: 'Psalms',
+    chapter: 23,
+    verse: 1,
+    translation: 'BSB',
+    surfaceText: 'shepherd',
+    adminExplanation: 'To shepherd, to tend, to pasture. David draws from his own experience as a shepherd to describe God\'s intimate care, guidance, and provision for His people. The shepherd feeds, leads, and protects the flock.',
+  },
+  // Romans 8:28 word studies
+  {
+    strongsId: 'G0026',
+    bookName: 'Romans',
+    chapter: 8,
+    verse: 28,
+    translation: 'BSB',
+    surfaceText: 'love',
+    adminExplanation: 'The highest form of love — unconditional, self-sacrificing, covenantal love. In Romans 8:28, this defines those who are called according to God\'s purpose — those who have responded to God\'s love with faithful love.',
+  },
+  {
+    strongsId: 'G1343',
+    bookName: 'Romans',
+    chapter: 8,
+    verse: 28,
+    translation: 'BSB',
+    surfaceText: 'purpose',
+    adminExplanation: 'Right standing with God, the state of being morally right and declared righteous. In Paul\'s theology, righteousness is not earned but received through faith, and it forms the basis of God\'s sovereign purpose for believers.',
+  },
+];
+
 async function seed() {
   console.log('Seeding Strong\'s dictionary...');
 
@@ -245,6 +362,70 @@ async function seed() {
     data: allVerseWords,
   });
   console.log(`  ✓ ${allVerseWords.length} verse word mappings seeded`);
+
+  // ── Seed Verse Word Studies (admin explanations attached to verses) ──
+  console.log('Seeding verse word studies...');
+  await prisma.verseWordStudy.deleteMany({});
+  console.log('  ✓ Cleared existing verse word studies');
+
+  for (const study of VERSE_WORD_STUDIES) {
+    await prisma.verseWordStudy.upsert({
+      where: {
+        strongsId_bookName_chapter_verse_translation: {
+          strongsId: study.strongsId,
+          bookName: study.bookName,
+          chapter: study.chapter,
+          verse: study.verse,
+          translation: study.translation,
+        },
+      },
+      update: {
+        surfaceText: study.surfaceText,
+        adminExplanation: study.adminExplanation,
+      },
+      create: {
+        strongsId: study.strongsId,
+        bookName: study.bookName,
+        chapter: study.chapter,
+        verse: study.verse,
+        translation: study.translation,
+        surfaceText: study.surfaceText,
+        adminExplanation: study.adminExplanation,
+      },
+    });
+  }
+  console.log(`  ✓ ${VERSE_WORD_STUDIES.length} verse word studies seeded`);
+
+  // ── Sync verseReferences on all StrongsDictionary entries that have studies ──
+  console.log('Syncing verse references...');
+  const studiedIds = [...new Set(VERSE_WORD_STUDIES.map((s) => s.strongsId))];
+  for (const strongsId of studiedIds) {
+    const studies = await prisma.verseWordStudy.findMany({
+      where: { strongsId },
+      select: {
+        bookName: true,
+        chapter: true,
+        verse: true,
+        translation: true,
+        surfaceText: true,
+        adminExplanation: true,
+      },
+      orderBy: [{ bookName: 'asc' }, { chapter: 'asc' }, { verse: 'asc' }],
+    });
+    const references = studies.map((s) => ({
+      bookName: s.bookName,
+      chapter: s.chapter,
+      verse: s.verse,
+      translation: s.translation,
+      surfaceText: s.surfaceText || null,
+      adminExplanation: s.adminExplanation || null,
+    }));
+    await prisma.strongsDictionary.update({
+      where: { strongsId },
+      data: { verseReferences: references },
+    });
+  }
+  console.log(`  ✓ Synced verseReferences for ${studiedIds.length} entries`);
 
   console.log('Seed complete!');
 }
