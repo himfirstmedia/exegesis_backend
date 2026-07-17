@@ -17,6 +17,7 @@ import exegesisRouter from "./modules/exegesis/route.js"
 import triviaRouter from "./modules/trivia/route.js"
 import studyToolsRouter from "./modules/study-tools/route.js"
 import bookProloguesRouter from "./modules/book-prologues/route.js"
+import verseResourcesRouter from "./modules/verse-resources/route.js"
 import subscriptionsRouter from "./modules/subscriptions/routes.js"
 import popularSearchesRouter from "./modules/popular-searches/route.js"
 import { handleStripeWebhook } from "./modules/subscriptions/webhook.js"
@@ -73,6 +74,7 @@ app.use("/exegesis", exegesisRouter)
 app.use("/trivia", triviaRouter)
 app.use("/study-tools", studyToolsRouter)
 app.use("/book-prologues", bookProloguesRouter)
+app.use("/verse-resources", verseResourcesRouter)
 app.use("/subscriptions", subscriptionsRouter)
 app.use("/popular-searches", popularSearchesRouter)
 

@@ -25,6 +25,76 @@ function serializeResources(resource) {
   };
 }
 
+function baseVerseResource(bookName, chapter, verseNumber) {
+  return {
+    id: 0,
+    bookName,
+    chapter: Number(chapter),
+    verseStart: Number(verseNumber),
+    verseEnd: Number(verseNumber),
+    commentaries: [],
+    crossReferences: [],
+    wordStudies: [],
+    dictionaryTerms: [],
+    interlinearWords: [],
+    relatedTopics: [],
+    studyTools: [],
+  };
+}
+
+function verseMatchesTool(tool, verseNumber) {
+  const target = Number(verseNumber);
+  const refs = Array.isArray(tool.verseRefs) ? tool.verseRefs : [];
+  const refMatch = refs.some((ref) => Number(ref?.verse) === target);
+  const wordMatch = Array.isArray(tool.studyToolWords)
+    && tool.studyToolWords.some((word) => Number(word?.verse) === target);
+  return refMatch || wordMatch;
+}
+
+async function getStudyToolsForVerse(bookName, chapter, verseNumber) {
+  const tools = await prisma.chapterStudyTool.findMany({
+    where: {
+      bookName,
+      chapter: BigInt(chapter),
+    },
+    orderBy: [{ toolType: 'asc' }, { order: 'asc' }],
+    include: {
+      studyToolWords: {
+        orderBy: { wordOrder: 'asc' },
+        include: {
+          strongs: {
+            select: {
+              strongsId: true,
+              originalWord: true,
+              transliteration: true,
+              shortDefinition: true,
+              fullDefinition: true,
+              adminExplanation: true,
+              language: true,
+              partOfSpeech: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  return tools
+    .filter((tool) => verseMatchesTool(tool, verseNumber))
+    .map((tool) => {
+      const serialized = serializeBigInt(tool);
+      return {
+        ...serialized,
+        verseRefs: Array.isArray(serialized.verseRefs)
+          ? serialized.verseRefs.filter((ref) => Number(ref?.verse) === Number(verseNumber))
+          : [],
+        studyToolWords: Array.isArray(serialized.studyToolWords)
+          ? serialized.studyToolWords.filter((word) => Number(word?.verse) === Number(verseNumber))
+          : [],
+      };
+    });
+}
+
 /** Translate UI-facing fields inside a verse resource object */
 async function translateResourceData(resource, lang) {
   if (!resource || lang === 'en') return resource;
@@ -101,14 +171,13 @@ export const getVerseResources = async (data) => {
       return resource;
     }, CACHE_TTL);
 
-    if (!result) {
-      return { status: 404, message: 'No resources found for this verse', data: null };
-    }
+    const studyTools = await getStudyToolsForVerse(bookName, chapter, verseNumber);
+    const resourceData = result ? serializeResources(result) : baseVerseResource(bookName, chapter, verseNumber);
+    resourceData.studyTools = studyTools;
 
-    const data = serializeResources(result);
-    await translateResourceData(data, lang);
+    await translateResourceData(resourceData, lang);
 
-    const response = { status: 200, message: 'Resources retrieved successfully', data };
+    const response = { status: 200, message: 'Resources retrieved successfully', data: resourceData };
     return lang !== 'en' ? translateResult(response, lang) : response;
   } catch (error) {
     console.error('getVerseResources error:', error);

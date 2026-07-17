@@ -40,3 +40,35 @@ export const deleteTool = async (req, res) => {
     return res.status(500).json(formatApiResponse({ status: 500, message: 'Error deleting tool: ' + error.message }));
   }
 };
+
+// ── Single tool CRUD ─────────────────────────────────────────────────────────
+
+export const getSingleTool = async (req, res) => {
+  try {
+    const result = await studyToolsService.getSingleTool(req.params.id);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[StudyToolsController] getSingleTool error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error fetching tool: ' + error.message }));
+  }
+};
+
+export const createSingleTool = async (req, res) => {
+  try {
+    const result = await studyToolsService.createSingleTool(req.user.id, req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[StudyToolsController] createSingleTool error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error creating tool: ' + error.message }));
+  }
+};
+
+export const updateSingleTool = async (req, res) => {
+  try {
+    const result = await studyToolsService.updateSingleTool(req.user.id, req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[StudyToolsController] updateSingleTool error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error updating tool: ' + error.message }));
+  }
+};

@@ -12,4 +12,9 @@ router.post('/admin/chapter-study-tools/upsert', authenticate, requireAdmin, stu
 router.post('/admin/chapter-study-tools/get-all', authenticate, requireAdmin, studyToolsController.getAllTools);
 router.post('/admin/chapter-study-tools/delete', authenticate, requireAdmin, studyToolsController.deleteTool);
 
+// Single tool CRUD
+router.get('/admin/chapter-study-tools/:id', authenticate, requireAdmin, studyToolsController.getSingleTool);
+router.post('/admin/chapter-study-tools/create', authenticate, requireAdmin, studyToolsController.createSingleTool);
+router.post('/admin/chapter-study-tools/update', authenticate, requireAdmin, studyToolsController.updateSingleTool);
+
 export default router;

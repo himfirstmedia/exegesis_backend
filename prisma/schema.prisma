@@ -506,21 +506,27 @@ model JournalTemplate {
 }
 
 model StrongsDictionary {
-  strongsId       String      @id
-  originalWord    String?
-  transliteration String?
-  pronunciation   String?
-  shortDefinition String      @map("short_definition")
-  fullDefinition  String?     @map("full_definition")
-  language        String      @default("greek")
-  usageCount      Int?        @map("usage_count")
-  partOfSpeech    String?     @map("part_of_speech")
-  grammaticalCase String?     @map("grammatical_case")
-  gender          String?
-  number          String?
-  crossReferences String?     @map("cross_references")
-  createdOn       DateTime    @default(now()) @map("created_on")
-  verseWords      VerseWord[]
+  strongsId        String          @id
+  originalWord     String?
+  transliteration  String?
+  pronunciation    String?
+  shortDefinition  String          @map("short_definition")
+  fullDefinition   String?         @map("full_definition")
+  language         String          @default("greek")
+  usageCount       Int?            @map("usage_count")
+  partOfSpeech     String?         @map("part_of_speech")
+  grammaticalCase  String?         @map("grammatical_case")
+  gender           String?
+  number           String?
+  crossReferences  String?         @map("cross_references")
+  adminExplanation String?         @map("admin_explanation")
+  /** JSON array of {bookName, chapter, verse, translation, surfaceText} — quick lookup of all verse attachments */
+  verseReferences  Json?           @map("verse_references")
+  createdOn        DateTime        @default(now()) @map("created_on")
+  updatedOn        DateTime?       @updatedAt @map("updated_on")
+  verseWords       VerseWord[]
+  studyToolWords   StudyToolWord[]
+  verseWordStudies VerseWordStudy[]
 
   @@map("strongs_dictionary")
 }
@@ -670,19 +676,40 @@ model VerseResource {
 }
 
 model ChapterStudyTool {
-  id          BigInt  @id @default(autoincrement())
-  bookName    String  @map("book_name")
+  id          BigInt           @id @default(autoincrement())
+  bookName    String           @map("book_name")
   chapter     BigInt
-  toolType    String  @map("tool_type") // COMMAND | PROMISE | WARNING | REPEATED_WORD | TRANSITION | CONTRAST
+  toolType    String           @map("tool_type") // COMMAND | PROMISE | WARNING | REPEATED_WORD | TRANSITION | CONTRAST
   label       String
   description String?
-  verseRefs   Json    @map("verse_refs") // [{verse, excerpt}]
-  strongsIds  Json?   @map("strongs_ids") // [strongsId, ...]
-  order       Int     @default(0)
+  verseRefs   Json             @map("verse_refs") // [{verse, excerpt}]
+  strongsIds  Json?            @map("strongs_ids") // [strongsId, ...]
+  order       Int              @default(0)
+  studyToolWords StudyToolWord[]
 
   @@unique([bookName, chapter, toolType, label])
   @@index([bookName, chapter])
   @@map("chapter_study_tools")
+}
+
+model StudyToolWord {
+  id               BigInt             @id @default(autoincrement())
+  studyToolId      BigInt             @map("study_tool_id")
+  strongsId        String             @map("strongs_id")
+  bookName         String             @map("book_name")
+  chapter          BigInt
+  verse            BigInt
+  surfaceText      String             @map("surface_text")
+  originalWord     String?            @map("original_word")
+  transliteration  String?
+  adminExplanation String?            @map("admin_explanation")
+  wordOrder        Int                @default(0) @map("word_order")
+  studyTool        ChapterStudyTool   @relation(fields: [studyToolId], references: [id], onDelete: Cascade)
+  strongs          StrongsDictionary? @relation(fields: [strongsId], references: [strongsId])
+
+  @@index([studyToolId])
+  @@index([strongsId])
+  @@map("study_tool_words")
 }
 
 model PopularSearchLog {
@@ -698,6 +725,29 @@ model PopularSearchLog {
   @@index([query, scope, createdOn])
   @@index([scope, createdOn])
   @@map("popular_search_log")
+}
+
+model VerseWordStudy {
+  id               BigInt             @id @default(autoincrement())
+  strongsId        String             @map("strongs_id")
+  bookName         String             @map("book_name")
+  chapter          Int
+  /** Nullable — allows chapter-level attachments (word study for the whole chapter).
+   *  With PostgreSQL, multiple rows where verse=NULL are allowed because NULL != NULL in unique constraints. */
+  verse            Int?
+  translation      String             @default("BSB")
+  surfaceText      String?            @map("surface_text")
+  adminExplanation String?            @map("admin_explanation")
+  createdBy        String?            @map("created_by")
+  createdOn        DateTime           @default(now()) @map("created_on")
+  updatedBy        String?            @map("updated_by")
+  updatedOn        DateTime           @updatedAt @map("updated_on")
+  strongs          StrongsDictionary? @relation(fields: [strongsId], references: [strongsId])
+
+  @@unique([strongsId, bookName, chapter, verse, translation])
+  @@index([strongsId])
+  @@index([bookName, chapter])
+  @@map("verse_word_studies")
 }
 
 model BookPrologue {
