@@ -42,7 +42,7 @@ const EDGE_VOICES = [
   { name: "Davis (Male)",    voiceId: "en-US-DavisNeural",   source: "edge", category: "Neural" },
   { name: "Emma (Female)",   voiceId: "en-US-EmmaNeural",    source: "edge", category: "Neural" },
   { name: "Brian (Male)",    voiceId: "en-US-BrianNeural",   source: "edge", category: "Neural" },
-  { name: "Jane (Female)",   voiceId: "en-GB-SoniaNeural",   source: "edge", category: "Neural" },
+  { name: "Sonia (Female)",  voiceId: "en-GB-SoniaNeural",   source: "edge", category: "Neural" },
   { name: "Ryan (Male)",     voiceId: "en-GB-RyanNeural",    source: "edge", category: "Neural" },
 ];
 
@@ -57,9 +57,43 @@ const ELEVENLABS_VOICE_IDS = {
   "Serena": "pMsXgVXv3BLzN3jMGXJd",
 };
 
-const DEFAULT_EDGE_VOICE = "en-US-DavisNeural";
+const DEFAULT_EDGE_VOICE = "en-GB-RyanNeural";
 const DEFAULT_ELEVENLABS_VOICE = "21m00Tcm4TlvDq8ikWAM";
 const ELEVENLABS_MODEL = "eleven_multilingual_v2";
+
+// ── Reusable Edge TTS client ──────────────────────────────────────────────
+let _edgeClient = null;
+let _clientVoice = null;
+let _clientFormat = null;
+
+const getOrCreateEdgeClient = async (voiceId, outputFormat) => {
+  if (
+    _edgeClient &&
+    _clientVoice === voiceId &&
+    _clientFormat === outputFormat
+  ) {
+    return _edgeClient;
+  }
+  // Close old connection before creating a new one
+  if (_edgeClient) {
+    try { _edgeClient.close(); } catch {}
+  }
+  const tts = new MsEdgeTTS();
+  await tts.setMetadata(voiceId, outputFormat);
+  _edgeClient = tts;
+  _clientVoice = voiceId;
+  _clientFormat = outputFormat;
+  return tts;
+};
+
+const resetEdgeClient = () => {
+  if (_edgeClient) {
+    try { _edgeClient.close(); } catch {}
+  }
+  _edgeClient = null;
+  _clientVoice = null;
+  _clientFormat = null;
+};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -74,7 +108,7 @@ const isElevenLabsVoice = (voiceId) => {
 // ── Public API ─────────────────────────────────────────────────────────────
 
 export const getStatus = () => ({
-  enabled: true, // Edge TTS is always available
+  enabled: true,
   hasApiKey: !!ELEVENLABS_API_KEY,
   elevenLabsEnabled: ELEVENLABS_ENABLED && !!ELEVENLABS_API_KEY,
 });
@@ -86,7 +120,6 @@ export const getVoices = async () => {
     return edgeVoices;
   }
 
-  // Fetch ElevenLabs voices and prepend Edge voices
   try {
     const response = await fetch(`${ELEVENLABS_BASE}/voices`, {
       headers: { "xi-api-key": ELEVENLABS_API_KEY },
@@ -105,32 +138,48 @@ export const getVoices = async () => {
   }
 };
 
-// ── Edge TTS synthesis ─────────────────────────────────────────────────────
+// ── Edge TTS synthesis (reusable client) ──────────────────────────────────
 
 const synthesizeEdge = async (text, voiceId = DEFAULT_EDGE_VOICE, speed = 1.0) => {
   const cacheKey = getCacheKey(text, voiceId, speed);
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
 
-  const tts = new MsEdgeTTS();
-  await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+  const format = OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3;
 
   // Edge TTS rate: "+0%" = normal, "+20%" = 1.2x, "-20%" = 0.8x
   const ratePercent = Math.round((speed - 1) * 100);
   const rate = ratePercent === 0 ? "+0%" : `${ratePercent > 0 ? "+" : ""}${ratePercent}%`;
 
-  const { audioStream } = await tts.toStream(text, { rate });
+  try {
+    const tts = await getOrCreateEdgeClient(voiceId, format);
+    const { audioStream } = await tts.toStream(text, { rate });
 
-  const chunks = [];
-  await new Promise((resolve, reject) => {
-    audioStream.on("data", (d) => chunks.push(d));
-    audioStream.on("end", resolve);
-    audioStream.on("error", reject);
-  });
+    const chunks = [];
+    await new Promise((resolve, reject) => {
+      audioStream.on("data", (d) => chunks.push(d));
+      audioStream.on("end", resolve);
+      audioStream.on("error", reject);
+    });
 
-  const buffer = Buffer.concat(chunks);
-  setInCache(cacheKey, buffer);
-  return buffer;
+    const buffer = Buffer.concat(chunks);
+    if (buffer.length === 0) {
+      throw new Error("Empty audio received from Edge TTS");
+    }
+    setInCache(cacheKey, buffer);
+    return buffer;
+  } catch (err) {
+    // On WebSocket/connection error, reset the client and fall back to default voice
+    console.warn(`[TTS] Edge TTS failed for voice "${voiceId}":`, err.message);
+    resetEdgeClient();
+
+    // If this was not the default voice, retry once with default
+    if (voiceId !== DEFAULT_EDGE_VOICE) {
+      console.warn(`[TTS] Retrying with default voice "${DEFAULT_EDGE_VOICE}"`);
+      return synthesizeEdge(text, DEFAULT_EDGE_VOICE, speed);
+    }
+    throw err;
+  }
 };
 
 // ── ElevenLabs synthesis ───────────────────────────────────────────────────
@@ -175,12 +224,10 @@ const synthesizeElevenLabs = async (text, voiceId, speed = 1.0) => {
 // ── Main synthesize ────────────────────────────────────────────────────────
 
 export const synthesize = async (text, voiceId, speed = 1.0) => {
-  // Route to ElevenLabs if enabled and voice is an ElevenLabs voice
   if (ELEVENLABS_ENABLED && ELEVENLABS_API_KEY && voiceId && isElevenLabsVoice(voiceId)) {
     return synthesizeElevenLabs(text, voiceId, speed);
   }
 
-  // Default: Edge TTS (free, neural)
   const edgeVoice = (voiceId && isEdgeVoice(voiceId)) ? voiceId : DEFAULT_EDGE_VOICE;
   return synthesizeEdge(text, edgeVoice, speed);
 };
