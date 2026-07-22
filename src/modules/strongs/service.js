@@ -25,12 +25,26 @@ export const getStrongsEntry = async (strongsId) => {
 };
 
 export const searchStrongs = async (query, limit = 50, offset = 0) => {
+  const trimmedQuery = query.trim();
+  const strongsQuery = trimmedQuery.toUpperCase();
   const where = {
     OR: [
-      { strongsId: { contains: query.trim().toUpperCase(), mode: 'insensitive' } },
-      { originalWord: { contains: query.trim(), mode: 'insensitive' } },
-      { transliteration: { contains: query.trim(), mode: 'insensitive' } },
-      { shortDefinition: { contains: query.trim(), mode: 'insensitive' } },
+      { strongsId: { contains: strongsQuery, mode: 'insensitive' } },
+      { originalWord: { contains: trimmedQuery, mode: 'insensitive' } },
+      { transliteration: { contains: trimmedQuery, mode: 'insensitive' } },
+      { shortDefinition: { contains: trimmedQuery, mode: 'insensitive' } },
+      { fullDefinition: { contains: trimmedQuery, mode: 'insensitive' } },
+      { adminExplanation: { contains: trimmedQuery, mode: 'insensitive' } },
+      {
+        verseWords: {
+          some: {
+            OR: [
+              { lemma: { contains: trimmedQuery, mode: 'insensitive' } },
+              { surfaceText: { contains: trimmedQuery, mode: 'insensitive' } },
+            ],
+          },
+        },
+      },
     ],
   };
 
@@ -45,8 +59,15 @@ export const searchStrongs = async (query, limit = 50, offset = 0) => {
         originalWord: true,
         transliteration: true,
         shortDefinition: true,
+        fullDefinition: true,
         language: true,
+        partOfSpeech: true,
+        grammaticalCase: true,
+        gender: true,
+        number: true,
         usageCount: true,
+        crossReferences: true,
+        adminExplanation: true,
       },
     }),
     prisma.strongsDictionary.count({ where }),

@@ -382,6 +382,17 @@ const TRANSLATION_ABBR = {
   YLT: 'YLT', Darby: 'DBY', Webster: 'WBS', BBE: 'BBE',
 };
 
+const buildPrefixTsQuery = (input = '') => {
+  const terms = input
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map(term => term.replace(/[^a-z0-9]/g, ''))
+    .filter(Boolean);
+
+  return terms.map(term => `${term}:*`).join(' & ');
+};
+
 export const searchCross = async (req, res) => {
   try {
     const { query, translations, bookName, limit, offset } = req.body;
@@ -417,9 +428,20 @@ export const searchCross = async (req, res) => {
 
     let results;
 
-    // Try tsvector search first, fall back to ILIKE if verse_tsv column doesn't exist
+    // Try prefix tsvector search first, fall back to ILIKE if verse_tsv column doesn't exist.
+    // Prefix search makes queries like "begin" match "begin", "beginning", etc.
     try {
-      conditions.push(`verse_tsv @@ websearch_to_tsquery('english', ${addParam(searchTerm)})`);
+      const prefixTsQuery = buildPrefixTsQuery(searchTerm);
+      const likeParam = addParam(`%${searchTerm}%`);
+      const tsParam = prefixTsQuery ? addParam(prefixTsQuery) : null;
+
+      conditions.push(tsParam
+        ? `(verse_tsv @@ to_tsquery('english', ${tsParam}) OR verse_text ILIKE ${likeParam})`
+        : `verse_text ILIKE ${likeParam}`);
+
+      const rankExpr = tsParam
+        ? `ts_rank(verse_tsv, to_tsquery('english', ${tsParam}))`
+        : '0';
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -435,7 +457,7 @@ export const searchCross = async (req, res) => {
           chapter,
           verse,
           verse_text,
-          ts_rank(verse_tsv, websearch_to_tsquery('english', ${addParam(searchTerm)})) AS rank
+          ${rankExpr} AS rank
         FROM search_index
         ${whereClause}
         ORDER BY rank DESC, book_number ASC, chapter ASC, verse ASC
@@ -559,7 +581,17 @@ export const searchFTS = async (req, res) => {
       return `$${paramCount}`;
     };
 
-    conditions.push(`verse_text ILIKE ${addParam(`%${searchTerm}%`)}`);
+    const prefixTsQuery = buildPrefixTsQuery(searchTerm);
+    const likeParam = addParam(`%${searchTerm}%`);
+    const tsParam = prefixTsQuery ? addParam(prefixTsQuery) : null;
+
+    conditions.push(tsParam
+      ? `(verse_tsv @@ to_tsquery('english', ${tsParam}) OR verse_text ILIKE ${likeParam})`
+      : `verse_text ILIKE ${likeParam}`);
+
+    const rankExpr = tsParam
+      ? `ts_rank(verse_tsv, to_tsquery('english', ${tsParam}))`
+      : '0';
 
     if (translationId) {
       conditions.push(`translation = ${addParam(translationId)}`);
@@ -585,10 +617,11 @@ export const searchFTS = async (req, res) => {
         book_name,
         chapter,
         verse,
-        verse_text
+        verse_text,
+        ${rankExpr} AS rank
       FROM search_index
       ${whereClause}
-      ORDER BY book_number ASC, chapter ASC, verse ASC
+      ORDER BY rank DESC, book_number ASC, chapter ASC, verse ASC
       OFFSET ${skip}
       LIMIT ${maxLimit}
     `;
@@ -603,6 +636,7 @@ export const searchFTS = async (req, res) => {
     const data = (rows).map((row) => ({
       ...row,
       headline: row.verse_text.replace(markPattern, '<mark>$1</mark>'),
+      rank: row.rank ? Number(row.rank) : 0,
       book_number: Number(row.book_number),
       chapter: Number(row.chapter),
       verse: Number(row.verse),
