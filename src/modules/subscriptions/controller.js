@@ -539,7 +539,9 @@ export const getSubscriptionStatus = async (req, res) => {
       try {
         // Find ALL Stripe customers for this email (user may have multiple)
         const customers = await stripe.customers.list({ email: req.user.email, limit: 5 });
-        if (customers.data.length === 0) return;
+        if (customers.data.length === 0) {
+          return res.json(formatApiResponse({ status: 200, message: "No subscription found", data: { ...user, tierMeta: null } }));
+        }
 
         // Collect active subscriptions from all customers
         const allSubs = [];

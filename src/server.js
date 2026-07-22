@@ -8,6 +8,7 @@ import bibleRouter from "./modules/bible/route.js";
 import readingPlanRouter from "./modules/readingPlan/route.js";
 import journalRouter from "./modules/journal/route.js";
 import { formatApiResponse } from "./utils/helpers.js";
+import { errorHandler } from "./middlewares/errorHandler.middleware.js";
 import { startEmailScheduler } from "./services/emailScheduler.js";
 import { startPopularSearchCleanup } from "./services/popularSearchCleanup.js";
 import translationRouter from "./modules/bible-translations/route.js"
@@ -88,12 +89,15 @@ app.get("/health", (req, res) => {
   );
 });
 
+app.use(errorHandler);
+
 const PORT = process.env.PORT || 5001;
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Exegesis server running on port ${PORT}`);    startEmailScheduler();
-    startPopularSearchCleanup();
-  });
+  console.log(`Exegesis server running on port ${PORT}`);
+  startEmailScheduler();
+  startPopularSearchCleanup();
+});
 
 process.on("unhandledRejection", (error) => {
   console.error("Unhandled Rejection:", error);

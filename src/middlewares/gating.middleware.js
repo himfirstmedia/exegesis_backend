@@ -5,6 +5,9 @@ const TIER_ORDER = { free: 0, legacy_sower: 1, legacy_sower_monthly: 1, covenant
 export const requireTier = (minimumTier) => {
   return async (req, res, next) => {
     try {
+      // Admin users bypass subscription checks entirely
+      if (Number(req.user?.userRole) === 1) return next();
+
       const user = await prisma.systemUser.findUnique({
         where: { id: req.user.id },
         select: { subscriptionTier: true, accessExpiresAt: true },
@@ -45,6 +48,12 @@ export const requireTier = (minimumTier) => {
 export const checkTier = (minimumTier) => {
   return async (req, res, next) => {
     try {
+      // Admin users bypass subscription checks entirely
+      if (Number(req.user?.userRole) === 1) {
+        req.hasSubscriptionAccess = true;
+        return next();
+      }
+
       const user = await prisma.systemUser.findUnique({
         where: { id: req.user.id },
         select: { subscriptionTier: true, accessExpiresAt: true },

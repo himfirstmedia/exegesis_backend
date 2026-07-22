@@ -122,6 +122,18 @@ export const getAllQuestions = async (body) => {
  * ── User endpoints ──────────────────────────────────────────────────────────
  */
 
+export const getAnsweredIds = async (userId) => {
+  const answered = await prisma.triviaAnswer.findMany({
+    where: { userId },
+    select: { questionId: true },
+  });
+  return {
+    status: 200,
+    message: 'Answered question IDs',
+    data: answered.map(a => Number(a.questionId)),
+  };
+};
+
 export const getRandomQuestion = async (userId, body) => {
   const { category, difficulty, excludeIds } = body || {};
 

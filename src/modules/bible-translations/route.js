@@ -28,6 +28,9 @@ router.post("/", listTranslations);
 
 const authAndTier = [authenticate, requireTier('legacy_sower')];
 
+// Single-translation FTS search — accepts translationId in body instead of URL
+router.post("/search-fts", ...authAndTier, searchFTS);
+
 // Cross-translation search — must be BEFORE the /:translationId routes
 // to avoid being captured as a translationId parameter
 router.post("/search-cross", ...authAndTier, searchCross);
@@ -39,6 +42,7 @@ router.post("/:translationId/verses", listVerses);
 router.post("/:translationId/verses-batch", listVersesBatch);
 router.post("/:translationId/verse", getVerseByRef);
 router.post("/:translationId/search", search);
+// Legacy route — kept for backward compatibility
 router.post("/:translationId/search-fts", ...authAndTier, searchFTS);
 router.post("/:translationId/chapter-range", getChapterRangeVerses);
 router.post("/:translationId/reading", getReading);

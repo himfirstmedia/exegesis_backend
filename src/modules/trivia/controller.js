@@ -71,6 +71,16 @@ export const submitAnswer = async (req, res) => {
   }
 };
 
+export const getAnsweredIds = async (req, res) => {
+  try {
+    const result = await triviaService.getAnsweredIds(req.user.id);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[TriviaController] getAnsweredIds error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error fetching answered IDs: ' + error.message }));
+  }
+};
+
 export const getUserStats = async (req, res) => {
   try {
     const result = await triviaService.getUserStats(req.user.id);

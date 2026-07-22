@@ -534,8 +534,9 @@ export const searchCross = async (req, res) => {
 
 export const searchFTS = async (req, res) => {
   try {
-    const { translationId } = req.params;
-    const { query, limit, offset, bookName } = req.body;
+    // Support both URL param (legacy) and body param (new)
+    const translationId = req.params.translationId || req.body.translationId;
+    const { query, limit, offset, bookName, covenant } = req.body;
 
     if (!query || query.trim().length < 2) {
       return res.status(400).json(formatApiResponse({
@@ -566,6 +567,11 @@ export const searchFTS = async (req, res) => {
     if (bookName) {
       conditions.push(`LOWER(book_name) = LOWER(${addParam(bookName)})`);
     }
+    if (covenant === 'ot') {
+      conditions.push(`book_number BETWEEN ${addParam(1)} AND ${addParam(39)}`);
+    } else if (covenant === 'nt') {
+      conditions.push(`book_number BETWEEN ${addParam(40)} AND ${addParam(66)}`);
+    }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -574,7 +580,12 @@ export const searchFTS = async (req, res) => {
     const total = totalResult[0]?.total || 0;
 
     const dataSql = `
-      SELECT book_number, book_name, chapter, verse, verse_text
+      SELECT
+        book_number,
+        book_name,
+        chapter,
+        verse,
+        verse_text
       FROM search_index
       ${whereClause}
       ORDER BY book_number ASC, chapter ASC, verse ASC
@@ -582,7 +593,20 @@ export const searchFTS = async (req, res) => {
       LIMIT ${maxLimit}
     `;
 
-    const data = await prisma.$queryRawUnsafe(dataSql, ...params);
+    const rows = await prisma.$queryRawUnsafe(dataSql, ...params);
+
+    // Generate headline with <mark> tags around matched terms
+    const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedTerm = escapeRegex(searchTerm);
+    const markPattern = new RegExp(`(${escapedTerm})`, 'gi');
+
+    const data = (rows).map((row) => ({
+      ...row,
+      headline: row.verse_text.replace(markPattern, '<mark>$1</mark>'),
+      book_number: Number(row.book_number),
+      chapter: Number(row.chapter),
+      verse: Number(row.verse),
+    }));
 
     return res.status(200).json(formatApiResponse({
       status: 200,
