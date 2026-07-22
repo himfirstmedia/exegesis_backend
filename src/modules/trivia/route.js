@@ -8,6 +8,7 @@ const router = express.Router();
 router.post('/random', authenticate, triviaController.getRandomQuestion);
 router.post('/submit', authenticate, triviaController.submitAnswer);
 router.post('/stats', authenticate, triviaController.getUserStats);
+router.post('/answered-ids', authenticate, triviaController.getAnsweredIds);
 
 // Admin CRUD (authenticated + admin)
 router.post('/create', authenticate, requireAdmin, triviaController.createQuestion);
