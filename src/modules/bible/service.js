@@ -816,10 +816,29 @@ export const getTodaysVerse = async (data = {}) => {
         console.warn("Could not fetch verse text for daily verse:", e.message);
       }
 
+      // Fetch explanation inside cache so it's cached together
+      let explanation = dailyVerse.explanation ?? null;
+      let learnMore = dailyVerse.learnMore ?? null;
+      if (!explanation) {
+        try {
+          const explanationRecord = await getVerseExplanationData(
+            dailyVerse.bookName,
+            dailyVerse.chapter,
+            dailyVerse.verseNumber,
+          );
+          explanation = explanationRecord?.explanation ?? null;
+          learnMore = explanationRecord?.learnMore ?? null;
+        } catch (e) {
+          console.warn("Could not fetch verse explanation:", e.message);
+        }
+      }
+
       return {
         dailyVerse: serializeBigInt(dailyVerse),
         bibleVersion,
         verseText,
+        explanation,
+        learnMore,
       };
     },
     1800,
@@ -827,17 +846,10 @@ export const getTodaysVerse = async (data = {}) => {
 
   if (!base) return { status: 200, message: "No daily verse found for today" };
 
-  const { dailyVerse: dv, bibleVersion, verseText } = base;
+  const { dailyVerse: dv, bibleVersion, verseText, explanation: dvExplanation, learnMore: dvLearnMore } = base;
 
-  // Fetch verse explanation — prefer VerseExplanation table, fallback to DailyVerse embedded
-  const explanationRecord = await getVerseExplanationData(
-    dv.bookName,
-    dv.chapter,
-    dv.verseNumber,
-  );
-
-  let explanation = explanationRecord?.explanation ?? dv.explanation ?? null;
-  let learnMore = explanationRecord?.learnMore ?? dv.learnMore ?? null;
+  let explanation = dvExplanation;
+  let learnMore = dvLearnMore;
 
   // Translate if non-English
   if (lang !== "en") {
@@ -1115,25 +1127,34 @@ export const getAllDailyDevotionsPublic = async (data) => {
 export const getTodaysExegesis = async (data = {}) => {
   const { lang = "en" } = data;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const exegesis = await cache.getOrSet(
+    "bible",
+    "todays-exegesis",
+    async () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-  let base = await prisma.dailyExegesis.findFirst({
-    where: { displayDate: { gte: today }, isPublished: true },
-    orderBy: { displayDate: "asc" },
-  });
+      let base = await prisma.dailyExegesis.findFirst({
+        where: { displayDate: { gte: today }, isPublished: true },
+        orderBy: { displayDate: "asc" },
+      });
 
-  if (!base) {
-    base = await prisma.dailyExegesis.findFirst({
-      where: { isPublished: true },
-      orderBy: { displayDate: "desc" },
-    });
-  }
+      if (!base) {
+        base = await prisma.dailyExegesis.findFirst({
+          where: { isPublished: true },
+          orderBy: { displayDate: "desc" },
+        });
+      }
 
-  if (!base)
+      if (!base) return null;
+
+      return serializeBigInt(base);
+    },
+    1800,
+  );
+
+  if (!exegesis)
     return { status: 404, message: "No daily exegesis found for today" };
-
-  const exegesis = serializeBigInt(base);
 
   if (lang !== "en") {
     const translated = await translateDailyExegesis(exegesis, lang);
@@ -1284,31 +1305,38 @@ const translateDailyExegesis = async (item, lang) => {
 };
 
 export const getHomeStats = async (userId) => {
-  const [
-    highlightCount,
-    favoriteCount,
-    noteCount,
-    readHistoryCount,
-    planProgressCount,
-  ] = await Promise.all([
-    prisma.highlight.count({ where: { createdBy: userId } }),
-    prisma.favorite.count({ where: { createdBy: userId } }),
-    prisma.note.count({ where: { createdBy: userId } }),
-    prisma.readHistory.count({ where: { createdBy: userId } }),
-    prisma.userPlanProgress.count({ where: { userId } }),
-  ]);
+  return cache.getOrSet(
+    "bible",
+    `home-stats:${userId}`,
+    async () => {
+      const [
+        highlightCount,
+        favoriteCount,
+        noteCount,
+        readHistoryCount,
+        planProgressCount,
+      ] = await Promise.all([
+        prisma.highlight.count({ where: { createdBy: userId } }),
+        prisma.favorite.count({ where: { createdBy: userId } }),
+        prisma.note.count({ where: { createdBy: userId } }),
+        prisma.readHistory.count({ where: { createdBy: userId } }),
+        prisma.userPlanProgress.count({ where: { userId } }),
+      ]);
 
-  return {
-    status: 200,
-    message: "Home stats fetched successfully",
-    data: {
-      highlightCount,
-      favoriteCount,
-      noteCount,
-      readHistoryCount,
-      planProgressCount,
+      return {
+        status: 200,
+        message: "Home stats fetched successfully",
+        data: {
+          highlightCount,
+          favoriteCount,
+          noteCount,
+          readHistoryCount,
+          planProgressCount,
+        },
+      };
     },
-  };
+    120,
+  );
 };
 
 /** Format a date as a locale-aware relative time string (Node Intl is guaranteed) */

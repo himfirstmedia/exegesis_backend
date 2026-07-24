@@ -558,3 +558,61 @@ export const getUserStats = async (userId) => {
     },
   };
 };
+
+/**
+ * Get today's featured trivia question (for the dashboard).
+ * Returns a random active question with options parsed into answerA/B/C/D fields.
+ */
+export const getTodaysTrivia = async () => {
+  const total = await prisma.triviaQuestion.count({ where: { isActive: true } });
+
+  if (total === 0) {
+    return { status: 200, message: 'No trivia questions available', data: null };
+  }
+
+  const randomOffset = Math.floor(Math.random() * total);
+
+  const question = await prisma.triviaQuestion.findFirst({
+    where: { isActive: true },
+    skip: randomOffset,
+    take: 1,
+  });
+
+  if (!question) {
+    return { status: 200, message: 'No trivia questions available', data: null };
+  }
+
+  // Parse options into individual answer fields
+  let options = [];
+  try {
+    options = JSON.parse(question.optionsJson || '[]');
+  } catch {
+    options = [];
+  }
+
+  const scriptureRefFormatted = [question.bookName, question.chapter, question.verseNumber]
+    .filter(Boolean)
+    .join(' ');
+  const scriptureRef = scriptureRefFormatted
+    ? `${question.bookName} ${question.chapter}:${question.verseNumber}`
+    : null;
+
+  return {
+    status: 200,
+    message: 'Today\'s trivia',
+    data: {
+      id: Number(question.id),
+      question: question.question,
+      scriptureRef: scriptureRefFormatted,
+      bookName: question.bookName,
+      chapter: question.chapter ? Number(question.chapter) : null,
+      verseNumber: question.verseNumber ? Number(question.verseNumber) : null,
+      answerA: options[0] || '',
+      answerB: options[1] || '',
+      answerC: options[2] || '',
+      answerD: options[3] || '',
+      difficulty: question.difficulty,
+      category: question.category,
+    },
+  };
+};
