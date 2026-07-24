@@ -338,10 +338,29 @@ export const verifyAccount = async (data) => {
 
   await prisma.systemUser.update({
     where: { id: user.id },
-    data: { emailVerified: true },
+    data: { emailVerified: true, isLoggedIn: true },
   });
 
-  return { status: 200, message: "Email verified successfully" };
+  const role = await prisma.role.findFirst({ where: { id: user.userRole } });
+  const token = generateToken(user);
+
+  return {
+    status: 200,
+    message: "Email verified successfully",
+    data: {
+      token,
+      tokenType: "Bearer",
+      username: user.username,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      profilePhotoUrl: user.profilePhotoUrl,
+      userRole: Number(user.userRole),
+      roleName: role?.roleName || "Member",
+      subscriptionTier: user.subscriptionTier,
+      accessExpiresAt: user.accessExpiresAt ? user.accessExpiresAt.toISOString() : null,
+    },
+  };
 };
 
 export const verifyCode = async (data) => {

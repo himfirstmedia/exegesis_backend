@@ -2,7 +2,7 @@ import Stripe from "stripe";
 import { prisma } from "../../config/db.js";
 import { formatApiResponse } from "../../utils/helpers.js";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { timeout: 10000 });
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://app.exegesisproject.org";
 
 // Deep link scheme for the mobile app — Stripe redirects back into the app after payment.
@@ -537,54 +537,61 @@ export const getSubscriptionStatus = async (req, res) => {
     //   3. Multiple subs: pick the highest tier (e.g. covenant_sower > legacy_sower).
     if (user.subscriptionTier === "free" && req.user?.email) {
       try {
-        // Find ALL Stripe customers for this email (user may have multiple)
-        const customers = await stripe.customers.list({ email: req.user.email, limit: 5 });
-        if (customers.data.length === 0) {
-          return res.json(formatApiResponse({ status: 200, message: "No subscription found", data: { ...user, tierMeta: null } }));
-        }
+        // Race the Stripe reconciliation against a 12s timeout so a slow
+        // Stripe API never blocks the entire status response.
+        await Promise.race([
+          (async () => {
+            // Find ALL Stripe customers for this email (user may have multiple)
+            const customers = await stripe.customers.list({ email: req.user.email, limit: 5 });
+            if (customers.data.length === 0) {
+              return res.json(formatApiResponse({ status: 200, message: "No subscription found", data: { ...user, tierMeta: null } }));
+            }
 
-        // Collect active subscriptions from all customers
-        const allSubs = [];
-        for (const c of customers.data) {
-          const subs = await stripe.subscriptions.list({ customer: c.id, status: "active", limit: 10 });
-          allSubs.push(...subs.data.map(s => ({ ...s, _customerId: c.id })));
-        }
-        if (allSubs.length === 0) return;
+            // Collect active subscriptions from all customers
+            const allSubs = [];
+            for (const c of customers.data) {
+              const subs = await stripe.subscriptions.list({ customer: c.id, status: "active", limit: 10 });
+              allSubs.push(...subs.data.map(s => ({ ...s, _customerId: c.id })));
+            }
+            if (allSubs.length === 0) return;
 
-        // Pick the highest-tier subscription
-        let bestSub = null;
-        let bestOrder = -1;
-        const TIER_ORDER = { free: 0, legacy_sower: 1, covenant_sower: 2 };
+            // Pick the highest-tier subscription
+            let bestSub = null;
+            let bestOrder = -1;
+            const TIER_ORDER = { free: 0, legacy_sower: 1, covenant_sower: 2 };
 
-        for (const sub of allSubs) {
-          const priceId = sub.items?.data?.[0]?.price?.id;
-          const interval = sub.items?.data?.[0]?.price?.recurring?.interval;
-          const tierId = await resolveTierFromPriceId(priceId, interval) || "free";
-          const order = TIER_ORDER[tierId.replace(/_monthly$/, "")] ?? 0;
-          if (order > bestOrder) {
-            bestOrder = order;
-            bestSub = { sub, tierId };
-          }
-        }
+            for (const sub of allSubs) {
+              const priceId = sub.items?.data?.[0]?.price?.id;
+              const interval = sub.items?.data?.[0]?.price?.recurring?.interval;
+              const tierId = await resolveTierFromPriceId(priceId, interval) || "free";
+              const order = TIER_ORDER[tierId.replace(/_monthly$/, "")] ?? 0;
+              if (order > bestOrder) {
+                bestOrder = order;
+                bestSub = { sub, tierId };
+              }
+            }
 
-        if (bestSub) {
-          const periodEnd = bestSub.sub.current_period_end
-            ? new Date(bestSub.sub.current_period_end * 1000)
-            : null;
+            if (bestSub) {
+              const periodEnd = bestSub.sub.current_period_end
+                ? new Date(bestSub.sub.current_period_end * 1000)
+                : null;
 
-          await prisma.systemUser.update({
-            where: { id: req.user.id },
-            data: {
-              subscriptionTier: bestSub.tierId,
-              stripeCustomerId: bestSub.sub._customerId,
-              stripeSubscriptionId: bestSub.sub.id,
-              ...(periodEnd && { accessExpiresAt: periodEnd }),
-            },
-          });
+              await prisma.systemUser.update({
+                where: { id: req.user.id },
+                data: {
+                  subscriptionTier: bestSub.tierId,
+                  stripeCustomerId: bestSub.sub._customerId,
+                  stripeSubscriptionId: bestSub.sub.id,
+                  ...(periodEnd && { accessExpiresAt: periodEnd }),
+                },
+              });
 
-          user = { ...user, subscriptionTier: bestSub.tierId, accessExpiresAt: periodEnd, stripeCustomerId: bestSub.sub._customerId, stripeSubscriptionId: bestSub.sub.id };
-          console.log(`[StripeReconciliation] Synced user ${req.user.id} → ${bestSub.tierId} (customer: ${bestSub.sub._customerId})`);
-        }
+              user = { ...user, subscriptionTier: bestSub.tierId, accessExpiresAt: periodEnd, stripeCustomerId: bestSub.sub._customerId, stripeSubscriptionId: bestSub.sub.id };
+              console.log(`[StripeReconciliation] Synced user ${req.user.id} → ${bestSub.tierId} (customer: ${bestSub.sub._customerId})`);
+            }
+          })(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Stripe reconciliation timed out")), 12000)),
+        ]);
       } catch (stripeErr) {
         console.warn("[StripeReconciliation] Failed to sync from Stripe:", stripeErr.message);
       }

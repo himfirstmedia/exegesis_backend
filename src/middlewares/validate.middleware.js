@@ -14,7 +14,19 @@ export const validate = (schema, source = 'body') => {
       for (const s of sources) {
         const data = req[s];
         if (data !== undefined) {
-          req[s] = schema.parse(data);
+          const parsed = schema.parse(data);
+          // In Node.js 19+, req.query is a getter-only property on IncomingMessage.
+          // Direct assignment fails, so we use defineProperty for query.
+          if (s === 'query') {
+            Object.defineProperty(req, 'query', {
+              value: parsed,
+              writable: true,
+              configurable: true,
+              enumerable: true,
+            });
+          } else {
+            req[s] = parsed;
+          }
         }
       }
       next();

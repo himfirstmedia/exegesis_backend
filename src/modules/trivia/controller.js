@@ -123,6 +123,16 @@ export const getUserPerformanceDetail = async (req, res) => {
   }
 };
 
+export const getTodaysTrivia = async (req, res) => {
+  try {
+    const result = await triviaService.getTodaysTrivia();
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[TriviaController] getTodaysTrivia error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error fetching today\'s trivia: ' + error.message }));
+  }
+};
+
 export const getQuestionPerformanceStats = async (req, res) => {
   try {
     const result = await triviaService.getQuestionPerformanceStats(req.body);
