@@ -1315,23 +1315,45 @@ export const getHomeStats = async (userId) => {
         noteCount,
         readHistoryCount,
         planProgressCount,
+        recentReads,
       ] = await Promise.all([
         prisma.highlight.count({ where: { createdBy: userId } }),
         prisma.favorite.count({ where: { createdBy: userId } }),
         prisma.note.count({ where: { createdBy: userId } }),
         prisma.readHistory.count({ where: { createdBy: userId } }),
         prisma.userPlanProgress.count({ where: { userId } }),
+        prisma.readHistory.findMany({
+          where: { createdBy: userId },
+          take: 5,
+          orderBy: { createdOn: "desc" },
+        }),
       ]);
+
+      const seenBooks = new Set();
+      const recentActivity = [];
+      for (const r of recentReads) {
+        const key = r.bookName.toLowerCase();
+        if (seenBooks.has(key)) continue;
+        seenBooks.add(key);
+        recentActivity.push({
+          bookName: r.bookName,
+          chapter: Number(r.chapter),
+          verseNumber: Number(r.verseNumber),
+          updatedOn: r.createdOn ? r.createdOn.toISOString() : null,
+        });
+        if (recentActivity.length >= 3) break;
+      }
 
       return {
         status: 200,
         message: "Home stats fetched successfully",
         data: {
-          highlightCount,
-          favoriteCount,
-          noteCount,
-          readHistoryCount,
+          chaptersRead: readHistoryCount,
+          highlights: highlightCount,
+          notes: noteCount,
+          favorites: favoriteCount,
           planProgressCount,
+          recentActivity,
         },
       };
     },

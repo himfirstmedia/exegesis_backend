@@ -61,6 +61,7 @@ export const googleLogin = async (data, deviceInfo = null) => {
       data: {
         token,
         tokenType: "Bearer",
+        id: existingUser.id,
         username: existingUser.username,
         email: existingUser.email,
         firstName: existingUser.firstName,
@@ -134,6 +135,7 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
         data: {
           token,
           tokenType: "Bearer",
+          id: updatedUser.id,
           username: updatedUser.username,
           email: updatedUser.email,
           firstName: updatedUser.firstName,
@@ -208,6 +210,7 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
     data: {
       token,
       tokenType: "Bearer",
+      id: user.id,
       username: user.username,
       email: user.email,
       firstName: user.firstName,
@@ -350,6 +353,7 @@ export const verifyAccount = async (data) => {
     data: {
       token,
       tokenType: "Bearer",
+      id: user.id,
       username: user.username,
       email: user.email,
       firstName: user.firstName,
@@ -509,6 +513,7 @@ export const login = async (data, deviceInfo = null) => {
     data: {
       token,
       tokenType: "Bearer",
+      id: user.id,
       username: user.username,
       email: user.email,
       firstName: user.firstName,
@@ -605,12 +610,13 @@ export const refreshToken = async (userId) => {
     data: {
       token,
       tokenType: "Bearer",
+      id: user.id,
       username: user.username,
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,
       profilePhotoUrl: user.profilePhotoUrl,
-      userRole: user.userRole,
+      userRole: Number(user.userRole),
       roleName: role?.roleName || "Member",
     },
   };
