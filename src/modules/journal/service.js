@@ -1146,6 +1146,51 @@ export const exportOneEntry = async (id, userId, format) => {
   };
 };
 
+export const toggleJournalLike = async (data, userId) => {
+  const { entryId } = data;
+
+  if (!entryId) {
+    return { returnCode: 400, returnMessage: "Journal entry ID is required" };
+  }
+
+  const entry = await prisma.journalEntry.findUnique({
+    where: { id: BigInt(entryId) },
+    select: { id: true, isPublished: true },
+  });
+
+  if (!entry) {
+    return { returnCode: 404, returnMessage: "Journal entry not found" };
+  }
+
+  if (!entry.isPublished) {
+    return { returnCode: 400, returnMessage: "Cannot like a private entry" };
+  }
+
+  const existing = await prisma.journalLike.findUnique({
+    where: { entryId_userId: { entryId: BigInt(entryId), userId } },
+  });
+
+  if (existing) {
+    await prisma.journalLike.delete({
+      where: { id: existing.id },
+    });
+  } else {
+    await prisma.journalLike.create({
+      data: { entryId: BigInt(entryId), userId },
+    });
+  }
+
+  const likeCount = await prisma.journalLike.count({
+    where: { entryId: BigInt(entryId) },
+  });
+
+  return {
+    returnCode: 200,
+    returnMessage: existing ? "Like removed" : "Like added",
+    returnData: { liked: !existing, likeCount },
+  };
+};
+
 export const getPublicEntries = async (data, userId) => {
   const {
     search,
@@ -1163,7 +1208,6 @@ export const getPublicEntries = async (data, userId) => {
 
   const whereClause = {
     isPublished: true,
-    userId: { not: userId }, // Exclude the current user's own entries
   };
 
   if (search) {
@@ -1198,6 +1242,14 @@ export const getPublicEntries = async (data, userId) => {
             username: true,
           },
         },
+        _count: {
+          select: { likes: true },
+        },
+        likes: {
+          where: { userId },
+          select: { id: true },
+          take: 1,
+        },
       },
     }),
     prisma.journalEntry.count({ where: whereClause }),
@@ -1206,11 +1258,20 @@ export const getPublicEntries = async (data, userId) => {
   const totalPages = Math.ceil(totalCount / pageSizeNum);
   const hasNext = pageNum < totalPages;
 
+  // Attach liked and likeCount to each entry
+  const enriched = entries.map((e) => ({
+    ...e,
+    liked: e.likes.length > 0,
+    likeCount: e._count.likes,
+    _count: undefined,
+    likes: undefined,
+  }));
+
   return {
     returnCode: 200,
     returnMessage: "Public entries fetched successfully",
     returnData: serializeBigInt({
-      entries,
+      entries: enriched,
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,

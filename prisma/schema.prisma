@@ -56,6 +56,7 @@ model SystemUser {
   highlights                   Highlight[]
   exegesisSessions             ExegesisSession[]
   journalEntries               JournalEntry[]
+  journalLikes                 JournalLike[]
   messages                     Message[]
   notes                        Note[]
   readHistories                ReadHistory[]
@@ -449,12 +450,27 @@ model JournalEntry {
   updatedBy        String?           @map("updated_by")
   exegesisSessions ExegesisSession[]
   user             SystemUser        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes            JournalLike[]
 
   @@index([userId])
   @@index([userId, createdOn])
   @@index([bookName, chapter])
   @@index([category])
   @@map("journal_entries")
+}
+
+model JournalLike {
+  id        BigInt       @id @default(autoincrement())
+  entryId   BigInt       @map("entry_id")
+  userId    String       @map("user_id")
+  createdOn DateTime     @default(now()) @map("created_on")
+  entry     JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  user      SystemUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([entryId, userId])
+  @@index([entryId])
+  @@index([userId])
+  @@map("journal_likes")
 }
 
 model JournalPrompt {

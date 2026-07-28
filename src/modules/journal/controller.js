@@ -239,6 +239,20 @@ export const getPublicEntries = async (req, res) => {
   }
 };
 
+export const toggleJournalLike = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
+    }
+    const result = await journalService.toggleJournalLike(req.body, userId);
+    return res.status(result.returnCode || 200).json(result);
+  } catch (error) {
+    console.error("Toggle journal like error:", error);
+    return res.status(500).json({ returnCode: 500, returnMessage: "Internal server error" });
+  }
+};
+
 export const searchEntriesByStrongs = async (req, res) => {
   try {
     const userId = req.user?.id;

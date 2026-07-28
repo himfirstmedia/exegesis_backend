@@ -19,6 +19,7 @@ router.post("/stats", ...authAndTier, journalController.getJournalStats);
 router.post("/export-all", ...authAndTier, journalController.exportAllEntries);
 router.post("/export-one", ...authAndTier, journalController.exportOneEntry);
 router.post("/get-public", ...authAndTier, journalController.getPublicEntries);
+router.post("/toggle-like", ...authAndTier, journalController.toggleJournalLike);
 router.post("/search-by-strongs", ...authAndTier, journalController.searchEntriesByStrongs);
 
 router.post("/prompts/create", authenticate, requireAdmin, journalController.createJournalPrompt);
