@@ -672,6 +672,40 @@ export const setJournalEntryPublicationForAdmin = async (data, adminId) => {
   };
 };
 
+// ── Verse text helper ────────────────────────────────────────────────────────
+
+const VERSE_TRANSLATION_DISPLAY = {
+  Berean: 'Berean Standard Bible',
+  BSB: 'Berean Standard Bible',
+  KJV: 'King James Version',
+  NIV: 'New International Version',
+  ESV: 'English Standard Version',
+  NASB: 'New American Standard Bible',
+  NKJV: 'New King James Version',
+  NLT: 'New Living Translation',
+  CSB: 'Christian Standard Bible',
+  WEB: 'World English Bible',
+};
+
+async function getVerseTextWithTranslation(bookName, chapter, verseNumber) {
+  try {
+    const result = await prisma.searchIndex.findFirst({
+      where: {
+        bookName,
+        chapter: Number(chapter),
+        verse: Number(verseNumber),
+      },
+      orderBy: { id: 'asc' },
+      select: { verseText: true, translation: true },
+    });
+    if (!result) return null;
+    const displayName = VERSE_TRANSLATION_DISPLAY[result.translation] || result.translation;
+    return { text: result.verseText, translation: result.translation, translationName: displayName };
+  } catch {
+    return null;
+  }
+}
+
 // ── Export Functions ─────────────────────────────────────────────────────────
 
 export const exportAllEntries = async (userId, format, ids) => {
@@ -709,14 +743,29 @@ export const exportAllEntries = async (userId, format, ids) => {
     doc.fontSize(28).font('Helvetica-Bold').text('Legacy Ledger', { align: 'center' });
     doc.fontSize(14).font('Helvetica').fillColor('#666666').text('Exegesis — Personal Study Archive', { align: 'center' });
     doc.moveDown(0.5);
-    doc.fontSize(10).fillColor('#999999').text(`Generated: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`, { align: 'center' });
+    doc.fontSize(12).fillColor('#999999').text(`Generated: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`, { align: 'center' });
     doc.moveDown(0.3);
-    doc.fontSize(10).fillColor('#999999').text(`Total Entries: ${serialized.length}`, { align: 'center' });
+    doc.fontSize(12).fillColor('#999999').text(`Total Entries: ${serialized.length}`, { align: 'center' });
     doc.moveDown(1.5);
 
     const lineY = doc.y;
     doc.moveTo(50, lineY).lineTo(545, lineY).strokeColor('#CCCCCC').stroke();
     doc.moveDown(1);
+
+    // Batch-load verse texts for all entries
+    const verseLookups = serialized
+      .filter(e => e.bookName && e.chapter && e.verseNumber)
+      .map(e => ({ bookName: e.bookName, chapter: Number(e.chapter), verse: Number(e.verseNumber), key: `${e.bookName}|${e.chapter}|${e.verseNumber}` }));
+    const uniqueLookups = [];
+    const seen = new Set();
+    for (const v of verseLookups) {
+      if (!seen.has(v.key)) { seen.add(v.key); uniqueLookups.push(v); }
+    }
+    const verseResults = await Promise.all(
+      uniqueLookups.map(v => getVerseTextWithTranslation(v.bookName, v.chapter, v.verse))
+    );
+    const verseMap = {};
+    uniqueLookups.forEach((v, i) => { verseMap[v.key] = verseResults[i]; });
 
     serialized.forEach((entry, idx) => {
       const entryNum = idx + 1;
@@ -728,16 +777,33 @@ export const exportAllEntries = async (userId, format, ids) => {
       doc.moveDown(0.2);
 
       const dateStr = new Date(entry.createdOn).toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' });
-      doc.fontSize(10).font('Helvetica').fillColor('#888888').text(dateStr);
-      doc.moveDown(0.15);
+      doc.fontSize(12).font('Helvetica').fillColor('#888888').text(dateStr);
+      doc.moveDown(0.1);
+
+      if (entry.mood) {
+        const moodLabel = entry.mood.charAt(0).toUpperCase() + entry.mood.slice(1);
+        doc.fontSize(12).font('Helvetica').fillColor('#8B5CF6').text(`Mood: ${moodLabel}`);
+        doc.moveDown(0.05);
+      }
 
       if (entry.bookName) {
         const ref = `${entry.bookName} ${entry.chapter || ''}${entry.verseNumber ? ':' + entry.verseNumber : ''}`;
-        doc.fontSize(10).font('Helvetica-Oblique').fillColor('#555555').text(`Scripture: ${ref}`);
+        doc.fontSize(12).font('Helvetica-Oblique').fillColor('#555555').text(`Scripture: ${ref}`);
         doc.moveDown(0.1);
       }
 
-      doc.fontSize(9).font('Helvetica').fillColor(catColor).text(`Category: ${entry.category.charAt(0).toUpperCase() + entry.category.slice(1)}  |  Source: ${entry.source === 'exegesis-lab' ? 'Exegesis Lab' : 'Manual'}  |  Privacy: ${entry.isPublished ? 'Public' : 'Private'}`);
+      // ── Verse text with translation ──
+      const vKey = entry.bookName && entry.chapter && entry.verseNumber ? `${entry.bookName}|${entry.chapter}|${entry.verseNumber}` : null;
+      const vInfo = vKey ? verseMap[vKey] : null;
+      if (vInfo) {
+        doc.fontSize(12).font('Helvetica-Oblique').fillColor('#666666')
+          .text(`\u201C${vInfo.text}\u201D`, { lineGap: 4, align: 'justify' });
+        doc.fontSize(12).font('Helvetica').fillColor('#999999')
+          .text(`\u2014 ${entry.bookName} ${entry.chapter}:${entry.verseNumber} (${vInfo.translationName})`);
+        doc.moveDown(0.15);
+      }
+
+      doc.fontSize(12).font('Helvetica').fillColor(catColor).text(`Category: ${entry.category.charAt(0).toUpperCase() + entry.category.slice(1)}  |  Source: ${entry.source === 'exegesis-lab' ? 'Exegesis Lab' : 'Manual'}  |  Privacy: ${entry.isPublished ? 'Public' : 'Private'}`);
       doc.moveDown(0.1);
 
       if (entry.title) {
@@ -747,48 +813,57 @@ export const exportAllEntries = async (userId, format, ids) => {
       }
 
       if (entry.content) {
-        doc.fontSize(11).font('Helvetica').fillColor('#444444').text(entry.content, { align: 'left', lineGap: 4 });
+        doc.fontSize(12).font('Helvetica').fillColor('#444444').text(entry.content, { align: 'left', lineGap: 6 });
         doc.moveDown(0.3);
       }
 
-      if (entry.reflection) {
+      if (entry.gratitude) {
         if (doc.y > 620) doc.addPage();
-        doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text('Reflection');
-        doc.fontSize(10).font('Helvetica').fillColor('#555555').text(entry.reflection, { lineGap: 3 });
-        doc.moveDown(0.2);
+        doc.fontSize(12).font('Helvetica-Bold').fillColor('#333333').text('Gratitude');
+        doc.fontSize(12).font('Helvetica').fillColor('#555555').text(entry.gratitude, { lineGap: 5 });
+        doc.moveDown(0.25);
+      }
+
+      if (entry.learnings) {
+        if (doc.y > 620) doc.addPage();
+        doc.fontSize(12).font('Helvetica-Bold').fillColor('#333333').text('Learnings');
+        doc.fontSize(12).font('Helvetica').fillColor('#555555').text(entry.learnings, { lineGap: 5 });
+        doc.moveDown(0.25);
       }
 
       if (entry.prayers) {
         if (doc.y > 620) doc.addPage();
-        doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text('Prayer');
-        doc.fontSize(10).font('Helvetica').fillColor('#555555').text(entry.prayers, { lineGap: 3 });
-        doc.moveDown(0.2);
+        doc.fontSize(12).font('Helvetica-Bold').fillColor('#333333').text('Prayer');
+        doc.fontSize(12).font('Helvetica').fillColor('#555555').text(entry.prayers, { lineGap: 5 });
+        doc.moveDown(0.25);
       }
 
       if (entry.application) {
         if (doc.y > 620) doc.addPage();
-        doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text('Application');
-        doc.fontSize(10).font('Helvetica').fillColor('#555555').text(entry.application, { lineGap: 3 });
-        doc.moveDown(0.2);
+        doc.fontSize(12).font('Helvetica-Bold').fillColor('#333333').text('Application');
+        doc.fontSize(12).font('Helvetica').fillColor('#555555').text(entry.application, { lineGap: 5 });
+        doc.moveDown(0.25);
       }
 
       if (entry.strongsWords) {
         try {
           const words = typeof entry.strongsWords === 'string' ? JSON.parse(entry.strongsWords) : entry.strongsWords;
           if (Array.isArray(words) && words.length > 0) {
-            doc.fontSize(9).font('Helvetica-Bold').fillColor('#333333').text("Strong's Words Studied:");
-            doc.moveDown(0.1);
+            doc.fontSize(12).font('Helvetica-Bold').fillColor('#333333').text("Strong's Words Studied:");
+            doc.moveDown(0.15);
             words.forEach(w => {
-              doc.fontSize(9).font('Helvetica').fillColor('#555555').text(`  • ${w.surfaceText || w.strongsId} (${w.strongsId})${w.lemma ? ` — ${w.lemma}` : ''}`);
+              doc.fontSize(12).font('Helvetica').fillColor('#555555').text(`  \u2022 ${w.surfaceText || w.strongsId} (${w.strongsId})${w.lemma ? ` \u2014 ${w.lemma}` : ''}`);
             });
-            doc.moveDown(0.2);
+            doc.moveDown(0.25);
           }
         } catch (e) {}
       }
 
       if (entry.tags) {
-        doc.fontSize(9).font('Helvetica').fillColor('#888888').text(`Tags: ${entry.tags}`);
-        doc.moveDown(0.2);
+        const tags = entry.tags.split(',').map(t => t.trim()).filter(Boolean);
+        const label = tags.map(t => `#${t}`).join('  ');
+        doc.fontSize(12).font('Helvetica').fillColor('#888888').text(label);
+        doc.moveDown(0.25);
       }
 
       if (idx < serialized.length - 1) {
@@ -819,7 +894,7 @@ export const exportAllEntries = async (userId, format, ids) => {
   // Default: txt format
   const lines = [];
   lines.push('╔══════════════════════════════════╗');
-  lines.push('       EXEGESIS LEGACY LEDGER');
+  lines.push('       EXEGESIS PROJECT LEGACY LEDGER');
   lines.push('╚══════════════════════════════════╛');
   lines.push('               EXPORT');
   lines.push('');
@@ -832,6 +907,9 @@ export const exportAllEntries = async (userId, format, ids) => {
     lines.push(`Entry #${idx + 1}`);
     lines.push('───────');
     lines.push(`Date: ${new Date(entry.createdOn).toLocaleDateString()}`);
+    if (entry.mood) {
+      lines.push(`Mood: ${entry.mood.charAt(0).toUpperCase() + entry.mood.slice(1)}`);
+    }
     if (entry.bookName) {
       lines.push(`Passage: ${entry.bookName} ${entry.chapter || ''}${entry.verseNumber ? ':' + entry.verseNumber : ''}`);
     }
@@ -843,9 +921,14 @@ export const exportAllEntries = async (userId, format, ids) => {
     lines.push('');
     if (entry.content) lines.push(entry.content);
     lines.push('');
-    if (entry.reflection) {
-      lines.push('Reflection:');
-      lines.push(entry.reflection);
+    if (entry.gratitude) {
+      lines.push('Gratitude:');
+      lines.push(entry.gratitude);
+      lines.push('');
+    }
+    if (entry.learnings) {
+      lines.push('Learnings:');
+      lines.push(entry.learnings);
       lines.push('');
     }
     if (entry.prayers) {
@@ -864,7 +947,7 @@ export const exportAllEntries = async (userId, format, ids) => {
         const words = typeof entry.strongsWords === 'string' ? JSON.parse(entry.strongsWords) : entry.strongsWords;
         if (Array.isArray(words)) {
           words.forEach(w => {
-            lines.push(`  • ${w.surfaceText || w.strongsId} (${w.strongsId})${w.lemma ? ` - ${w.lemma}` : ''}`);
+            lines.push(`  \u2022 ${w.surfaceText || w.strongsId} (${w.strongsId})${w.lemma ? ` - ${w.lemma}` : ''}`);
           });
         }
       } catch (e) {}
@@ -924,7 +1007,11 @@ export const exportOneEntry = async (id, userId, format) => {
   }
 
   if (format === 'pdf') {
-    const doc = new PDFDocument({ margin: 50, info: { Title: 'Exegesis Legacy Ledger', Author: 'Exegesis Bible App' } });
+    const verseInfo = entry.bookName && entry.chapter && entry.verseNumber
+      ? await getVerseTextWithTranslation(entry.bookName, entry.chapter, entry.verseNumber)
+      : null;
+
+    const doc = new PDFDocument({ margin: 50, info: { Title: 'Exegesis Project Legacy Ledger', Author: 'Exegesis Bible App' } });
     const buffers = [];
     doc.on('data', chunk => buffers.push(chunk));
 
@@ -944,21 +1031,30 @@ export const exportOneEntry = async (id, userId, format) => {
     const sectionHeader = ({ label, color }) => {
       doc.moveDown(0.6);
       if (doc.y > bottomY() - 50) doc.addPage();
-      doc.roundedRect(marginX, doc.y + 2, 3, 16, 1.5).fillColor(color).fill();
-      doc.fontSize(11).font('Helvetica-Bold').fillColor('#1F2937').text(label, marginX + 10, doc.y - 2);
-      doc.moveDown(0.3);
+      doc.roundedRect(marginX, doc.y + 2, 3, 18, 1.5).fillColor(color).fill();
+      doc.fontSize(12).font('Helvetica-Bold').fillColor('#1F2937').text(label, marginX + 12, doc.y - 2);
+      doc.moveDown(0.4);
     };
 
     // Helper: body text
     const bodyText = (text) => {
-      doc.fontSize(10).font('Helvetica').fillColor('#374151').text(text, { lineGap: 6, align: 'justify', paragraphGap: 4 });
+      doc.fontSize(12).font('Helvetica').fillColor('#374151').text(text, { lineGap: 7, align: 'justify', paragraphGap: 5 });
     };
 
-    // Helper: footer on every page
-    doc.on('pageAdded', () => {
-      doc.fontSize(8).font('Helvetica').fillColor('#9CA3AF');
-      doc.text('Generated by Exegesis Bible App', marginX, bottomY(), { align: 'center', width: contentWidth });
-    });
+    // Write footer on the current page before a page transition
+    const writeFooter = () => {
+      const fy = doc.page.maxY() - doc.currentLineHeight(true);
+      if (doc.y > doc.page.margins.top + 30 && doc.y < fy) {
+        doc.save();
+        doc.fontSize(12).font('Helvetica').fillColor('#9CA3AF');
+        doc.text('Generated by Exegesis Bible App', marginX, fy, { align: 'center', width: contentWidth, lineBreak: false });
+        doc.restore();
+      }
+    };
+    const origAddPage = doc.addPage.bind(doc);
+    doc.addPage = (...args) => { writeFooter(); return origAddPage(...args); };
+
+    // Helper: add a page (monkey-patched above will write footer automatically)
 
     const headerY = 35;
 
@@ -968,9 +1064,9 @@ export const exportOneEntry = async (id, userId, format) => {
     } catch (e) {}
     doc.x = marginX + 65;
 
-    doc.fontSize(26).font('Helvetica-Bold').fillColor('#1F2937').text('Exegesis Legacy Ledger');
+    doc.fontSize(26).font('Helvetica-Bold').fillColor('#1F2937').text('Exegesis Project Legacy Ledger');
     doc.moveDown(0.1);
-    doc.fontSize(10).font('Helvetica').fillColor('#9CA3AF').text('Personal Journal');
+    doc.fontSize(12).font('Helvetica').fillColor('#9CA3AF').text('Personal Journal');
     doc.moveDown(0.5);
     sectionDivider();
     doc.moveDown(0.6);
@@ -983,10 +1079,14 @@ export const exportOneEntry = async (id, userId, format) => {
 
     // ── Metadata chips ──
     const dateStr = new Date(entry.createdOn).toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' });
-    doc.fontSize(9).font('Helvetica').fillColor('#6B7280').text(dateStr);
+    doc.fontSize(12).font('Helvetica').fillColor('#6B7280').text(dateStr);
+    if (entry.mood) {
+      const moodLabel = entry.mood.charAt(0).toUpperCase() + entry.mood.slice(1);
+      doc.fontSize(12).font('Helvetica').fillColor('#8B5CF6').text(`\u{1F3F7}  ${moodLabel}`);
+    }
     if (entry.bookName) {
       const ref = `${entry.bookName} ${entry.chapter || ''}${entry.verseNumber ? ':' + entry.verseNumber : ''}`;
-      doc.fontSize(9).font('Helvetica-Oblique').fillColor(catColor).text(ref);
+      doc.fontSize(12).font('Helvetica-Oblique').fillColor(catColor).text(ref);
     }
 
     const catLabel = entry.category ? entry.category.charAt(0).toUpperCase() + entry.category.slice(1) : 'General';
@@ -995,11 +1095,22 @@ export const exportOneEntry = async (id, userId, format) => {
     const privacyColor = entry.isPublished ? '#10B981' : '#EF4444';
 
     doc.moveDown(0.2);
-    doc.fontSize(8).font('Helvetica').fillColor('#6B7280');
+    doc.fontSize(12).font('Helvetica').fillColor('#6B7280');
     doc.text(catLabel, { continued: true });
     doc.fillColor('#9CA3AF').text(`  |  ${sourceLabel}  |  `, { continued: true });
     doc.fillColor(privacyColor).text(privacyLabel);
     doc.moveDown(0.6);
+
+    // ── Scripture Quote ──
+    if (verseInfo) {
+      sectionHeader({ label: 'Scripture', color: '#3B82F6' });
+      doc.fontSize(12).font('Helvetica-Oblique').fillColor('#4B5563')
+        .text(`\u201C${verseInfo.text}\u201D`, { lineGap: 8, align: 'justify' });
+      doc.moveDown(0.15);
+      doc.fontSize(12).font('Helvetica').fillColor('#9CA3AF')
+        .text(`\u2014 ${entry.bookName} ${entry.chapter}:${entry.verseNumber} (${verseInfo.translationName})`);
+      doc.moveDown(0.4);
+    }
 
     // ── Journal Entry content ──
     if (entry.content) {
@@ -1046,7 +1157,7 @@ export const exportOneEntry = async (id, userId, format) => {
             const label = `${w.surfaceText || w.strongsId || ''}`;
             const id = w.strongsId ? ` (${w.strongsId})` : '';
             const lemma = w.lemma ? ` \u2014 ${w.lemma}` : '';
-            doc.fontSize(9).font('Helvetica').fillColor('#4B5563').text(`  \u2022 ${label}${id}${lemma}`);
+            doc.fontSize(12).font('Helvetica').fillColor('#4B5563').text(`  \u2022 ${label}${id}${lemma}`);
           });
           doc.moveDown(0.1);
         }
@@ -1055,17 +1166,38 @@ export const exportOneEntry = async (id, userId, format) => {
 
     // ── Tags ──
     if (entry.tags) {
-      doc.moveDown(0.4);
-      doc.fontSize(8).font('Helvetica-Bold').fillColor('#6B7280');
-      entry.tags.split(',').forEach((tag, i) => {
-        doc.text(`  #${tag.trim()}`, { continued: i < entry.tags.split(',').length - 1 });
+      sectionHeader({ label: 'Tags', color: '#6B7280' });
+      const tags = entry.tags.split(',').map(t => t.trim()).filter(Boolean);
+      const tagFontSize = 12;
+      const tagPaddingX = 7;
+      const tagPaddingY = 4;
+      const tagGap = 5;
+      const tagColor = '#6B7280';
+      const tagBg = '#F3F4F6';
+      let x = marginX;
+      const startY = doc.y;
+      doc.y = startY;
+      tags.forEach((tag) => {
+        const label = `#${tag}`;
+        const textWidth = doc.widthOfString(label, { fontSize: tagFontSize, font: 'Helvetica' });
+        const chipWidth = textWidth + tagPaddingX * 2;
+        const chipHeight = tagFontSize + tagPaddingY * 2 + 2;
+        if (x + chipWidth > doc.page.width - marginRight && x > marginX) {
+          x = marginX;
+          doc.y += chipHeight + tagGap;
+          if (doc.y > bottomY() - 20) doc.addPage();
+        }
+        doc.roundedRect(x, doc.y, chipWidth, chipHeight, 4).fillColor(tagBg).fill();
+        doc.fontSize(tagFontSize).font('Helvetica-Bold').fillColor(tagColor)
+          .text(label, x + tagPaddingX, doc.y + tagPaddingY, { lineBreak: false });
+        x += chipWidth + tagGap;
       });
-      doc.moveDown(0.3);
+      doc.moveDown(1.2);
     }
 
     // ── Final divider ──
     doc.moveDown(1);
-    if (doc.y > bottomY() - 20) doc.addPage();
+    writeFooter();
     sectionDivider();
 
     const slug = (entry.bookName || 'entry').toLowerCase().replace(/\s+/g, '-');
@@ -1087,9 +1219,12 @@ export const exportOneEntry = async (id, userId, format) => {
 
   // Default: txt format
   const lines = [];
-  lines.push('╔═══ EXEGESIS LEGACY LEDGER ═══╗');
+  lines.push('╔═══ EXEGESIS PROJECT LEGACY LEDGER ═══╗');
   lines.push('');
   lines.push(`Date: ${new Date(entry.createdOn).toLocaleDateString()}`);
+  if (entry.mood) {
+    lines.push(`Mood: ${entry.mood.charAt(0).toUpperCase() + entry.mood.slice(1)}`);
+  }
   if (entry.bookName) {
     lines.push(`Passage: ${entry.bookName} ${entry.chapter || ''}${entry.verseNumber ? ':' + entry.verseNumber : ''}`);
   }
@@ -1101,9 +1236,14 @@ export const exportOneEntry = async (id, userId, format) => {
   lines.push('');
   if (entry.content) lines.push(entry.content);
   lines.push('');
-  if (entry.reflection) {
-    lines.push('Reflection:');
-    lines.push(entry.reflection);
+  if (entry.gratitude) {
+    lines.push('Gratitude:');
+    lines.push(entry.gratitude);
+    lines.push('');
+  }
+  if (entry.learnings) {
+    lines.push('Learnings:');
+    lines.push(entry.learnings);
     lines.push('');
   }
   if (entry.prayers) {
@@ -1122,7 +1262,7 @@ export const exportOneEntry = async (id, userId, format) => {
       const words = typeof entry.strongsWords === 'string' ? JSON.parse(entry.strongsWords) : entry.strongsWords;
       if (Array.isArray(words)) {
         words.forEach(w => {
-          lines.push(`  • ${w.surfaceText || w.strongsId} (${w.strongsId})${w.lemma ? ` - ${w.lemma}` : ''}`);
+          lines.push(`  \u2022 ${w.surfaceText || w.strongsId} (${w.strongsId})${w.lemma ? ` - ${w.lemma}` : ''}`);
         });
       }
     } catch (e) {}
@@ -1132,7 +1272,7 @@ export const exportOneEntry = async (id, userId, format) => {
     lines.push(`Tags: ${entry.tags}`);
     lines.push('');
   }
-  lines.push('— Saved from Exegesis Legacy Ledger —');
+  lines.push('\u2014 Saved from Exegesis Project Legacy Ledger \u2014');
 
   const base64 = Buffer.from(lines.join('\n')).toString('base64');
   const slug = (entry.bookName || 'entry').toLowerCase().replace(/\s+/g, '-');

@@ -171,6 +171,7 @@ export const saveLearnStage = async (sessionId, userId, body) => {
     where: { id: sessionId },
     data: {
       learnNotes: body.notes || session.learnNotes,
+      isPublic: body.isPublic !== undefined ? body.isPublic : session.isPublic,
       currentStage: 'abide',
     },
   });
