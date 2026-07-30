@@ -17,7 +17,8 @@
     "seed-strongs": "node prisma/seed-strongs.js",
     "seed-verse-resources": "node prisma/seed-verse-resources.js",
     "seed-journal": "node prisma/seed-journal.js",
-    "postinstall": "npx prisma generate"
+    "postinstall": "npx prisma generate",
+    "llm:start": "bash scripts/start-llm.sh"
   },
   "keywords": [],
   "author": "",
