@@ -5,8 +5,14 @@ import { Request, Response } from 'express';
 jest.mock('../../../config/db.js', () => ({
   prisma: {
     searchIndex: {
-      findFirst: jest.fn().mockResolvedValue({ verseText: 'For God so loved the world...' }),
-      findMany: jest.fn().mockResolvedValue([]),
+      findMany: jest.fn().mockImplementation(({ where }) => {
+        // Exact verse lookup (main verse) → a BSB row.
+        if (where?.verse && typeof where.verse === 'number') {
+          return [{ verseText: 'For God so loved the world...', translation: 'BSB' }];
+        }
+        // Range lookup (surrounding verses) → none.
+        return [];
+      }),
     },
     bookPrologue: {
       findUnique: jest.fn().mockResolvedValue(null),
