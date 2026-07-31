@@ -500,7 +500,7 @@ function blendSources({ dailyExegesis, verseExplanation, verseResource, prologue
   if (verseExplanation?.learnMore && !lessonParts.some(p => p.includes(verseExplanation.learnMore))) {
     lessonParts.push(`For further study: ${verseExplanation.learnMore}`);
   }
-  result.lesson = lessonParts.join("\n\n");
+  result.explanation = lessonParts.join("\n\n");
 
   if (!isBrief && dailyExegesis?.application) {
     result.application = dailyExegesis.application;
@@ -532,6 +532,384 @@ function blendSources({ dailyExegesis, verseExplanation, verseResource, prologue
   }
 
   return result;
+}
+
+/**
+ * Build a prompt-specific answer for LookStage reflection prompts.
+ * Uses existing AI analysis data to generate relevant observations
+ * based on the prompt type (index 0-5).
+ */
+function buildPromptAnswer(promptIdx, {
+  ref, verseText, themes, chapterTools, wordStudy, prologue, genre,
+  explanation, intro, crossReferences, chapterInsights, context, contextVersesStr,
+}) {
+  const theme1 = themes[0] || "";
+  const theme2 = themes[1] || "";
+  const genreName = genre || "scripture";
+
+  // Build a rich picture of the passage from the available data
+  const words = verseText ? verseText.split(/\s+/).filter(Boolean) : [];
+  const wordCount = words.length;
+  const opener = words.slice(0, Math.min(5, wordCount)).join(" ");
+  const closer = words.slice(-3).join(" ");
+
+  const hasCommand = chapterTools?.some(t => t.toolType === "COMMAND");
+  const hasPromise = chapterTools?.some(t => t.toolType === "PROMISE");
+  const hasWarning = chapterTools?.some(t => t.toolType === "WARNING");
+  const hasContrast = chapterTools?.some(t => t.toolType === "CONTRAST");
+  const hasRepeatedWord = chapterTools?.some(t => t.toolType === "REPEATED_WORD");
+  const hasTransition = chapterTools?.some(t => t.toolType === "TRANSITION");
+
+  const answers = [
+    // Prompt 0: "What specific words or phrases stand out to you in this passage?"
+    () => {
+      const parts = [];
+
+      // Use the AI intro to give context about key words
+      if (intro) {
+        const firstSentence = intro.split(/[.!?]/)[0];
+        parts.push(`**Passage context:** ${firstSentence}.`);
+      }
+
+      // Word study terms with their definitions
+      if (wordStudy) {
+        const studyLines = wordStudy.split("\n\n").filter(Boolean);
+        if (studyLines.length > 0) {
+          parts.push(`**Key terms to observe:**\n${studyLines.slice(0, 3).join("\n")}`);
+        }
+      }
+
+      // Quote the actual verse text with specific words highlighted
+      if (verseText) {
+        // Find the most significant word (longest unique word)
+        const significantWords = verseText.match(/\b[A-Z]\w{4,}\b|[a-z]\w{7,}\b/g)?.slice(0, 5) || [];
+        if (significantWords.length > 0) {
+          parts.push(`**Significant words in ${ref}:** "${significantWords.join(", ")}" — these carry the weight of the passage.`);
+        }
+        // Quote the opening and closing phrases
+        if (opener) {
+          parts.push(`The verse opens with **"${opener}…"** which immediately establishes the subject and tone.`);
+        }
+        if (closer && wordCount > 5) {
+          parts.push(`It concludes with **"…${closer}"**, leaving the reader with this final emphasis.`);
+        }
+      }
+
+      // Add cross-references if available for deeper word study
+      if (crossReferences) {
+        const refs = crossReferences.split("\n\n").filter(Boolean);
+        if (refs.length > 0) {
+          parts.push(`**Connected passages:** These related verses shed light on key terms:\n${refs.slice(0, 2).join("\n")}`);
+        }
+      }
+
+      // Show surrounding verses for context
+      if (contextVersesStr) {
+        parts.push(`**Surrounding verses for context:**\n${contextVersesStr}`);
+      }
+
+      return parts.length > 0
+        ? parts.join("\n\n")
+        : `In ${ref || "this passage"}, pay close attention to the opening words and any terms that carry significant theological weight. The original language layer (Hebrew/Greek) often reveals depth that English translations cannot fully capture. Ask: which words would I circle if I were marking up this verse?`;
+    },
+
+    // Prompt 1: "Who is speaking? Who is listening or being addressed?"
+    () => {
+      const parts = [];
+
+      // Use the intro for speaker context
+      if (intro) {
+        const introLines = intro.split(/[.!?]+/).filter(Boolean);
+        if (introLines.length > 0) {
+          parts.push(introLines.slice(0, 2).join(". ") + ".");
+        }
+      }
+
+      // Prologue details from the book
+      if (prologue) {
+        if (prologue.author) parts.push(`**Author:** ${prologue.author}.`);
+        if (prologue.audience) parts.push(`**Original audience:** ${prologue.audience}.`);
+        if (prologue.dateWritten) parts.push(`**Written:** ${prologue.dateWritten}.`);
+        if (prologue.locationWritten) parts.push(`**Location:** ${prologue.locationWritten}.`);
+        if (prologue.purpose) parts.push(`**Purpose of this book:** ${prologue.purpose}`);
+      }
+
+      // Genre-based analysis of voice
+      if (genreName === "gospel") {
+        parts.push(`**Gospel voice:** This is the testimony of an eyewitness — recording the very words and works of Jesus. The Gospels present Christ as the central speaker and subject. Notice whether Jesus is speaking, or whether the narrative is describing His actions.`);
+      } else if (genreName === "epistle") {
+        parts.push(`**Apostolic voice:** An apostle or church leader writes with authority to address specific needs in the early church. The letter format means the author is speaking directly to a community — and through Scripture, to us.`);
+      } else if (genreName === "prophecy") {
+        parts.push(`**Prophetic voice:** The prophet speaks as God's messenger — "Thus says the Lord." The word comes with divine authority, calling God's people to repentance, hope, and faithful living.`);
+      } else if (genreName === "law") {
+        parts.push(`**Covenant voice:** God Himself speaks through Moses, establishing His covenant and instructing His people in the way of life. These are not suggestions — they are the terms of relationship with the living God.`);
+      } else if (genreName === "poetry") {
+        parts.push(`**Poetic voice:** This is the language of the heart — the psalmist or sage speaking to God, about God, or about the human condition. Poetry invites you not just to understand, but to feel and respond.`);
+      } else if (genreName === "history") {
+        parts.push(`**Narrative voice:** The historical books record God's actions in and through His people. Ask: what is God doing in this moment? How are His purposes unfolding through these events?`);
+      } else if (genreName === "apocalyptic") {
+        parts.push(`**Apocalyptic voice:** Visions and symbols reveal the heavenly perspective on earthly reality. The veil is pulled back to show that God is sovereign over history.`);
+      }
+
+      // Show surrounding context if available
+      if (context) {
+        parts.push(`**What the surrounding verses say:**\n${context}`);
+      }
+
+      // Use the verse text to identify the speaker from content
+      if (verseText) {
+        const firstWords = words.slice(0, 3).join(" ");
+        if (verseText.startsWith("\"") || verseText.startsWith("'")) {
+          parts.push(`**Note:** This verse contains direct speech (quotation marks), indicating someone is speaking directly. Consider who is being quoted.`);
+        }
+        if (/^Jesus\b|^He\s+said|^And\s+he\s+said|^Then\s+he/i.test(verseText)) {
+          parts.push(`**Key observation:** The verse reports speech. Look at who is introduced as speaking in the surrounding context.`);
+        }
+      }
+
+      return parts.length > 0
+        ? parts.join("\n\n")
+        : `Consider who is speaking in ${ref || "this passage"} and who the intended audience is. The ${genreName} genre shapes how we hear the message. Is this a direct command? A narrative account? A poetic expression? The answer shapes how we respond.`;
+    },
+
+    // Prompt 2: "What commands, promises, warnings, or truths do you see?"
+    () => {
+      const parts = [];
+
+      // Use chapter study tools if available (most specific)
+      if (hasCommand || hasPromise || hasWarning) {
+        if (hasCommand) {
+          const cmds = chapterTools.filter(t => t.toolType === "COMMAND");
+          parts.push(`**Commands to obey:**\n${cmds.map(c => `• ${c.label}${c.description ? ` — ${c.description}` : ""}`).join("\n")}`);
+        }
+        if (hasPromise) {
+          const prs = chapterTools.filter(t => t.toolType === "PROMISE");
+          parts.push(`**Promises to claim:**\n${prs.map(p => `• ${p.label}${p.description ? ` — ${p.description}` : ""}`).join("\n")}`);
+        }
+        if (hasWarning) {
+          const wrns = chapterTools.filter(t => t.toolType === "WARNING");
+          parts.push(`**Warnings to heed:**\n${wrns.map(w => `• ${w.label}${w.description ? ` — ${w.description}` : ""}`).join("\n")}`);
+        }
+      } else {
+        // Use the AI explanation to extract the key teaching
+        if (explanation) {
+          const explLines = explanation.split("\n\n").filter(Boolean);
+          if (explLines.length > 0) {
+            parts.push(`**The central teaching:** ${explLines[0]}`);
+          }
+          if (explLines.length > 1) {
+            parts.push(`**Further insight:** ${explLines[1]}`);
+          }
+        }
+      }
+
+      // Use chapterInsights for transitions that highlight key moments
+      if (hasTransition) {
+        const trans = chapterTools.filter(t => t.toolType === "TRANSITION");
+        const transText = trans.map(t => `• ${t.label}${t.description ? ` — ${t.description}` : ""}`).join("\n");
+        parts.push(`**Structural clues:**\n${transText}`);
+      }
+
+      // Check the actual verse text for commands (imperatives) and promises
+      if (verseText) {
+        const imperativeMarkers = /\b(do|do not|go|come|listen|hear|see|believe|follow|love|keep|remember|be|let|must|shall|should|will you|you shall|you will)/gi;
+        const imperatives = verseText.match(imperativeMarkers);
+        if (imperatives && imperatives.length > 0) {
+          const uniqueCmds = [...new Set(imperatives.map(i => i.toLowerCase()))].slice(0, 4);
+          parts.push(`**Directives in the text:** The verse contains words like "${uniqueCmds.join(", ")}" — these indicate action or response.`);
+        }
+      }
+
+      // Use theme analysis
+      if (!hasCommand && !hasPromise && !hasWarning) {
+        if (explanation && !parts.some(p => p.includes("The central teaching"))) {
+          // Fallback themes if no explanation either
+          const themeDescriptions = {
+            love: `The central revelation here is **love** — not an abstract concept, but the very nature of God made actionable. This is both a promise (God loves you) and a command (love one another). In ${ref}, love takes center stage.`,
+            faith: `**Faith** is the thread. This verse calls for trust in God's character and promises, even when circumstances remain unclear or difficult.`,
+            grace: `**Grace** is on display — God's unearned favor. This is not merely a doctrine but a reality that transforms how we live and relate to God and others.`,
+            hope: `**Hope** anchors this passage. Not wishful thinking, but confident expectation rooted in God's faithfulness and the certainty of His promises.`,
+            judgment: `There is a **sober truth** here about the consequences of sin and the holiness of God. Yet woven through is the thread of grace — God's warnings are acts of love meant to protect.`,
+            life: `**Life** — abundant, eternal, transformative — pulses through these words. The passage points beyond mere existence to the life that flows from God Himself.`,
+            kingship: `**God's sovereign rule** is central. His kingdom brings order, justice, and peace, and we are called to live under His gracious authority.`,
+            wisdom: `**Wisdom** calls out — the fear of the Lord that is the beginning of understanding. This passage invites you to see reality from God's perspective.`,
+            obedience: `**Obedience** emerges as a key theme. The passage connects what we believe with how we live, showing that true faith expresses itself through faithful action.`,
+          };
+          const desc = themeDescriptions[theme1];
+          if (desc) parts.push(desc);
+        }
+      }
+
+      // Ground it in the actual verse text
+      if (verseText && wordCount > 5) {
+        parts.push(`**What the verse actually says:** "${words.slice(0, 10).join(" ")}..." This is the raw material for your observation.`);
+      }
+
+      return parts.length > 0
+        ? parts.join("\n\n")
+        : `Read ${ref || "this passage"} carefully and identify: Is there a **command** to follow? A **promise** to claim? A **warning** to heed? A **truth** to believe? These four elements form the backbone of biblical teaching.`;
+    },
+
+    // Prompt 3: "What is repeated in this passage?"
+    () => {
+      const parts = [];
+
+      if (hasRepeatedWord) {
+        const reps = chapterTools.filter(t => t.toolType === "REPEATED_WORD");
+        parts.push(`**Notable repetitions in this chapter:**\n${reps.map(r => `• "${r.label}"${r.description ? ` — ${r.description}` : ""}`).join("\n")}`);
+      }
+
+      // Word frequency from the actual verse text
+      if (verseText) {
+        const cleaned = verseText.toLowerCase().replace(/[^a-z\s]/g, "");
+        const wordFreq = {};
+        cleaned.split(/\s+/).forEach(w => {
+          if (w.length > 2) wordFreq[w] = (wordFreq[w] || 0) + 1;
+        });
+        const repeated = Object.entries(wordFreq)
+          .filter(([, c]) => c > 1)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5);
+        if (repeated.length > 0) {
+          parts.push(`**Words repeated in this verse:**\n${repeated.map(([w, c]) => `• "${w}" appears ${c} times`).join("\n")}`);
+          parts.push(`Repetition in Scripture signals emphasis. When a biblical author repeats a word, they are saying: "Pay attention — this matters."`);
+        } else if (wordCount > 3) {
+          // No exact word repetition, but note unique key terms
+          const uniqueWords = [...new Set(verseText.toLowerCase().replace(/[^a-z\s]/g, "").split(/\s+/).filter(w => w.length > 3))];
+          if (uniqueWords.length > 0) {
+            parts.push(`While no single word repeats in this verse, the key concepts are: **${uniqueWords.slice(0, 5).join(", ")}**. Notice how each contributes to the single message the verse delivers.`);
+          }
+        }
+      }
+
+      // Use themes as conceptual repetition
+      if (theme1 || theme2) {
+        const themeNames = [theme1, theme2].filter(Boolean).map(t => `**${t}**`).join(" and ");
+        parts.push(`**Thematic repetition:** The ${themeNames} theme${theme2 ? "s" : ""} recur${theme2 ? "" : "s"} throughout, suggesting this is the central concern of the passage. Biblical authors emphasize by repetition — what appears once can be noted, but what appears twice demands reflection.`);
+      }
+
+      // Use chapterInsights for repeated words from admin-curated tools
+      if (chapterInsights && !parts.some(p => p.includes("Notable repetitions"))) {
+        const insightLines = chapterInsights.split("\n\n").filter(Boolean);
+        const repeatedInsights = insightLines.filter(l => l.toLowerCase().includes("repeat"));
+        if (repeatedInsights.length > 0) {
+          parts.push(`**From study insights:**\n${repeatedInsights.slice(0, 2).join("\n\n")}`);
+        }
+      }
+
+      return parts.length > 1
+        ? parts.join("\n\n")
+        : `Read ${ref || "this passage"} again and notice what ideas, words, or phrases echo. Hebrew poetry and biblical teaching often use repetition for emphasis — if something appears more than once, it's the author signaling its importance.`;
+    },
+
+    // Prompt 4: "What contrasts do you notice (light/darkness, before/after, etc.)?"
+    () => {
+      const parts = [];
+
+      if (hasContrast) {
+        const conts = chapterTools.filter(t => t.toolType === "CONTRAST");
+        parts.push(`**Recognized contrasts in this chapter:**\n${conts.map(c => `• ${c.label}${c.description ? ` — ${c.description}` : ""}`).join("\n")}`);
+      }
+
+      // Scan verse text for common biblical contrast pairs
+      const contrastPairs = {
+        "light": "darkness", "life": "death", "love": "hate",
+        "good": "evil", "truth": "lie", "bless": "curse",
+        "faith": "fear", "grace": "law", "wisdom": "folly",
+        "flesh": "spirit", "heaven": "earth", "old": "new",
+        "rich": "poor", "first": "last", "before": "after",
+        "strength": "weakness", "kingdom": "world", "obey": "disobey",
+      };
+
+      const foundContrasts = [];
+      if (verseText) {
+        const lower = verseText.toLowerCase();
+        for (const [a, b] of Object.entries(contrastPairs)) {
+          if (lower.includes(a) && lower.includes(b)) {
+            // Highlight the exact phrase where the contrast appears
+            const matchIdx = Math.min(lower.indexOf(a), lower.indexOf(b));
+            const snippet = verseText.slice(Math.max(0, matchIdx), matchIdx + 80).split(/[.!?;,]/)[0];
+            foundContrasts.push(`"${snippet.trim()}" (${a}/${b})`);
+          }
+        }
+      }
+
+      if (foundContrasts.length > 0) {
+        parts.push(`**Contrasts detected in the verse itself:**\n${foundContrasts.slice(0, 3).join("\n\n")}`);
+        parts.push(`Biblical contrasts aren't merely literary devices — they present two paths, two natures, two destinies. They call for a choice. Which side of the contrast does this passage call you to embrace?`);
+      }
+
+      // Specific theme-based contrast analysis
+      const themeContrasts = {
+        light: `${ref} engages the light/darkness contrast, which is foundational in Scripture. Light represents truth, holiness, and the presence of God; darkness represents ignorance, evil, and separation from God. This passage likely calls you to choose which realm you will walk in.`,
+        love: `The love/hate contrast here isn't about emotion — it's about covenant loyalty. To love God is to be faithful to Him; to hate is to reject His ways. This verse presents a decision about allegiance.`,
+        life: `Life/death is the ultimate biblical contrast. The gospel announces that death has been defeated and life — real, eternal life — has won. This passage stands in that victory.`,
+        judgment: `The judgment/grace contrast runs through this passage. God's holiness demands accountability, but His mercy offers redemption. Both are real; both demand a response.`,
+      };
+
+      const contrastText = themeContrasts[theme1];
+      if (contrastText && !parts.some(p => p.includes("light/darkness") || p.includes("love/hate") || p.includes("life/death"))) {
+        parts.push(contrastText);
+      }
+
+      return parts.length > 0
+        ? parts.join("\n\n")
+        : `Biblical writers often use contrasts to sharpen understanding — light vs. darkness, flesh vs. spirit, the way of wisdom vs. the way of folly. Read ${ref || "this passage"} looking for opposing ideas. They reveal the choices set before us and the stakes involved.`;
+    },
+
+    // Prompt 5: "What questions does this passage raise in your mind?"
+    () => {
+      const parts = [];
+
+      if (verseText) {
+        const phrase = words.slice(0, 12).join(" ");
+
+        // Generate passage-specific questions based on the verse content
+        const themeQuestions = {
+          love: `Since this passage centers on **love**, ask yourself: What kind of love is being described here? Is it God's love for us, our love for God, or our love for one another? What does this love look like in action? Does it comfort, command, or challenge you?`,
+          faith: `With **faith** at the center: What is this passage calling you to trust God for? Is the emphasis on believing a specific truth, trusting in a promise, or stepping out in obedience? What would change if you fully believed this?`,
+          grace: `**Grace** raises profound questions: What does this reveal about God's character that you couldn't know otherwise? How does undeserved favor change your identity? Is there someone you need to extend this same grace to?`,
+          hope: `**Hope** prompts these questions: What does this passage tell you about God's faithfulness? How does this hope change how you face your current circumstances? Is your hope built on feelings or on God's promises?`,
+          life: `**Life** — eternal and abundant — raises the question: Does your daily life reflect the reality of eternity? What would change if you truly believed that real life begins now and extends forever?`,
+          judgment: `**Judgment** confronts us: Does this passage make you uncomfortable? Why? Is there sin to confess, a relationship to make right, or a warning you've been ignoring? How does grace intersect with the sobering truths here?`,
+          kingship: `**God's sovereignty** invites reflection: Is there an area of your life where you've resisted His authority? What would it look like to truly live under His reign today? How does His kingship change your perspective on current events?`,
+          wisdom: `**Wisdom** calls for discernment: Where do you need God's wisdom right now? What would it look like to apply this passage's truth to a specific decision you're facing? Are you listening to God's voice or the world's noise?`,
+          obedience: `**Obedience** raises the question: What is God asking you to do that you've been putting off? Is there a step of faith you need to take? Remember, obedience is not about perfection — it's about direction.`,
+        };
+
+        const themeQ = themeQuestions[theme1];
+        if (themeQ) {
+          parts.push(`**Questions this passage raises for you:**\n${themeQ}`);
+        }
+
+        // Always add these universal reflection questions, grounded in the specific text
+        parts.push(`**Deeper reflection questions for ${ref}:**\n\n`);
+        parts.push(`1. **About God —** The text says "${phrase}..." What does this reveal about God's character? Is He acting, commanding, promising, warning, or revealing? What does this tell me about His heart toward humanity?\n\n`);
+        parts.push(`2. **About humanity —** What does this say about who we are — our condition, our need, our purpose? Does it confront me, comfort me, or challenge me to grow?\n\n`);
+        parts.push(`3. **About response —** What does this passage require of me? Is there something to believe, something to do, something to change, or something to share? Make it specific.\n\n`);
+        parts.push(`4. **About Christ —** Even if Jesus isn't mentioned directly, how does this passage point to Him? All Scripture ultimately testifies of Christ — the one who fulfills every promise, embodies every truth, and answers every human need.\n\n`);
+        parts.push(`5. **The Spirit's question —** The most important question is the one the Holy Spirit is pressing on your heart right now. What is it? Take a moment to be still and listen.`);
+
+        // Use explanation to generate additional passage-specific questions
+        if (explanation) {
+          const shortExpl = explanation.split(".").slice(0, 2).join(".");
+          parts.push(`**One more thought:** ${shortExpl}. What does this insight reveal that you hadn't considered before?`);
+        }
+      } else {
+        parts.push(`Approach ${ref || "this passage"} with these framing questions:\n\n`);
+        parts.push(`1. **What does this teach me about God?** — His character, His ways, His heart toward me.\n\n`);
+        parts.push(`2. **What does this teach me about humanity?** — our condition, our need, our hope in Christ.\n\n`);
+        parts.push(`3. **How does this point to Christ?** — All Scripture, in some way, testifies of Jesus.\n\n`);
+        parts.push(`4. **What must I do?** — Where is the call to believe, obey, repent, or share?\n\n`);
+        parts.push(`5. **What is the Spirit saying to me?** — Pause, be still, and listen for His voice.`);
+      }
+
+      return parts.join("");
+    },
+  ];
+
+  const answer = answers[promptIdx];
+  return answer ? answer() : `Reflect on ${ref || "this passage"} with an open heart. What does the Spirit seem to be emphasizing to you personally as you read these words?`;
 }
 
 export async function explainVerses(book, chapter, verse, depth = "standard") {
@@ -603,4 +981,78 @@ export async function explainVerses(book, chapter, verse, depth = "standard") {
   memCache.set(cacheKey, result);
   await cache.set("ai", cacheKey, result, CACHE_TTL);
   return result;
+}
+
+export async function generatePromptAnswer(book, chapter, verse, promptIdx) {
+  const idx = parseInt(promptIdx, 10);
+  if (isNaN(idx) || idx < 0 || idx > 5) {
+    return { error: "Invalid prompt index. Must be 0-5." };
+  }
+
+  const bookName = normalizeBook(book);
+  const ch = parseInt(chapter, 10);
+  const vs = parseInt(verse, 10);
+  const genre = detectGenre(bookName);
+
+  // Fetch prologue separately — it's NOT returned by explainVerses
+  const [prologue, analysis] = await Promise.all([
+    prisma.bookPrologue.findUnique({ where: { bookName } }),
+    explainVerses(bookName, ch, vs, "detailed"),
+  ]);
+
+  if (!analysis) {
+    return { error: "Could not generate analysis for this passage." };
+  }
+
+  // Re-fetch for the prompt builder — get full verse text and chapter-level tools
+  const [verseRow, chapterTools, contextVerses] = await Promise.all([
+    prisma.searchIndex.findFirst({
+      where: { bookName, chapter: ch, verse: vs },
+      select: { verseText: true },
+    }),
+    prisma.chapterStudyTool.findMany({
+      where: { bookName, chapter: ch },
+      select: { toolType: true, label: true, description: true },
+      orderBy: { order: "asc" },
+    }),
+    prisma.searchIndex.findMany({
+      where: { bookName, chapter: ch, verse: { gte: Math.max(1, vs - 3), lte: vs + 3 } },
+      select: { verse: true, verseText: true },
+      orderBy: { verse: "asc" },
+      take: 7,
+    }),
+  ]);
+
+  const verseText = verseRow?.verseText || analysis.text || "";
+  const themes = detectThemes(verseText);
+
+  // Build context verses display string for chapter-level awareness
+  const ctxVerses = (contextVerses || [])
+    .filter(v => Number(v.verse) !== vs)
+    .slice(0, 4)
+    .map(v => `Verse ${v.verse}: "${v.verseText}"`)
+    .join("\n");
+
+  const answer = buildPromptAnswer(idx, {
+    ref: analysis.ref,
+    verseText,
+    themes,
+    chapterTools: chapterTools || [],
+    wordStudy: analysis.wordStudy,
+    prologue,
+    genre,
+    // NEW: pass the full AI analysis for deeper verse-specific answers
+    explanation: analysis.explanation,
+    intro: analysis.intro,
+    crossReferences: analysis.crossReferences,
+    context: analysis.context,
+    chapterInsights: analysis.chapterInsights,
+    contextVersesStr: ctxVerses,
+  });
+
+  return {
+    promptIdx: idx,
+    answer,
+    verseRef: analysis.ref,
+  };
 }
