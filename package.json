@@ -17,8 +17,7 @@
     "seed-strongs": "node prisma/seed-strongs.js",
     "seed-verse-resources": "node prisma/seed-verse-resources.js",
     "seed-journal": "node prisma/seed-journal.js",
-    "postinstall": "npx prisma generate",
-    "llm:start": "bash scripts/start-llm.sh"
+    "postinstall": "npx prisma generate"
   },
   "keywords": [],
   "author": "",
@@ -39,6 +38,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.5",
     "pdfkit": "^0.19.1",
+    "prisma": "^6.19.2",
     "stripe": "^22.3.0",
     "xml2js": "^0.6.2",
     "zod": "^4.3.6"
@@ -51,11 +51,7 @@
     "babel-jest": "^30.4.1",
     "jest": "^30.4.2",
     "nodemon": "^3.1.14",
-    "prisma": "^6.19.2",
     "ts-jest": "^29.4.12",
     "typescript": "^6.0.3"
-  },
-  "prisma": {
-    "seed": "node prisma/seed.js"
   }
 }

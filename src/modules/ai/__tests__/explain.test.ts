@@ -2,10 +2,11 @@ import { explain } from '../controller.js';
 import { Request, Response } from 'express';
 
 // Mock prisma responses
-jest.mock('../../../../config/db.js', () => ({
+jest.mock('../../../config/db.js', () => ({
   prisma: {
     searchIndex: {
       findFirst: jest.fn().mockResolvedValue({ verseText: 'For God so loved the world...' }),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     bookPrologue: {
       findUnique: jest.fn().mockResolvedValue(null),
@@ -19,9 +20,6 @@ jest.mock('../../../../config/db.js', () => ({
     verseResource: {
       findFirst: jest.fn().mockResolvedValue(null),
     },
-    searchIndex: {
-      findMany: jest.fn().mockResolvedValue([]),
-    },
     chapterStudyTool: {
       findMany: jest.fn().mockResolvedValue([]),
     },
@@ -31,8 +29,8 @@ jest.mock('../../../../config/db.js', () => ({
   },
 }));
 
-// Mock cache service (no‑op)
-jest.mock('../../../../services/cacheService.js', () => ({
+// Mock cache service (no-op)
+jest.mock('../../../services/cacheService.js', () => ({
   cache: {
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue(undefined),
@@ -49,12 +47,16 @@ describe('POST /api/ai/explain', () => {
       json: jsonMock,
     } as unknown as Response;
     await explain(req, res);
+    // asyncHandler does not return the controller's promise, so flush the
+    // microtask queue before asserting on res.json.
+    await new Promise((resolve) => setImmediate(resolve));
     expect(jsonMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        success: true,
-        data: expect.objectContaining({
+        returnCode: 200,
+        returnMessage: 'Explanation generated',
+        returnData: expect.objectContaining({
           intro: expect.any(String),
-          lesson: expect.any(String),
+          explanation: expect.any(String),
           application: expect.any(String),
           prayer: expect.any(String),
         }),

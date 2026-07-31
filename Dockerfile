@@ -1,23 +1,20 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine
+
 WORKDIR /app
+
+# Copy Prisma schema + config BEFORE installing deps so the
+# `postinstall` script (`prisma generate`) can find the schema.
 COPY package*.json ./
+COPY prisma.config.ts ./
+COPY prisma ./prisma
+
+# Install production dependencies (postinstall runs `prisma generate`)
 RUN npm ci --omit=dev
+
+# Copy the rest of the application source
 COPY . .
 
-RUN apk add --no-cache curl && \
-    curl -L https://ollama.com/download/Ollama-linux-amd64.tar.gz | tar xz && \
-    mv ollama /usr/local/bin/ollama && \
-    chmod +x /usr/local/bin/ollama
-
-FROM alpine:3.20
-RUN apk add --no-cache curl ca-certificates
-COPY --from=builder /usr/local/bin/ollama /usr/local/bin/ollama
-COPY --from=builder /app /app
-COPY scripts/start-llm.sh /usr/local/bin/start-llm.sh
-RUN chmod +x /usr/local/bin/start-llm.sh
-
-WORKDIR /app
 EXPOSE 5001
 ENV NODE_ENV=production
 
-CMD ["/bin/sh", "-c", "start-llm.sh & node src/server.js"]
+CMD ["node", "src/server.js"]
