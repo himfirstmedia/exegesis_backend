@@ -6,5 +6,5 @@ import { explainSchema, generatePromptSchema } from "./validation.js";
 
 const router = Router();
 router.post("/explain", validate(explainSchema), explain);
-router.post("/generate-prompt", validate(generatePromptSchema), generatePrompt);
+router.post("/generate-prompt", validate(generatePromptSchema), generatePrompt); //ai route for generating prompt
 export default router;
