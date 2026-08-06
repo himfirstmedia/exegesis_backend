@@ -25,7 +25,12 @@ export const speakWithTimings = async (req, res) => {
     if (!text || !text.trim()) {
       return res.status(400).json(formatApiResponse({ status: 400, message: "Text is required" }));
     }
-    const result = await ttsService.synthesizeWithTimings(text, voiceId, speed);
+    const result = await ttsService.synthesizeWithTimings(
+      text,
+      voiceId,
+      speed,
+      req.body.priority === "high" ? "high" : "low",
+    );
     return res.status(200).json({
       audioBase64: result.audioBuffer.toString("base64"),
       wordOffsetsMs: result.wordOffsetsMs,

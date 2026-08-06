@@ -105,3 +105,8 @@ const getOrSet = async (namespace, key, fetchFn, ttl = DEFAULT_TTL) => {
 };
 
 export const cache = { get, set, getOrSet };
+
+// Eagerly connect at module load. Without this the client is never created:
+// get/set short-circuit on `ready` before getClient() is ever called, so Redis
+// would stay permanently disabled.
+getClient();

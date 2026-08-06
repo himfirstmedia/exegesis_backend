@@ -15,6 +15,7 @@ import { startEmailScheduler } from "./services/emailScheduler.js";
 import { startPopularSearchCleanup } from "./services/popularSearchCleanup.js";
 import translationRouter from "./modules/bible-translations/route.js"
 import ttsRouter from "./modules/tts/route.js"
+import { warmUpTTS } from "./modules/tts/service.js"
 import strongsRouter from "./modules/strongs/route.js"
 import exegesisRouter from "./modules/exegesis/route.js"
 import triviaRouter from "./modules/trivia/route.js"
@@ -106,6 +107,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Exegesis server running on port ${PORT}`);
   startEmailScheduler();
   startPopularSearchCleanup();
+  // Pre-connect the Edge TTS sockets so the first voice request after boot
+  // doesn't pay the ~2s WebSocket handshake.
+  warmUpTTS();
 });
 
 process.on("unhandledRejection", (error) => {
@@ -117,6 +121,19 @@ process.on("unhandledRejection", (error) => {
 });
 
 process.on("uncaughtException", async (error) => {
+  // The msedge-tts library occasionally delivers a late metadata/audio frame
+  // for a stream whose entry has already been removed, throwing inside its
+  // WebSocket message handler. Our serialized pool makes this rare, but when it
+  // does slip through it must not take down the whole server mid-playback.
+  const isTtsStreamRace =
+    error instanceof TypeError &&
+    (error.message === "Cannot read properties of undefined (reading 'metadata')" ||
+      error.message === "Cannot read properties of undefined (reading 'audio')");
+  if (isTtsStreamRace) {
+    console.warn("Ignored msedge-tts stream race:", error.message);
+    return;
+  }
+
   console.error("Uncaught Exception:", error);
   await disconnectDB();
   process.exit(1);
