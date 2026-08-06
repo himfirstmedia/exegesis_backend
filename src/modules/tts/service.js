@@ -182,6 +182,52 @@ const synthesizeEdge = async (text, voiceId = DEFAULT_EDGE_VOICE, speed = 1.0) =
   }
 };
 
+export const synthesizeWithTimings = async (
+  text,
+  voiceId = DEFAULT_EDGE_VOICE,
+  speed = 1.0,
+) => {
+  const edgeVoice = voiceId && isEdgeVoice(voiceId) ? voiceId : DEFAULT_EDGE_VOICE;
+  const format = OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3;
+  const ratePercent = Math.round((speed - 1) * 100);
+  const rate = ratePercent === 0 ? "+0%" : `${ratePercent > 0 ? "+" : ""}${ratePercent}%`;
+  const tts = new MsEdgeTTS();
+
+  try {
+    await tts.setMetadata(edgeVoice, format, { wordBoundaryEnabled: true });
+    const { audioStream, metadataStream } = tts.toStream(text, { rate });
+    const audioChunks = [];
+    const wordOffsetsMs = [];
+
+    await Promise.all([
+      new Promise((resolve, reject) => {
+        audioStream.on("data", (chunk) => audioChunks.push(chunk));
+        audioStream.on("end", resolve);
+        audioStream.on("error", reject);
+      }),
+      new Promise((resolve, reject) => {
+        if (!metadataStream) return resolve();
+        metadataStream.on("data", (chunk) => {
+          const payload = JSON.parse(chunk.toString());
+          for (const item of payload.Metadata || []) {
+            if (item.Type === "WordBoundary") {
+              wordOffsetsMs.push(item.Data.Offset / 10_000);
+            }
+          }
+        });
+        metadataStream.on("end", resolve);
+        metadataStream.on("error", reject);
+      }),
+    ]);
+
+    const audioBuffer = Buffer.concat(audioChunks);
+    if (audioBuffer.length === 0) throw new Error("Empty audio received from Edge TTS");
+    return { audioBuffer, wordOffsetsMs };
+  } finally {
+    tts.close();
+  }
+};
+
 // ── ElevenLabs synthesis ───────────────────────────────────────────────────
 
 const synthesizeElevenLabs = async (text, voiceId, speed = 1.0) => {

@@ -19,6 +19,23 @@ export const speak = async (req, res) => {
   }
 };
 
+export const speakWithTimings = async (req, res) => {
+  try {
+    const { text, voiceId, speed } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json(formatApiResponse({ status: 400, message: "Text is required" }));
+    }
+    const result = await ttsService.synthesizeWithTimings(text, voiceId, speed);
+    return res.status(200).json({
+      audioBase64: result.audioBuffer.toString("base64"),
+      wordOffsetsMs: result.wordOffsetsMs,
+    });
+  } catch (error) {
+    console.error("Timed TTS speak error:", error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Timed TTS synthesis failed: " + error.message }));
+  }
+};
+
 export const getVoices = async (req, res) => {
   try {
     const voices = await ttsService.getVoices();
