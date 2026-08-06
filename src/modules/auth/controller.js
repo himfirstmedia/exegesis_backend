@@ -114,6 +114,16 @@ export const updateCurrentUser = async (req, res) => {
   }
 };
 
+export const uploadCover = async (req, res) => {
+  try {
+    const result = await authService.uploadCoverPhoto(req.user.id, req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Upload cover error:", error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Cover upload failed: " + error.message }));
+  }
+};
+
 export const resendVerification = async (req, res) => {
   try {
     const result = await authService.resendVerification(req.body);

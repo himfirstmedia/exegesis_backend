@@ -48,6 +48,7 @@ router.post("/get-devotion-by-date", bibleController.getDevotionByDate); // Adde
 router.post("/get-exegesis-by-date", bibleController.getExegesisByDate);
 router.post("/get-all-daily-devotions", bibleController.getAllDailyDevotions);
 router.post("/get-all-daily-exegesis", bibleController.getAllDailyExegesis);
+router.post("/journal-prompts", bibleController.getChapterJournalPrompts);
 router.post("/get-home-stats", authenticate, bibleController.getHomeStats);
 router.post(
   "/get-recent-activity",

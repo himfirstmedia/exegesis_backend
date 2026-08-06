@@ -29,6 +29,7 @@ model SystemUser {
   username                     String             @unique
   password                     String
   profilePhotoUrl              String?            @map("profile_photo_url")
+  coverPhotoUrl                String?            @map("cover_photo_url")
   loginCount                   BigInt             @default(0) @map("login_count")
   status                       Boolean            @default(true)
   lastLogin                    DateTime?          @map("last_login")

@@ -107,3 +107,14 @@ export const abandonSession = async (req, res) => {
     return res.status(500).json(formatApiResponse({ status: 500, message: 'Error abandoning session: ' + error.message }));
   }
 };
+
+export const exportSessionPdf = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await exegesisService.exportSessionPdf(id, req.user.id);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[ExegesisController] exportSessionPdf error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error generating session PDF: ' + error.message }));
+  }
+};

@@ -1544,3 +1544,63 @@ export const deleteVerseExplanation = async (data, userId) => {
   await prisma.verseExplanation.delete({ where: { id: BigInt(id) } });
   return { status: 200, message: "Verse explanation deleted successfully" };
 };
+
+export const getChapterJournalPrompts = async (data) => {
+  const { bookName, chapter, lang } = data || {};
+
+  if (!bookName || !chapter) {
+    return { status: 400, message: "Book and chapter are required" };
+  }
+
+  const ch = BigInt(chapter);
+
+  // 1) Chapter-specific prompts first (admin-curated for this exact passage)
+  const specific = await prisma.journalPrompt.findMany({
+    where: { isActive: true, bookName, chapter: ch },
+    orderBy: [{ order: "asc" }, { id: "asc" }],
+    take: 3,
+  });
+
+  // 2) Top up to three with general prompts so the end-of-chapter
+  //    journaling section always has exactly 3 questions to fill/skip.
+  let prompts = specific;
+  if (prompts.length < 3) {
+    const general = await prisma.journalPrompt.findMany({
+      where: { isActive: true, bookName: null, chapter: null },
+      orderBy: [{ order: "asc" }, { id: "asc" }],
+      take: 3 - prompts.length,
+    });
+    prompts = [...prompts, ...general];
+  }
+
+  // 3) Curated defaults guarantee exactly 3 questions even when the DB
+  //    has no active prompts at all — every chapter still gets a journaling
+  //    section with three fill-in/skip questions.
+  if (prompts.length < 3) {
+    const defaults = [
+      {
+        id: -1,
+        prompt: "What stood out to you most in your reading today?",
+        category: "study",
+      },
+      {
+        id: -2,
+        prompt: "How does this passage challenge or encourage you?",
+        category: "reflection",
+      },
+      {
+        id: -3,
+        prompt: "What is one way you can apply this to your life this week?",
+        category: "application",
+      },
+    ].slice(0, 3 - prompts.length);
+    prompts = [...prompts, ...defaults];
+  }
+
+  const result = {
+    status: 200,
+    message: "Chapter journal prompts fetched successfully",
+    data: serializeBigInt(prompts),
+  };
+  return lang !== "en" ? translateResult(result, lang) : result;
+};

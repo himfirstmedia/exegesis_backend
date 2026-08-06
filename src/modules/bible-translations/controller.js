@@ -12,6 +12,8 @@ import {
   searchVerses,
   getChapterRange,
   getReadingProgress,
+  getChapterHeadings,
+  getBookHeadings,
   BOOK_NAMES,
 } from "./service.js";
 import { prisma } from "../../config/db.js";
@@ -271,6 +273,73 @@ export const getChapterRangeVerses = async (req, res) => {
     return res.status(200).json({
       success: true,
       data: verses,
+    });
+  } catch (error) {
+    return res.status(404).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+export const listChapterHeadings = async (req, res) => {
+  try {
+    const { translationId } = req.params;
+    const { bookName, chapter } = req.body;
+
+    if (!translationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Translation ID is required",
+      });
+    }
+
+    if (!bookName || chapter === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Book name and chapter number are required",
+      });
+    }
+
+    const result = await getChapterHeadings({
+      bookName,
+      chapter: parseInt(chapter),
+    });
+    return res.status(200).json({
+      success: true,
+      data: result.data,
+    });
+  } catch (error) {
+    return res.status(404).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+export const listBookHeadings = async (req, res) => {
+  try {
+    const { translationId } = req.params;
+    const { bookName } = req.body;
+
+    if (!translationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Translation ID is required",
+      });
+    }
+
+    if (!bookName) {
+      return res.status(400).json({
+        success: false,
+        message: "Book name is required (e.g., 'Genesis')",
+      });
+    }
+
+    const result = await getBookHeadings({ bookName });
+    return res.status(200).json({
+      success: true,
+      data: result.data,
     });
   } catch (error) {
     return res.status(404).json({

@@ -17,6 +17,7 @@ module.exports = {
     }],
     "^.+\\.m?js$": ["babel-jest", {
       presets: [["@babel/preset-env", { targets: { node: "current" } }]],
+      plugins: [require.resolve("./jest-import-meta.plugin.cjs")],
     }],
   },
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],

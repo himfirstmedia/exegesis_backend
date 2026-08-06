@@ -4,9 +4,16 @@ import { fileURLToPath } from 'url';
 import { parseString } from 'xml2js';
 import { cache } from '../../services/cacheService.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const XML_DIR = path.join(__dirname, 'Holy-Bible-XML-Format');
+// Module directory — resolves via import.meta in ESM (production) and falls
+// back to the CJS-native __dirname under jest's CommonJS transform.
+const MODULE_DIR = (() => {
+  try {
+    return path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return __dirname;
+  }
+})();
+const XML_DIR = path.join(MODULE_DIR, 'Holy-Bible-XML-Format');
 
 // In-memory cache for parsed XML documents — avoids re-parsing the same translation
 // XML file on every getVerses/getChapters call. Keyed by full translation ID.
@@ -534,6 +541,60 @@ export const getReadingProgress = async (id, startBookName, startChapter, endBoo
     endBook: endBookName,
     endChapter,
     books
+  };
+};
+
+// ── Chapter section headings (bundled public-domain dataset from BSB USFM) ──
+const HEADINGS_FILE = path.join(MODULE_DIR, 'data', 'chapter-headings.json');
+let headingsCache = null;
+
+const loadHeadings = () => {
+  if (headingsCache) return headingsCache;
+  try {
+    headingsCache = JSON.parse(fs.readFileSync(HEADINGS_FILE, 'utf8'));
+  } catch (e) {
+    headingsCache = {};
+  }
+  return headingsCache;
+};
+
+/**
+ * Returns the section headings for a chapter.
+ * data: { bookName, chapter, headings: [{ verse, heading }] }
+ */
+export const getChapterHeadings = async (body = {}) => {
+  const { bookName, chapter } = body;
+  if (!bookName || chapter === undefined) {
+    return { status: 400, message: 'bookName and chapter are required' };
+  }
+  const all = loadHeadings();
+  const book = all[bookName];
+  const list = book?.[String(chapter)] || [];
+  return {
+    status: 200,
+    message: 'Chapter section headings',
+    data: {
+      bookName,
+      chapter: parseInt(chapter, 10),
+      headings: list,
+    },
+  };
+};
+
+export const getBookHeadings = async (body = {}) => {
+  const { bookName } = body;
+  if (!bookName) {
+    return { status: 400, message: 'bookName is required' };
+  }
+  const all = loadHeadings();
+  const book = all[bookName] || {};
+  return {
+    status: 200,
+    message: 'Book section headings',
+    data: {
+      bookName,
+      chapters: book,
+    },
   };
 };
 

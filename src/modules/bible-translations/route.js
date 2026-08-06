@@ -13,6 +13,8 @@ import {
   searchCross,
   getChapterRangeVerses,
   getReading,
+  listChapterHeadings,
+  listBookHeadings,
   getBookNames,
   getTranslationText,
   getTranslationSettings
@@ -45,6 +47,8 @@ router.post("/:translationId/search", search);
 // Legacy route — kept for backward compatibility
 router.post("/:translationId/search-fts", ...authAndTier, searchFTS);
 router.post("/:translationId/chapter-range", getChapterRangeVerses);
+router.post("/:translationId/chapter-headings", listChapterHeadings);
+router.post("/:translationId/book-headings", listBookHeadings);
 router.post("/:translationId/reading", getReading);
 router.get("/translate-text", getTranslationText);
 router.get("/settings", getTranslationSettings);

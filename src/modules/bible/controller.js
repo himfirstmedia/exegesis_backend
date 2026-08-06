@@ -471,3 +471,20 @@ export const deleteVerseExplanation = async (req, res) => {
       );
   }
 };
+
+export const getChapterJournalPrompts = async (req, res) => {
+  try {
+    const result = await bibleService.getChapterJournalPrompts(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Get chapter journal prompts error:", error);
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error fetching chapter journal prompts: " + error.message,
+        }),
+      );
+  }
+};

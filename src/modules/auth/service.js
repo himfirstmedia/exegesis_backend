@@ -1,9 +1,25 @@
 import { prisma } from "../../config/db.js";
 import bcrypt from "bcryptjs";
 import Stripe from "stripe";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import { fileURLToPath } from "url";
 import { generateToken, verifyToken, generateSixDigitCode, serializeBigInt } from "../../utils/helpers.js";
 import { emailTemplates } from "../../utils/emailTemplates.js";
 import { OAuth2Client } from "google-auth-library";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// backend/uploads/covers — served statically at /uploads
+const COVERS_DIR = path.join(__dirname, "../../../uploads/covers");
+const ALLOWED_COVER_TYPES = new Set(["jpeg", "jpg", "png", "webp"]);
+
+const detectImageExt = (buf) => {
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpg";
+  if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
+  if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "webp";
+  return null;
+};
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -679,6 +695,7 @@ export const updateCurrentUser = async (userId, data) => {
   if (data.emergencyContactPhone !== undefined) updateData.emergencyContactPhone = data.emergencyContactPhone;
   if (data.emergencyContactRelationship !== undefined) updateData.emergencyContactRelationship = data.emergencyContactRelationship;
   if (data.profilePhotoUrl !== undefined) updateData.profilePhotoUrl = data.profilePhotoUrl;
+  if (data.coverPhotoUrl !== undefined) updateData.coverPhotoUrl = data.coverPhotoUrl;
 
   updateData.updatedOn = new Date();
   updateData.updatedBy = user.id;
@@ -690,6 +707,60 @@ export const updateCurrentUser = async (userId, data) => {
 
   updatedUser.password = null;
   return { status: 200, message: "Your profile updated successfully", data: updatedUser };
+};
+
+export const uploadCoverPhoto = async (userId, data) => {
+  const { coverPhoto, mimeType } = data || {};
+  if (!coverPhoto || typeof coverPhoto !== "string" || coverPhoto.length === 0) {
+    return { status: 400, message: "coverPhoto (base64) is required" };
+  }
+
+  // Reject clearly non-image base64 payloads early (simple size guard: ~5MB)
+  const sizeInBytes = Math.floor((coverPhoto.length * 3) / 4);
+  if (sizeInBytes > 5 * 1024 * 1024) {
+    return { status: 400, message: "Image is too large (max 5MB)" };
+  }
+
+  let buffer;
+  try {
+    buffer = Buffer.from(coverPhoto, "base64");
+  } catch {
+    return { status: 400, message: "Invalid image data" };
+  }
+
+  // Magic-byte check so only real images are stored (jpg/png/webp)
+  const detectedExt = detectImageExt(buffer);
+  if (!detectedExt) {
+    return { status: 400, message: "File is not a supported image (jpg/png/webp)" };
+  }
+  const requestedExt = (mimeType || "image/jpeg").split("/").pop()?.toLowerCase() || "jpg";
+  const ext = ALLOWED_COVER_TYPES.has(requestedExt) ? (requestedExt === "jpeg" ? "jpg" : requestedExt) : detectedExt;
+  const filename = `${crypto.randomUUID()}.${ext}`;
+
+  try {
+    fs.mkdirSync(COVERS_DIR, { recursive: true });
+    fs.writeFileSync(path.join(COVERS_DIR, filename), buffer);
+  } catch (error) {
+    console.error("Cover photo write failed:", error);
+    return { status: 500, message: "Failed to store cover photo" };
+  }
+
+  const coverPhotoUrl = `/uploads/covers/${filename}`;
+
+  const updatedUser = await prisma.systemUser.update({
+    where: { id: userId },
+    data: {
+      coverPhotoUrl,
+      updatedOn: new Date(),
+      updatedBy: userId,
+    },
+  });
+
+  return {
+    status: 200,
+    message: "Cover photo updated successfully",
+    data: { coverPhotoUrl: updatedUser.coverPhotoUrl },
+  };
 };
 
 export const resendVerification = async (data) => {

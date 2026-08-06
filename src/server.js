@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
 import { config } from "dotenv";
 import { connectDB, disconnectDB } from "./config/db.js";
 import authRouter from "./modules/auth/route.js";
@@ -58,8 +60,13 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Larger body limit so base64 cover-photo uploads are accepted
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
+
+// Serve uploaded cover photos (backend/uploads) at /uploads
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Stripe webhook needs raw body for signature verification (must be BEFORE json parser)
 app.use("/webhooks/stripe", express.raw({ type: "application/json" }), handleStripeWebhook);

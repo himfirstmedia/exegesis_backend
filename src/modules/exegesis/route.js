@@ -25,4 +25,7 @@ router.post('/:id/learn', ...authAndTier, exegesisController.saveLearnStage);
 router.post('/:id/abide', ...authAndTier, exegesisController.saveAbideStage);
 router.post('/:id/abandon', ...authAndTier, exegesisController.abandonSession);
 
+// PDF export
+router.post('/:id/pdf', ...authAndTier, exegesisController.exportSessionPdf);
+
 export default router;
