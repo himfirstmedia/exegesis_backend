@@ -39,7 +39,7 @@ const EDGE_VOICES = [
   { name: "Jenny (Female)",  voiceId: "en-US-JennyNeural",   source: "edge", category: "Neural" },
   { name: "Aria (Female)",   voiceId: "en-US-AriaNeural",    source: "edge", category: "Neural" },
   { name: "Guy (Male)",      voiceId: "en-US-GuyNeural",     source: "edge", category: "Neural" },
-  { name: "Davis (Male)",    voiceId: "en-US-DavisNeural",   source: "edge", category: "Neural" },
+  { name: "Christopher (Male)", voiceId: "en-US-ChristopherNeural", source: "edge", category: "Neural" },
   { name: "Emma (Female)",   voiceId: "en-US-EmmaNeural",    source: "edge", category: "Neural" },
   { name: "Brian (Male)",    voiceId: "en-US-BrianNeural",   source: "edge", category: "Neural" },
   { name: "Sonia (Female)",  voiceId: "en-GB-SoniaNeural",   source: "edge", category: "Neural" },
@@ -166,6 +166,10 @@ const synthesizeEdge = async (text, voiceId = DEFAULT_EDGE_VOICE, speed = 1.0) =
     if (buffer.length === 0) {
       throw new Error("Empty audio received from Edge TTS");
     }
+    // An MP3 stream that finishes with almost no data is a silent/failed synth
+    if (buffer.length < 1_000) {
+      throw new Error("Silent audio received from Edge TTS");
+    }
     setInCache(cacheKey, buffer);
     return buffer;
   } catch (err) {
@@ -187,7 +191,25 @@ export const synthesizeWithTimings = async (
   voiceId = DEFAULT_EDGE_VOICE,
   speed = 1.0,
 ) => {
-  const edgeVoice = voiceId && isEdgeVoice(voiceId) ? voiceId : DEFAULT_EDGE_VOICE;
+  const candidates = [voiceId, DEFAULT_EDGE_VOICE];
+  for (const candidate of candidates) {
+    const edgeVoice =
+      candidate && isEdgeVoice(candidate) ? candidate : DEFAULT_EDGE_VOICE;
+    try {
+      return await synthesizeWithTimingsOnce(text, edgeVoice, speed);
+    } catch (err) {
+      if (edgeVoice === DEFAULT_EDGE_VOICE) throw err;
+      console.warn(
+        `[TTS] Timed Edge TTS failed for voice "${edgeVoice}":`,
+        err.message,
+      );
+      console.warn(`[TTS] Retrying with default voice "${DEFAULT_EDGE_VOICE}"`);
+    }
+  }
+  throw new Error("Timed Edge TTS synthesis failed");
+};
+
+const synthesizeWithTimingsOnce = async (text, edgeVoice, speed) => {
   const format = OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3;
   const ratePercent = Math.round((speed - 1) * 100);
   const rate = ratePercent === 0 ? "+0%" : `${ratePercent > 0 ? "+" : ""}${ratePercent}%`;
@@ -198,27 +220,35 @@ export const synthesizeWithTimings = async (
     const { audioStream, metadataStream } = tts.toStream(text, { rate });
     const audioChunks = [];
     const wordOffsetsMs = [];
+    let audioEnded = false;
+    let resolveMeta;
+    const metadataDone = new Promise((resolve) => { resolveMeta = resolve; });
 
-    await Promise.all([
-      new Promise((resolve, reject) => {
-        audioStream.on("data", (chunk) => audioChunks.push(chunk));
-        audioStream.on("end", resolve);
-        audioStream.on("error", reject);
-      }),
-      new Promise((resolve, reject) => {
-        if (!metadataStream) return resolve();
-        metadataStream.on("data", (chunk) => {
-          const payload = JSON.parse(chunk.toString());
-          for (const item of payload.Metadata || []) {
-            if (item.Type === "WordBoundary") {
-              wordOffsetsMs.push(item.Data.Offset / 10_000);
-            }
+    const audioComplete = new Promise((resolve, reject) => {
+      audioStream.on("data", (chunk) => audioChunks.push(chunk));
+      audioStream.on("end", () => {
+        audioEnded = true;
+        resolveMeta(); // metadata stream never emits "end"; stop waiting once audio is done
+        resolve();
+      });
+      audioStream.on("error", reject);
+    });
+
+    metadataStream.on("data", (chunk) => {
+      if (audioEnded) return;
+      try {
+        const payload = JSON.parse(chunk.toString());
+        for (const item of payload.Metadata || []) {
+          if (item.Type === "WordBoundary") {
+            wordOffsetsMs.push(item.Data.Offset / 10_000);
           }
-        });
-        metadataStream.on("end", resolve);
-        metadataStream.on("error", reject);
-      }),
-    ]);
+        }
+      } catch {}
+    });
+    metadataStream.on("error", () => resolveMeta());
+
+    await audioComplete;
+    await metadataDone;
 
     const audioBuffer = Buffer.concat(audioChunks);
     if (audioBuffer.length === 0) throw new Error("Empty audio received from Edge TTS");
