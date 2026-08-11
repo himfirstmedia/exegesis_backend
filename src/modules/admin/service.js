@@ -1,5 +1,6 @@
 import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
+import { cache } from "../../services/cacheService.js";
 
 const parseLocalDate = (value) => {
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -432,6 +433,17 @@ export const addDailyVerse = async (data, adminId) => {
     reflection,
     explanation,
     learnMore,
+    application,
+    verseIntroduction,
+    backgroundAuthor,
+    backgroundBook,
+    backgroundContext,
+    wordStudies,
+    practicalApplications,
+    keyThemes,
+    crossReferences,
+    finalThoughts,
+    takeaways,
     published,
   } = data;
 
@@ -456,6 +468,17 @@ export const addDailyVerse = async (data, adminId) => {
         reflection,
         explanation,
         learnMore,
+        application,
+        verseIntroduction,
+        backgroundAuthor,
+        backgroundBook,
+        backgroundContext,
+        wordStudies,
+        practicalApplications,
+        keyThemes,
+        crossReferences,
+        finalThoughts,
+        takeaways,
         isPublished: published ?? true,
         updatedBy: adminId,
       },
@@ -472,6 +495,17 @@ export const addDailyVerse = async (data, adminId) => {
         reflection,
         explanation,
         learnMore,
+        application,
+        verseIntroduction,
+        backgroundAuthor,
+        backgroundBook,
+        backgroundContext,
+        wordStudies,
+        practicalApplications,
+        keyThemes,
+        crossReferences,
+        finalThoughts,
+        takeaways,
         createdBy: adminId,
         isPublished: published ?? true,
       },
@@ -481,6 +515,17 @@ export const addDailyVerse = async (data, adminId) => {
   const msg = id
     ? "Daily verse updated successfully"
     : "Daily verse added successfully";
+
+  // Admin changes must be visible immediately rather than waiting for the
+  // 30-minute daily-verse cache to expire.
+  await Promise.all([
+    cache.del("bible", "todays-verse"),
+    cache.del("bible", "todays-verse:en"),
+    cache.del("bible", "todays-verse:ar"),
+    cache.del("bible", "todays-verse:es"),
+    cache.del("bible", "todays-verse:fr"),
+  ]);
+
   return { status: 200, message: msg, data: serializeBigInt(dailyVerse) };
 };
 

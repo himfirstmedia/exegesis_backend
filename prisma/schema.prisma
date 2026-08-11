@@ -165,6 +165,17 @@ model DailyVerse {
   reflection   String?    @map("reflection")
   explanation  String?    @map("explanation")
   learnMore    String?    @map("learn_more")
+  application        String?  @map("application")
+  verseIntroduction   String?  @map("verse_introduction")
+  backgroundAuthor    String?  @map("background_author")
+  backgroundBook      String?  @map("background_book")
+  backgroundContext   String?  @map("background_context")
+  wordStudies         String?  @map("word_studies") // JSON: [{ word, strongs, definition }]
+  practicalApplications String? @map("practical_applications") // JSON: [string]
+  keyThemes           String?  @map("key_themes") // JSON: [string]
+  crossReferences     String?  @map("cross_references") // JSON: [string]
+  finalThoughts       String?  @map("final_thoughts")
+  takeaways           String?  @map("takeaways") // JSON: [string]
   createdBy    String     @map("created_by")
   createdOn    DateTime   @default(now()) @map("created_on")
   updatedBy    String?    @map("updated_by")

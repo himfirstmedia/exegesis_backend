@@ -88,6 +88,22 @@ const set = async (namespace, key, data, ttl = DEFAULT_TTL) => {
 };
 
 /**
+ * Remove a single key from the cache.
+ * @param {string} namespace - The cache namespace (e.g. 'bible')
+ * @param {string} key - The key within the namespace
+ */
+const del = async (namespace, key) => {
+  if (!ready) return;
+  try {
+    const c = getClient();
+    if (!c) return;
+    await c.del(`${namespace}:${key}`);
+  } catch {
+    ready = false;
+  }
+};
+
+/**
  * Cache-aside pattern: check cache first; on miss, run fetchFn, cache the result, and return it.
  * @param {string} namespace - A prefix for the cache key
  * @param {string} key - The unique key within the namespace
@@ -104,7 +120,7 @@ const getOrSet = async (namespace, key, fetchFn, ttl = DEFAULT_TTL) => {
   return data;
 };
 
-export const cache = { get, set, getOrSet };
+export const cache = { get, set, getOrSet, del };
 
 // Eagerly connect at module load. Without this the client is never created:
 // get/set short-circuit on `ready` before getClient() is ever called, so Redis

@@ -34,489 +34,453 @@ const dateAtMidnight = (dayOffset) => {
   return d;
 };
 
+/**
+ * Enriched daily verse entries. Each carries the full exegesis content the
+ * Daily Verse screen renders (verse intro, explanation, application,
+ * background, word studies, practical applications, insights, cross refs,
+ * final thoughts, takeaways). Arrays are stored as JSON strings.
+ */
 const dailyVerses = [
+  {
+    bookName: "Acts",
+    chapter: 16,
+    verseNumber: 10,
+    bibleVersion: "NKJV",
+    displayDate: dateAtMidnight(0),
+    verseText:
+      "Now after he had seen the vision, immediately we sought to go to Macedonia, concluding that the Lord had called us to preach the gospel to them.",
+    explanation:
+      "This verse records the immediate and unified response to God's revealed will. After Paul receives the Macedonian vision, there is no delay, debate, or hesitation. Luke shifts the narrative to 'we', indicating that the entire missionary team is in agreement. They carefully conclude that the vision is from the Lord, showing discernment rather than impulsiveness. The call is not merely to travel, but to preach the gospel, confirming that mission, not movement, is the priority. Luke emphasizes that divine guidance requires both spiritual clarity and obedient action. This verse highlights how God's call produces unity, urgency, and purpose when it is rightly understood.",
+    application:
+      "When God's will becomes clear, believers should respond with obedience and unity. Delayed obedience often weakens the impact of God's direction.",
+    verseIntroduction:
+      "Acts 16:10 demonstrates how revelation leads to responsibility. God's guidance demands a response, and faithful servants act decisively once His will is confirmed.",
+    backgroundAuthor:
+      "Luke writes Acts as both a historian and eyewitness, evident in his use of 'we', showing his direct involvement in the mission.",
+    backgroundBook:
+      "The Book of Acts traces the spread of the gospel through Spirit-led obedience, highlighting missionary expansion and unity.",
+    backgroundContext:
+      "This verse follows the Macedonian vision at Troas during Paul's second missionary journey. It marks the gospel's first intentional move into Europe, initiated by divine calling rather than human planning.",
+    wordStudies: [
+      { word: "Immediately", strongs: "eutheōs – Strong's G2112", definition: "Means at once, instantly, or without delay. This word emphasizes prompt obedience and quick response to God's direction." },
+      { word: "Sought", strongs: "zēteō – Strong's G2212", definition: "Means to seek, pursue, desire, or search earnestly. It implies active effort to follow God's will." },
+      { word: "Concluding", strongs: "symbibazō – Strong's G4822", definition: "Means to bring together, reason out, or arrive at an understanding. It reflects thoughtful spiritual discernment guided by God." },
+      { word: "Called", strongs: "proskaleō – Strong's G4341", definition: "Means to summon, invite, or call near. It highlights God's initiative in directing His servants toward His purposes." },
+      { word: "Preach the gospel", strongs: "euangelizō – Strong's G2097", definition: "Means to proclaim, announce, or share the good news. It emphasizes the church's mission of declaring salvation in Jesus Christ." },
+    ],
+    practicalApplications: [
+      "Respond promptly when God's direction is confirmed.",
+      "Practice discernment before acting on spiritual experiences.",
+      "Walk in unity with other believers when pursuing God's call.",
+      "Keep the gospel central in every mission and decision.",
+      "Trust that God opens new fields when His timing is right.",
+    ],
+    keyThemes: [
+      "Immediate obedience",
+      "Discernment and unity",
+      "Divine calling",
+      "Missionary urgency",
+      "Gospel proclamation",
+    ],
+    crossReferences: [
+      "Acts 13:2–3 – The Spirit calls and sends.",
+      "James 1:22 – Be doers of the word.",
+      "Romans 10:15 – Sent to preach the gospel.",
+      "Isaiah 6:8 – The willing response to God's call.",
+    ],
+    finalThoughts:
+      "Acts 16:10 shows that God's guidance is meant to be acted upon. When revelation is met with obedience, the gospel advances powerfully into new territory.",
+    takeaways: [
+      "God expects prompt obedience to clear direction.",
+      "Discernment confirms divine calling.",
+      "Unity strengthens the mission of the gospel.",
+    ],
+  },
   {
     bookName: "John",
     chapter: 3,
     verseNumber: 16,
-    bibleVersion: "KJV",
+    bibleVersion: "NKJV",
     displayDate: dateAtMidnight(1),
-    reflection:
-      "God's love is the foundation of our faith. He gave His only Son so that we might have eternal life through faith in Him.",
+    verseText:
+      "For God so loved the world that He gave His only begotten Son, that whoever believes in Him should not perish but have everlasting life.",
     explanation:
-      "Often called 'the Gospel in a nutshell,' this verse summarizes the entire message of salvation. It reveals God's motivation is love — not merely an abstract attribute but a self-giving, sacrificial love that initiated salvation before any human response. The scope of God's love is universal: 'the world,' meaning all humanity without distinction. The gift of God's 'only begotten Son' emphasizes the immeasurable cost of redemption. Faith is the sole condition for receiving eternal life — not works, not heritage, not religious observance. This verse establishes the divine initiative in salvation while affirming human responsibility to believe.",
-    learnMore: "https://www.biblegateway.com/passage/?search=John+3%3A16&version=KJV",
-  },
-  {
-    bookName: "Jeremiah",
-    chapter: 29,
-    verseNumber: 11,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(2),
-    reflection:
-      "God has good plans for your life — plans to prosper you and give you hope and a future. Trust in His timing and purpose.",
-    explanation:
-      "This verse, part of Jeremiah's letter to the exiles in Babylon, assures us that God's plans are comprehensive and trustworthy. The 'plans to prosper you' refer to God's covenant faithfulness to preserve and restore His people according to His redemptive purposes. The 'hope and a future' ultimately point forward to the coming of Christ. Written during a time of judgment and displacement, this promise demonstrates that God's purposes extend beyond immediate circumstances. It reminds believers that divine discipline is never the final word — restoration always follows repentance.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Jeremiah+29%3A11&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 23,
-    verseNumber: 1,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(3),
-    reflection:
-      "The Lord is our Shepherd — He guides, provides, and protects. With Him, we lack nothing.",
-    explanation:
-      "This beloved psalm opens with the tender metaphor of the Lord as a shepherd. In ancient Israel, shepherds were known for their intimate care, guidance, and protection of their sheep. By declaring 'I shall not want,' David expresses complete trust in God's provision. This opening verse sets the stage for the entire psalm, portraying a life of peace, security, and blessing that flows from trusting in the Good Shepherd. The shepherd imagery anticipates Christ's own declaration, 'I am the good shepherd,' connecting the Old Testament picture to its New Testament fulfillment.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+23&version=KJV",
-  },
-  {
-    bookName: "Philippians",
-    chapter: 4,
-    verseNumber: 13,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(4),
-    reflection:
-      "Through Christ who strengthens us, we can face any circumstance with contentment and faith.",
-    explanation:
-      "Paul writes from prison, having learned to be content in every circumstance. 'I can do all things' is not about accomplishing any goal we set for ourselves, but about being enabled by Christ to face any circumstance with contentment and faithfulness. The secret is not self-confidence but Christ-dependence: the strength to persevere comes not from within but from Christ who empowers us. Paul had experienced both abundance and need, and in both he found Christ sufficient. This verse is a declaration of divine enablement for endurance, not a promise of unlimited personal achievement.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Philippians+4%3A13&version=KJV",
+      "Often called 'the Gospel in a nutshell,' this verse summarizes the entire message of salvation. It reveals God's motive: love — not an abstract attribute but a self-giving, sacrificial love that takes the initiative before any human response. The scope of this love is universal: 'the world,' meaning all humanity without distinction. The gift of God's 'only begotten Son' shows the immeasurable cost of redemption. Faith is the single condition for receiving eternal life — not works, not heritage, not religious observance. Jesus here establishes the divine initiative in salvation while still affirming human responsibility to believe.",
+    application:
+      "Receive this gift by faith rather than by effort, and let that same self-giving love flow through you toward someone else today.",
+    verseIntroduction:
+      "John 3:16 reveals the heart of the gospel: a love that moves God to give, and a faith that opens the door to eternal life. It is both a declaration and an invitation.",
+    backgroundAuthor:
+      "The apostle John wrote his Gospel so that his readers might believe that Jesus is the Christ and, by believing, have life in His name (John 20:31).",
+    backgroundBook:
+      "The Gospel of John emphasizes the deity of Christ and the new birth, leading every reader to faith as the avenue of eternal life.",
+    backgroundContext:
+      "Jesus speaks these words in His conversation with Nicodemus, a teacher of Israel, explaining the necessity of rebirth and God's worldwide plan of salvation.",
+    wordStudies: [
+      { word: "Loved", strongs: "agapaō – Strong's G25", definition: "To love in a selfless, willful manner — love founded on choice and sacrifice rather than on emotion." },
+      { word: "World", strongs: "kosmos – Strong's G2889", definition: "The created order and all humanity, seen here as the object of God's saving love." },
+      { word: "Gave", strongs: "didōmi – Strong's G1325", definition: "To give freely as a gift; God gave His Son without compulsion or reservation." },
+      { word: "Only begotten", strongs: "monogenēs – Strong's G3439", definition: "Only, unique, one-of-a-kind; it stresses the unique sonship of Christ." },
+      { word: "Believes", strongs: "pisteuō – Strong's G4100", definition: "To trust, rely upon, and fully commit to a person." },
+      { word: "Perish", strongs: "apollumi – Strong's G622", definition: "To be fully destroyed or eternally lost — the opposite of eternal life." },
+      { word: "Everlasting life", strongs: "aionios zōē – Strong's G166/G2222", definition: "The life of abiding, eternal quality — the very life of God shared with believers." },
+    ],
+    practicalApplications: [
+      "Receive the gift of salvation by faith, not by earning it.",
+      "Marvel daily at the cost God was willing to pay for love.",
+      "Stop living as if salvation depends on your performance.",
+      "Show one selfless act of love toward someone today.",
+      "Tell someone before the day ends that God loves the whole world.",
+    ],
+    keyThemes: [
+      "God's sacrificial love",
+      "The gift of the Son",
+      "Faith as the way to life",
+      "Salvation intended for the whole world",
+      "Grace that precedes every work",
+    ],
+    crossReferences: [
+      "John 1:12 – Believing grants the right to become children of God.",
+      "Romans 5:8 – God shows His love in that Christ died for us.",
+      "Ephesians 2:8–9 – Saved by grace through faith, not works.",
+      "1 John 4:9–10 – Love stands revealed in the gift of the Son.",
+    ],
+    finalThoughts:
+      "God's love is not a distant sentiment but a costly, given gift. Faith is not mere agreement but the humble 'yes' that opens the door to life.",
+    takeaways: [
+      "Salvation originates in God's love.",
+      "Eternal life is received through trusting Christ.",
+      "The scope of God's love is the whole world.",
+    ],
   },
   {
     bookName: "Romans",
     chapter: 8,
     verseNumber: 28,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(5),
-    reflection:
-      "God works all things together for the good of those who love Him and are called according to His purpose.",
+    bibleVersion: "NKJV",
+    displayDate: dateAtMidnight(2),
+    verseText:
+      "And we know that all things work together for good to those who love God, to those who are the called according to His purpose.",
     explanation:
-      "This verse stands as one of the most comforting promises in all of Scripture. The promise that 'all things work together for good' assures us that God, in His sovereignty, is able to weave even the most painful circumstances into His redemptive purposes. The 'good' referred to is being conformed to the likeness of Christ. This verse does not promise that all things will work out according to our preferences, but that God will use all things to accomplish our ultimate good: Christlikeness and eternal glory. The condition 'to those who love God and are called according to His purpose' situates this promise within the context of a covenant relationship.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Romans+8%3A28&version=KJV",
+      "This verse is among the most encouraging promises in all of Scripture. The promise that 'all things work together for good' assures us that God, in His sovereignty, weaves even the hardest circumstances into His redemptive plan. The 'good' is not personal comfort but conformity to Christ — the good that God is producing in His people. This verse does not promise that everything will follow our preferences, only that God will use all things to conform us to His Son. And it is not a promise to everyone: it is addressed to 'those who love God, to those who are the called according to His purpose.'",
+    application:
+      "When life is confusing, you do not need to see the whole pattern to trust the Weaver. Hold to Christlikeness as the good God is producing in your story.",
+    verseIntroduction:
+      "Romans 8:28 anchors hope in a certainty we can know: God's providence runs beneath every detail, turning all things toward the shape of Christ in His people.",
+    backgroundAuthor:
+      "Paul, the apostle to the Gentiles, wrote this epistle to set forth the gospel of God and the security granted to all whom God has called.",
+    backgroundBook:
+      "Romans unfolds the message of righteousness from God, climaxing in chapters of assurance: nothing can separate us from God's love.",
+    backgroundContext:
+      "This promise crowns the Spirit's chapter, contrasting the weakness of the flesh with the purpose of God, who predestined believers to be conformed to Christ.",
+    wordStudies: [
+      { word: "Know", strongs: "oida – Strong's G1492", definition: "To know with certainty, as a settled and clear grasp of truth rather than mere opinion." },
+      { word: "All things", strongs: "panta – Strong's G3956", definition: "The whole span of a believer's life — joyful and painful, triumphant and hard." },
+      { word: "Work together", strongs: "synergeō – Strong's G4903", definition: "To cooperate toward a common result, moving jointly toward one end." },
+      { word: "Good", strongs: "agathos – Strong's G18", definition: "That which is good and beneficial; here the ultimate good is likeness to Christ." },
+      { word: "Called", strongs: "klētos – Strong's G2822", definition: "Invited and appointed by God; a calling that carries divine purpose." },
+      { word: "Purpose", strongs: "prothesis – Strong's G4286", definition: "A purpose laid down beforehand — God's deliberate plan." },
+    ],
+    practicalApplications: [
+      "Rehearse this promise when events appear meaningless — the pattern is not the purpose.",
+      "Ask not only why a hardship happened, but what God may be shaping.",
+      "Pray that affliction conforms you to Christ rather than hardens you.",
+      "Trust God's end rather than the trend of the day.",
+      "Serve others from the certainty that your life is being worked toward good.",
+    ],
+    keyThemes: [
+      "Anchored certainty in God",
+      "Sovereign providence",
+      "Divine calling and purpose",
+      "Conformity to Christ as the 'good'",
+      "Love that is the mark of the called",
+    ],
+    crossReferences: [
+      "Genesis 50:20 – What was meant for evil, God used for good.",
+      "Romans 8:29 – Predestined to be conformed to the likeness of the Son.",
+      "Ephesians 1:11 – He works all things to the counsel of His will.",
+      "2 Corinthians 4:17 – Our light affliction works an eternal weight of glory.",
+    ],
+    finalThoughts:
+      "We never need the full picture, for we know the One who holds it. Because God is sovereign and active, everything is being fitted together toward Christ.",
+    takeaways: [
+      "God works even painful parts together toward good.",
+      "The ultimate good God intends is Christlikeness in us.",
+      "This promise belongs to those called according to His purpose.",
+    ],
   },
   {
     bookName: "Proverbs",
     chapter: 3,
     verseNumber: 5,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(6),
-    reflection:
-      "Trust in the Lord completely, not relying on your own understanding. He will direct your paths.",
+    bibleVersion: "NKJV",
+    displayDate: dateAtMidnight(3),
+    verseText: "Trust in the LORD with all your heart, And lean not on your own understanding.",
     explanation:
-      "This wisdom saying strikes at the heart of human self-sufficiency. To 'trust in the Lord with all your heart' means to rely completely on God's character, promises, and providence rather than on human understanding, which is inherently limited. The heart in Hebrew thought represents the whole inner person — mind, will, emotions, and intentions. Therefore, trusting with 'all your heart' demands total, undivided commitment. The contrast between divine trust and human understanding highlights the fundamental choice facing every believer: will we lean on our limited perspective or rest in God's infinite wisdom?",
-    learnMore: "https://www.biblegateway.com/passage/?search=Proverbs+3%3A5&version=KJV",
-  },
-  {
-    bookName: "2 Corinthians",
-    chapter: 5,
-    verseNumber: 17,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(7),
-    reflection:
-      "In Christ, you are a new creation. The old has passed away — behold, the new has come!",
-    explanation:
-      "Paul declares the transformative power of union with Christ. Being 'in Christ' is the central reality of the Christian life — a spiritual union that brings about an entirely new creation. The old order of life dominated by sin, guilt, and spiritual death has passed away. This is not merely moral improvement but a genuine new creation. This transformation affects every aspect of the believer's identity: old patterns of thinking, old allegiances are replaced by the new reality of life in Christ. The new creation is both a present reality and a future hope, already inaugurated but awaiting full consummation.",
-    learnMore: "https://www.biblegateway.com/passage/?search=2+Corinthians+5%3A17&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 119,
-    verseNumber: 105,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(8),
-    reflection:
-      "God's Word is a lamp that guides our steps and a light that illuminates our path. Walk in its light today.",
-    explanation:
-      "This verse from the longest psalm in Scripture celebrates the guiding power of God's Word. The metaphor of a lamp and light emphasizes both immediate illumination for the next step and broader guidance for life's journey. Ancient travelers depended on lamps to navigate dark paths — similarly, believers depend on Scripture to navigate a fallen world. The verse implies that without God's Word we walk in darkness, unable to see dangers or discern the right way. It affirms that Scripture is not merely informative but transformative, providing practical guidance for daily living.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+119%3A105&version=KJV",
-  },
-  {
-    bookName: "Isaiah",
-    chapter: 40,
-    verseNumber: 31,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(9),
-    reflection:
-      "Those who wait on the Lord will be renewed with strength to rise above life's challenges. Trust in His timing.",
-    explanation:
-      "This verse comes from a section of Isaiah that proclaims comfort and hope to God's people in exile. 'Waiting on the Lord' does not mean passive resignation but active, expectant trust in God's promises. The promise of renewed strength pictures an eagle soaring effortlessly on thermal currents — not struggling but being carried by the wind of the Spirit. This renewal is promised to those who recognize their own limitations and depend fully on God's power. The progression from 'mount up with wings' to 'run and not be weary' to 'walk and not faint' covers every pace of life, from soaring victories to steady endurance.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Isaiah+40%3A31&version=KJV",
-  },
-  {
-    bookName: "Joshua",
-    chapter: 1,
-    verseNumber: 9,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(10),
-    reflection:
-      "Be strong and courageous — God is with you wherever you go. Fear has no place in the presence of the Almighty.",
-    explanation:
-      "God spoke these words to Joshua as he prepared to lead Israel into the Promised Land after Moses' death. The command 'be strong and of a good courage' is repeated three times in this chapter, underscoring its importance. The basis for this courage is not Joshua's natural abilities but the promise of God's presence: 'the Lord thy God is with thee whithersoever thou goest.' This verse connects divine empowerment with human responsibility — God's presence does not eliminate the need for courage but provides the foundation for it. Every believer faces unknown territories, and this promise applies to all who step out in faith.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Joshua+1%3A9&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 46,
-    verseNumber: 10,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(11),
-    reflection:
-      "Be still and know that He is God. In the chaos of life, pause and remember who holds all things together.",
-    explanation:
-      "This verse calls believers to cease from striving and recognize God's sovereign authority. 'Be still' translates the Hebrew word raphah, meaning to let go, relax, or surrender. It is an invitation to stop trusting in human effort and acknowledge that God alone is God. The context of Psalm 46 depicts nations in uproar and kingdoms falling — yet God remains a refuge and fortress. This command is both a comfort and a challenge: comfort because God is in control, and challenge because we must release our grip on the illusion of control. True peace begins when we stop trying to be God and let Him be God.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+46%3A10&version=KJV",
-  },
-  {
-    bookName: "Matthew",
-    chapter: 11,
-    verseNumber: 28,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(12),
-    reflection:
-      "Jesus invites all who are weary and burdened to come to Him for rest. Lay down your heavy load at His feet.",
-    explanation:
-      "This tender invitation from Jesus comes immediately after His declaration that the Father has revealed truth to 'babes' rather than the wise and prudent. The 'labor and heavy laden' refers to those burdened by the weight of religious legalism, sin, and life's hardships. Jesus does not merely offer sympathy but promises genuine rest — rest from the exhausting effort of earning salvation through works. The invitation is universal: 'come unto me, all ye.' This verse reveals the heart of Christ as compassionate and accessible, contrasting with the religious leaders who loaded people with burdens they themselves would not bear.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Matthew+11%3A28&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 37,
-    verseNumber: 4,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(13),
-    reflection:
-      "When you delight yourself in the Lord, He transforms your desires to align with His will. Find your joy in Him.",
-    explanation:
-      "This verse reveals a profound spiritual principle: as we delight in God, our desires are gradually conformed to His. The word 'delight' implies taking great pleasure in, finding satisfaction in, and making God the object of our deepest affections. The promise 'He shall give thee the desires of thine heart' is not a blank check for selfish wishes but a promise that when our hearts are aligned with God's, what we desire will be what He desires to give. This transformation of desire is the work of the Holy Spirit sanctifying our affections. The verse connects joy in God with the fulfillment of redirected, purified longings.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+37%3A4&version=KJV",
-  },
-  {
-    bookName: "Romans",
-    chapter: 8,
-    verseNumber: 31,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(14),
-    reflection:
-      "If God is for us, no one can successfully stand against us. His support outweighs all opposition.",
-    explanation:
-      "Paul poses this rhetorical question at the climax of his argument about God's unwavering commitment to His people. The logic is irrefutable: if the sovereign Creator who did not spare His own Son is for us, what possible opposition could prevail? This verse does not promise the absence of opposition but the certainty of victory through God's power. The 'for us' language echoes the covenant formula 'I will be your God and you will be My people.' Paul is building a case for the believer's complete security in Christ, grounded in the Father's sacrificial love demonstrated at the cross.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Romans+8%3A31&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 27,
-    verseNumber: 1,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(15),
-    reflection:
-      "The Lord is your light, salvation, and stronghold. Whom shall you fear when He is your defender?",
-    explanation:
-      "David opens this psalm with a triple declaration of confidence: the Lord is light, salvation, and strength. Light represents truth, guidance, and the dispelling of darkness and confusion. Salvation points to deliverance from enemies and, ultimately, from sin and death. Strength (or stronghold) depicts God as a secure fortress against every attack. The rhetorical question 'whom shall I fear?' challenges the rationality of fear when God is on our side. This verse establishes the theme of courageous trust that runs throughout the psalm, demonstrating that fear is overcome not by denying danger but by magnifying God's greatness.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+27%3A1&version=KJV",
-  },
-  {
-    bookName: "John",
-    chapter: 14,
-    verseNumber: 6,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(16),
-    reflection:
-      "Jesus is the only way to the Father, the ultimate truth, and the source of eternal life. There is no other path.",
-    explanation:
-      "Jesus makes one of the most exclusive claims in all of religious history: He alone is the way, the truth, and the life. This declaration comes in response to Thomas's question about knowing the way to the Father. 'The way' indicates that Jesus is the path to God, not merely a guide who shows the path. 'The truth' presents Jesus as the embodiment of divine reality, the full revelation of God. 'The life' points to His power to grant eternal life. The phrase 'no man cometh unto the Father but by me' establishes the absolute necessity of Christ as mediator between God and humanity.",
-    learnMore: "https://www.biblegateway.com/passage/?search=John+14%3A6&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 34,
-    verseNumber: 8,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(17),
-    reflection:
-      "Taste and see that the Lord is good — experience His goodness for yourself. Those who take refuge in Him are blessed.",
-    explanation:
-      "This verse uses vivid sensory language to invite personal experience of God's goodness. The word 'taste' suggests intimate, personal knowledge rather than distant observation — one cannot know the flavor of food by watching others eat. The invitation to 'see' emphasizes that experiential knowledge of God leads to understanding and faith. The verb forms imply an ongoing, repeated experience of God's goodness. The second half of the verse pronounces a blessing on those who 'trust in Him,' connecting experiential knowledge of God's goodness with the security found in taking refuge in Him. Faith is both tasted and trusted.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+34%3A8&version=KJV",
-  },
-  {
-    bookName: "Romans",
-    chapter: 15,
-    verseNumber: 13,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(18),
-    reflection:
-      "May the God of hope fill you with joy and peace as you trust in Him. Let hope overflow in your life by the Holy Spirit.",
-    explanation:
-      "Paul concludes a section on unity and mutual encouragement with this beautiful benediction. He addresses God as 'the God of hope,' a title that encapsulates the forward-looking nature of Christian faith. The prayer is that believers would be filled with 'all joy and peace in believing' — joy and peace that are not dependent on circumstances but flow from faith. The phrase 'abound in hope' suggests an overflowing, superabundant confidence in God's promises. Paul grounds this hope in 'the power of the Holy Ghost,' indicating that supernatural hope is a fruit of the Spirit's work in the believer's life.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Romans+15%3A13&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 121,
-    verseNumber: 1,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(19),
-    reflection:
-      "Our help comes from the Lord, the Maker of heaven and earth. Lift your eyes to Him who never slumbers.",
-    explanation:
-      "This pilgrim psalm begins with the psalmist looking up to the hills — likely the hills surrounding Jerusalem, the destination of pilgrimage. The question 'from whence cometh my help' reflects the human experience of needing assistance beyond our own resources. The answer is decisive: 'my help cometh from the Lord, which made heaven and earth.' By identifying God as Creator, the psalmist grounds all hope in God's sovereign power over all creation. This opening establishes the theme of divine protection that continues through the psalm: the One who keeps Israel neither slumbers nor sleeps, watching over His people eternally.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+121%3A1&version=KJV",
-  },
-  {
-    bookName: "Galatians",
-    chapter: 5,
-    verseNumber: 22,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(20),
-    reflection:
-      "The fruit of the Spirit — love, joy, peace, patience, kindness, goodness, faithfulness, gentleness, and self-control — grows in those who walk by the Spirit.",
-    explanation:
-      "Paul contrasts the fruit of the Spirit with the works of the flesh, presenting nine virtues that characterize a life lived in step with the Holy Spirit. Unlike the gifts of the Spirit, which are distributed variously, the fruit is to be cultivated in every believer. The singular 'fruit' (not 'fruits') suggests these nine qualities form a unified character produced by the Spirit. These virtues reflect the character of Christ Himself, who perfectly exemplified each one. The fruit is not produced by human effort but by abiding in Christ — yet believers cooperate with the Spirit through obedience and spiritual disciplines.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Galatians+5%3A22&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 103,
-    verseNumber: 1,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(21),
-    reflection:
-      "Bless the Lord with all your soul and remember His benefits. Let your whole being rise in grateful worship.",
-    explanation:
-      "David calls his own soul to worship, commanding every part of his being to bless the Lord. The repetition of 'all that is within me' emphasizes wholehearted, undivided devotion. This self-directed call to worship acknowledges that our souls can become distracted and need to be summoned back to gratitude. The phrase 'forget not all His benefits' anticipates the catalog of blessings that follows: forgiveness, healing, redemption, crowning with lovingkindness, and renewal. The psalm teaches that worship is both a spontaneous response to God's goodness and a discipline of remembering His works.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+103%3A1&version=KJV",
-  },
-  {
-    bookName: "Matthew",
-    chapter: 6,
-    verseNumber: 33,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(22),
-    reflection:
-      "Seek God's kingdom and righteousness first, and He will provide all you need. Prioritize what matters eternally.",
-    explanation:
-      "Jesus concludes His teaching about worry and material needs with this foundational principle. 'Seek ye first the kingdom of God' means making God's rule and reign the primary pursuit of your life — not one priority among many but the priority that orders all others. The promise 'all these things shall be added unto you' refers to the basic necessities that the preceding verses address: food, drink, and clothing. Jesus is not promising wealth but provision for those who prioritize God's kingdom. This verse challenges the anxiety that comes from trusting in material resources rather than in the heavenly Father who knows our needs.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Matthew+6%3A33&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 136,
-    verseNumber: 1,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(23),
-    reflection:
-      "Give thanks to the Lord, for He is good. His steadfast love endures forever — a refrain that never grows old.",
-    explanation:
-      "This psalm opens with a threefold call to thanksgiving, each line ending with the refrain 'for His mercy endureth for ever.' The Hebrew word chesed, translated 'mercy' or 'lovingkindness,' describes God's covenant faithfulness and steadfast love. This refrain is repeated twenty-six times throughout the psalm, creating a liturgical call-and-response pattern. Each verse recounts a different aspect of God's mighty works — creation, deliverance from Egypt, conquest of the Promised Land — and attributes them all to His enduring love. The repetition teaches that every act of God, from creation to providence to redemption, flows from His faithful, covenant-keeping love.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+136%3A1&version=KJV",
-  },
-  {
-    bookName: "Romans",
-    chapter: 12,
-    verseNumber: 2,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(24),
-    reflection:
-      "Do not conform to the world's patterns — be transformed by renewing your mind. Let God reshape how you think.",
-    explanation:
-      "Paul issues a radical call to non-conformity and transformation. 'Be not conformed to this world' commands believers to resist the pressure to adopt the values, priorities, and thinking patterns of the fallen world system. The alternative is transformation through 'the renewing of your mind' — a fundamental reshaping of how we think, perceive, and evaluate. This renewal is the work of the Holy Spirit through Scripture, prayer, and the community of faith. The purpose of this transformation is 'that ye may prove what is that good, and acceptable, and perfect will of God' — to discern and live out God's will in every area of life.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Romans+12%3A2&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 19,
-    verseNumber: 14,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(25),
-    reflection:
-      "Let the words of your mouth and the meditation of your heart be acceptable in God's sight. He is your Rock and Redeemer.",
-    explanation:
-      "David closes this majestic psalm with a prayer for personal holiness. He recognizes that true worship involves both external speech ('words of my mouth') and internal devotion ('meditation of my heart'). The psalm moves from general revelation in creation (verses 1-6) to special revelation in Scripture (verses 7-11) to personal application (verses 12-14). By asking that his words and thoughts be 'acceptable' — the same Hebrew word used for acceptable sacrifices — David presents his inner and outer life as an offering to God. Addressing God as 'my strength and my redeemer' combines the concepts of security and salvation.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+19%3A14&version=KJV",
-  },
-  {
-    bookName: "John",
-    chapter: 10,
-    verseNumber: 10,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(26),
-    reflection:
-      "Jesus came to give you abundant life — not mere existence, but life overflowing with purpose and joy.",
-    explanation:
-      "Jesus contrasts His mission with the thief's purpose: the thief comes to steal, kill, and destroy, but Christ comes to give life in abundance. The 'abundant life' is not primarily material prosperity but the full, rich, eternal quality of life that flows from knowing God through Christ. This life includes forgiveness of sins, adoption as children of God, the indwelling of the Holy Spirit, and the hope of resurrection. The contrast highlights the destructive intent of Satan versus the life-giving purpose of Christ. Abundant life is both a present possession and a future hope, experienced now in part and fully at Christ's return.",
-    learnMore: "https://www.biblegateway.com/passage/?search=John+10%3A10&version=KJV",
-  },
-  {
-    bookName: "1 Peter",
-    chapter: 5,
-    verseNumber: 7,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(27),
-    reflection:
-      "Cast all your anxiety on God because He cares for you deeply. You do not need to carry your burdens alone.",
-    explanation:
-      "Peter instructs believers to cast 'all' their care upon God — not some worries, not the big ones only, but every anxiety and concern. The verb 'casting' suggests a deliberate, active transfer of burdens from ourselves to God. The reason for this command is God's character: 'for He careth for you.' God's care is not abstract or distant but personal and affectionate. This verse follows Peter's call to humility and stands in the context of suffering and persecution. The same God who is sovereign over all things is also intimately concerned with every detail of His children's lives.",
-    learnMore: "https://www.biblegateway.com/passage/?search=1+Peter+5%3A7&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 91,
-    verseNumber: 1,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(28),
-    reflection:
-      "Those who dwell in the shelter of the Most High find rest under His shadow. He is your refuge and fortress.",
-    explanation:
-      "This psalm opens with a beautiful picture of security and protection. 'He that dwelleth in the secret place of the most High' refers to the one who makes God their habitation — not a visitor but a resident in God's presence. 'The shadow of the Almighty' evokes the image of a great bird sheltering its young under its wings, conveying both protection and intimacy. The parallel structure of the verse emphasizes that dwelling with God leads to abiding in His protection. This psalm promises supernatural protection to those who make God their refuge, though it is not a promise of a trouble-free life but of God's presence through every trial.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+91%3A1&version=KJV",
-  },
-  {
-    bookName: "Ephesians",
-    chapter: 2,
-    verseNumber: 8,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(29),
-    reflection:
-      "You are saved by grace through faith — it is God's gift, not your own doing. Receive His grace with humble gratitude.",
-    explanation:
-      "Paul articulates the heart of the gospel with unsurpassed clarity: salvation is entirely God's work. 'Grace' is unmerited favor — God's goodness extended to those who deserve judgment. 'Faith' is the instrument, not the basis, of salvation — we are saved through faith, not because of faith. The phrase 'that not of yourselves: it is the gift of God' eliminates any ground for human boasting. Grace and faith together exclude works from the ground of salvation while including them as the evidence of salvation, as the next verse clarifies. This verse is the cornerstone of the Reformation's solas: sola gratia, sola fide, solus Christus.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Ephesians+2%3A8&version=KJV",
-  },
-  {
-    bookName: "Psalms",
-    chapter: 150,
-    verseNumber: 6,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(30),
-    reflection:
-      "Everything that has breath should praise the Lord. Let your life be a continuous offering of praise to your Creator.",
-    explanation:
-      "The final verse of the Psalter is a universal call to praise. 'Everything that hath breath' encompasses all living creatures — every human being endowed with the breath of life is summoned to use that breath for praise. This verse is the culmination of the five-book collection of psalms, bringing the entire Psalter to a fitting climax. The imperative 'praise ye the Lord' is the Hebrew hallelujah — a word that combines the verb 'praise' with the covenant name of God. The psalm teaches that praise is not optional but the appropriate response of every creature to the Creator who gives and sustains life itself.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+150%3A6&version=KJV",
+      "This wisdom saying strikes at the heart of self-life. To 'trust in the LORD with all your heart' means to place complete reliance on God's character, promises, and sovereignty rather than on our limited, shifting understanding. In Hebrew thought the heart is the whole inner person — mind, will, emotions, and motives. To trust 'with all your heart' means no compartment is kept for ourselves. The contrast is foundational: our own understanding is finite, while the LORD's knowledge is perfect. The wise choose to lean on God's all-seeing wisdom rather than rest on the partial sight of human reasoning.",
+    application:
+      "Begin each uncertain step by handing the decision to God. Do not rely only on what you currently see — rely on the One who sees it all.",
+    verseIntroduction:
+      "The path of wisdom is opened not by accumulating our own reason, but by surrendering our reasoning to the LORD, who knows the whole road.",
+    backgroundAuthor:
+      "Solomon, the wise king of Israel, composed these proverbs to guide a life of wisdom in the fear of the LORD.",
+    backgroundBook:
+      "Proverbs grounds daily decision-making in the fear of the LORD, contrasting the way of the wise with the way of the fool.",
+    backgroundContext:
+      "This verse opens a series of counsel on trusting God in wealth and daily life; it is the foundation for walking the path of wisdom.",
+    wordStudies: [
+      { word: "Trust", strongs: "bāṭach – Strong's H982", definition: "To put confident reliance upon, to feel safe in, to lean the whole weight of the heart on." },
+      { word: "Heart", strongs: "lēb – Strong's H3820", definition: "The inner man — mind, will, and emotions; the whole of the hidden person." },
+      { word: "Lean", strongs: "shāʿan – Strong's H8172", definition: "To rest upon, to support oneself as on a staff; to transfer one's weight." },
+      { word: "Understanding", strongs: "bînā – Strong's H998", definition: "Insight, discernment, comprehension — the limited reach of human thinking." },
+    ],
+    practicalApplications: [
+      "Place today's decisions under prayer before you move.",
+      "Choose the Word's path over the short-term pull of your own reasoning.",
+      "When anxious, turn the will — not just the situation — over to God.",
+      "Thank God for leading even when the way is not yet obvious.",
+      "Confess the tendency to lean on your own wisdom, and learn afresh to trust.",
+    ],
+    keyThemes: [
+      "Whole-hearted trust",
+      "Humility over self-sufficiency",
+      "God's direction over human insight",
+      "The daily discipline of reliance",
+    ],
+    crossReferences: [
+      "Proverbs 3:7 – Fear the LORD and turn away from evil.",
+      "Psalm 37:5 – Commit your way to the LORD.",
+      "Jeremiah 17:7–8 – Blessed is the one who trusts in the LORD.",
+      "Isaiah 55:9 – As the heavens are higher than the earth, so are His ways.",
+    ],
+    finalThoughts:
+      "Faith places the whole of life into the LORD's hands. The way that seems wisest to human eyes becomes, under His care, the road of true wisdom.",
+    takeaways: [
+      "Trust is a decision of the whole heart, not the margin of life.",
+      "Human understanding is partial; God's wisdom is perfect.",
+      "Dependence on God is the beginning of the wise path.",
+    ],
   },
   {
     bookName: "Philippians",
     chapter: 4,
-    verseNumber: 6,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(31),
-    reflection:
-      "Do not be anxious — bring everything to God in prayer with thanksgiving. His peace will guard your heart and mind.",
+    verseNumber: 13,
+    bibleVersion: "NKJV",
+    displayDate: dateAtMidnight(4),
+    verseText: "I can do all things through Christ who strengthens me.",
     explanation:
-      "Paul addresses the universal human struggle with anxiety by prescribing the antidote: prayer. He uses three overlapping terms — 'prayer,' 'supplication,' and 'thanksgiving' — to cover every mode of communication with God. 'Be careful for nothing' is a command against anxiety, not a suggestion. The phrase 'in every thing by prayer and supplication with thanksgiving' leaves no area of life outside the scope of prayer. The promised result is the 'peace of God, which passeth all understanding' — a supernatural peace that transcends human comprehension and circumstances. This peace acts as a sentinel, guarding both the mind and the emotions in Christ Jesus.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Philippians+4%3A6&version=KJV",
+      "'I can do all things' is not the boast of a limitless self, but the confidence of a limited self resting in an all-sufficient Christ. Paul writes from prison, having learned contentment in every situation — in lack and in plenty. What he has is not a promise of effortless success, but the enabling of Christ for every circumstance God assigns: faithfulness, endurance, and contentment. This verse does not grant every worldly ambition; it assures strength for every point of the disciple's walk, mission, and obedience.",
+    application:
+      "Whatever God has set before you today — scarcity, an unsung task, or a burden — ask for the strength He gives; it is yours in Christ.",
+    verseIntroduction:
+      "This verse is the secret of kingdom contentment: Christ is not only the destination, He is the enabling by which we live each circumstance for His glory.",
+    backgroundAuthor:
+      "Paul wrote this letter from prison chains, yet it is his most joyful epistle — joy rooted not in circumstances but in Christ.",
+    backgroundBook:
+      "Philippians is the epistle of joy; satisfaction is found in union with Christ regardless of outward condition.",
+    backgroundContext:
+      "Philippians 4:13 summarizes Paul's learned secret — contentment in every condition through the strength of Christ.",
+    wordStudies: [
+      { word: "All things", strongs: "panta – Strong's G3956", definition: "Every circumstance that God's will requires — abundance, need, service, suffering." },
+      { word: "Christ", strongs: "Christos – Strong's G5547", definition: "The Anointed One, the source of the believer's life and strength." },
+      { word: "Strengthens", strongs: "endunamoō – Strong's G1743", definition: "To empower, to infuse with strength; the enabling that comes from Christ." },
+    ],
+    practicalApplications: [
+      "Devote today's labor — however ordinary — to Christ's enabling.",
+      "Do not seek strength in self-discipline alone; draw from the risen Christ.",
+      "In a season of plenty, keep the posture of humble dependence.",
+      "In a season of lack, remember His grace is sufficient.",
+      "Live the mission God assigned, trusting His strength for each step.",
+    ],
+    keyThemes: [
+      "Christ as the source of strength",
+      "Contentment learned",
+      "Endurance in dependence",
+      "Everyday grace for everyday obedience",
+    ],
+    crossReferences: [
+      "Philippians 4:12 – I know how to be abased, and I know how to abound.",
+      "2 Corinthians 12:9 – My grace is sufficient; my strength is perfected in weakness.",
+      "Ephesians 3:16 – Strengthened with power through His Spirit.",
+      "Psalm 28:8 – The LORD is the strength of His people.",
+    ],
+    finalThoughts:
+      "Strength does not come from the absence of difficulty but from the presence of Christ. What He calls you into, He strengthens you for.",
+    takeaways: [
+      "The 'all things' is every circumstance, not every desire.",
+      "Strength is not self-made but Christ-bestowed.",
+      "Contentment is found in Christ in whatever place you stand.",
+    ],
   },
   {
     bookName: "Psalms",
-    chapter: 136,
-    verseNumber: 26,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(32),
-    reflection:
-      "Give thanks to the God of heaven, for His steadfast love endures forever. Let gratitude be the rhythm of your life.",
-    explanation:
-      "This final verse of Psalm 136 repeats the refrain that has anchored every line of the psalm: 'for His mercy endureth for ever.' The psalm concludes by addressing God as 'the God of heaven,' emphasizing His sovereignty over all creation. The cumulative effect of the twenty-six repetitions of the refrain is to impress upon the worshiper that every aspect of God's character and every act of His hand is motivated by enduring, covenant love. This psalm was likely used in corporate worship as a call-and-response, with a leader reciting each line and the congregation responding with the refrain. Thanksgiving is the appropriate response to God's steadfast, never-ending love.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+136%3A26&version=KJV",
-  },
-  {
-    bookName: "Hebrews",
-    chapter: 11,
+    chapter: 23,
     verseNumber: 1,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(33),
-    reflection:
-      "Faith is the assurance of things hoped for and the conviction of things not seen. Trust in what God has promised.",
+    bibleVersion: "NKJV",
+    displayDate: dateAtMidnight(5),
+    verseText: "The LORD is my shepherd; I shall not want.",
     explanation:
-      "The author of Hebrews provides the Bible's most concise definition of faith. 'The substance of things hoped for' presents faith as the solid foundation underlying our confident expectation of God's promises. 'The evidence of things not seen' portrays faith as the proof or conviction that makes invisible spiritual realities as certain as visible ones. Faith is not wishful thinking but confident trust grounded in God's character and promises. This definition introduces the great 'hall of faith' chapter, which catalogs Old Testament figures who lived by faith. True faith has both intellectual content (believing certain truths about God) and personal trust (relying on God Himself).",
-    learnMore: "https://www.biblegateway.com/passage/?search=Hebrews+11%3A1&version=KJV",
+      "This beloved opening verse presents the LORD as the Shepherd who tends His sheep with personal, watchful care. The name 'LORD' (Yahweh) recalls the covenant-keeping God; 'my shepherd' speaks of an intimate relationship; 'I shall not want' expresses complete trust. The verse does not promise the absence of need but the sufficiency of the Shepherd: those who belong to Him lack nothing that is right and good for life. This image finds its fulfillment in Christ, the good Shepherd who lays down His life for the sheep.",
+    application:
+      "Bring your anxiety over provision to the Shepherd. Receive all that is needful from His care, and trust the faithfulness of the flock under His hand.",
+    verseIntroduction:
+      "Psalm 23:1 is the summary of a shepherded life: the reality of a personal Shepherd, and the promise that His flock is never left in want.",
+    backgroundAuthor:
+      "David — shepherd, warrior, and king — writes from the language of a shepherd's life, drawing the metaphor from his own years of tending sheep.",
+    backgroundBook:
+      "The Psalms are the prayer book of God's people, giving voice to trust and worship across every season of life.",
+    backgroundContext:
+      "This verse opens the psalm that celebrates the LORD's guidance, provision, and protection across the whole of a believer's journey.",
+    wordStudies: [
+      { word: "LORD", strongs: "Yahweh – Strong's H3068", definition: "The covenant name of God; the eternal, self-existent, faithful I AM of Israel." },
+      { word: "Shepherd", strongs: "rāʿāh – Strong's H7462", definition: "To feed, lead, guard, and care for the flock; the watchful care of the shepherd." },
+      { word: "Want", strongs: "ḥāsēr – Strong's H2637", definition: "To fail, to lack, to be in need; under such a Shepherd nothing essential is missing." },
+    ],
+    practicalApplications: [
+      "Lay today's needs — provision, guidance, protection — before the Shepherd.",
+      "See the guardian hand of God in the ordinary routines of the day.",
+      "Do not let anxiety over lack lead you away from the flock.",
+      "Measure your fears against the faithfulness of the Shepherd.",
+      "Rest in the Shepherd's presence, and fear no lasting want.",
+    ],
+    keyThemes: [
+      "The LORD as personal Shepherd",
+      "Fully sufficient provision",
+      "Rest and security in His care",
+      "Belonging to the flock of God",
+    ],
+    crossReferences: [
+      "John 10:11 – The good Shepherd lays down His life for the sheep.",
+      "Psalm 100:3 – The LORD is God; we are His people, the sheep of His pasture.",
+      "Isaiah 40:11 – He gathers the lambs and leads those with young.",
+      "1 Peter 2:25 – Christ is the Shepherd and Overseer of your souls.",
+    ],
+    finalThoughts:
+      "When the LORD is your Shepherd, there is no lasting want. His care covers every path, so the heart can rest in His sufficient hand.",
+    takeaways: [
+      "A personal Shepherd means nothing essential is missing.",
+      "Provision is found in His care, not in our own striving.",
+      "The joy of the sheep is to have the Shepherd.",
+    ],
   },
   {
-    bookName: "Psalms",
-    chapter: 118,
-    verseNumber: 24,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(34),
-    reflection:
-      "This is the day the Lord has made — rejoice and be glad in it. Each day is a gift from His hand.",
+    bookName: "Jeremiah",
+    chapter: 29,
+    verseNumber: 11,
+    bibleVersion: "NKJV",
+    displayDate: dateAtMidnight(6),
+    verseText:
+      "For I know the thoughts that I think toward you, says the LORD, thoughts of peace and not of evil, to give you a future and a hope.",
     explanation:
-      "This verse calls believers to recognize each day as a divine creation and to respond with rejoicing. The context is a victory psalm celebrating God's deliverance — the stone rejected by the builders has become the chief cornerstone, a verse Jesus would apply to Himself. The declaration that 'the Lord hath made' this day affirms God's sovereignty over time and history. The imperative to 'rejoice and be glad' is not dependent on circumstances but on the reality of God's goodness and faithfulness. This verse has been a source of strength for countless believers facing difficult days, reminding them that every day is an opportunity to experience God's grace.",
-    learnMore: "https://www.biblegateway.com/passage/?search=Psalm+118%3A24&version=KJV",
-  },
-  {
-    bookName: "1 John",
-    chapter: 4,
-    verseNumber: 19,
-    bibleVersion: "KJV",
-    displayDate: dateAtMidnight(35),
-    reflection:
-      "We love because God first loved us. Our love for others is simply a response to His amazing love for us.",
-    explanation:
-      "John states the foundational truth of Christian love: God is the initiator, and our love is always a response. 'We love' — the object is left unspecified, encompassing both love for God and love for others. The ground and motive of all genuine love is God's prior love for us. This verse confronts the natural tendency to think we initiate our relationship with God. It also provides the pattern for human relationships: we are called to love others the way God has loved us — sacrificially, unconditionally, and without regard for merit. The verse is simple but profound, summarizing the entire message of the letter.",
-    learnMore: "https://www.biblegateway.com/passage/?search=1+John+4%3A19&version=KJV",
+      "Jeremiah wrote to the exiles in Babylon who had assumed their hope was over. Against false prophets promising an immediate return, the LORD declares through the prophet that His thoughts toward His people are thoughts of peace — not of evil — and that He has a future and a hope for them. This is not a blanket promise of trouble-free days but a covenant assurance: even within the seventy years of exile, God's plan is one of preservation and restoration. It reframes the present difficulty as a chapter, not the final word, and anchors hope in the faithfulness of God.",
+    application:
+      "While you wait through seasons that feel like exile, trust the One with an eternal plan. Your purpose today lies within His hands, and the future He has for you is real.",
+    verseIntroduction:
+      "This is not a promise of immediate relief but a promise of a good future to a people God has not abandoned — hope that holds in the heart of exile.",
+    backgroundAuthor:
+      "Jeremiah, called the weeping prophet, spoke God's word of judgment while also holding out the promise of restoration.",
+    backgroundBook:
+      "The Book of Jeremiah records the prophetic call to repentance and the promise of restoration that follows judgment.",
+    backgroundContext:
+      "These words come from a letter to the Jews already deported to Babylon, urging them to settle, pray, and trust God's long-term plan of restoration.",
+    wordStudies: [
+      { word: "Know", strongs: "yādaʿ – Strong's H3045", definition: "To know intimately and with certainty; here, the full knowledge of God's sovereign purpose." },
+      { word: "Thoughts (plans)", strongs: "machashabah – Strong's H4284", definition: "Plans, devices, intentions — the deliberate designs of a purposeful mind." },
+      { word: "Peace", strongs: "shalom – Strong's H7965", definition: "Wholeness, welfare, security, prosperity — the all-round wellbeing God intends." },
+      { word: "Future and hope", strongs: "ʾaḥărît wĕtiqwâ – Strong's H319/H8615", definition: "A latter end and an expectation — a real, anticipated future to come." },
+    ],
+    practicalApplications: [
+      "When the present season is hard, keep living as one with a future in God's hand.",
+      "Do not turn the promise of peace into a demand for ease.",
+      "Live in the long view of God's promises amid the short view of the day.",
+      "Let a God-given future set the direction of today's choices.",
+      "Speak hope — the LORD holds the future.",
+    ],
+    keyThemes: [
+      "God's faithful plans",
+      "The sovereign mercy of God",
+      "Hope in the midst of judgment",
+      "A God-kept future and hope",
+    ],
+    crossReferences: [
+      "Jeremiah 29:13 – You will seek Me and find Me, when you search with all your heart.",
+      "Lamentations 3:22–23 – His mercies are new every morning.",
+      "Psalm 30:5 – Weeping endures for a night, but joy comes in the morning.",
+      "Romans 8:28 – All things work together for good to those called by God.",
+    ],
+    finalThoughts:
+      "What shapes our peace is not being spared exile, but being sustained by the LORD who has already written the end. His thoughts toward us lean toward peace, not calamity.",
+    takeaways: [
+      "God's plan for His people is a future of hope.",
+      "His thoughts toward you are peace, not evil.",
+      "Whatever looks like an end is a chapter on the way to a future.",
+    ],
   },
 ];
 
 const main = async () => {
-  console.log("🌱 Seeding 35 daily verses for the month ahead...\n");
+  console.log("🌱 Enhancing daily verses (today + 6 weekdays)...\n");
 
   let created = 0;
+  let updated = 0;
   let skipped = 0;
 
   for (const verse of dailyVerses) {
+    const label = verse.displayDate.toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
     try {
-      // Check if a verse already exists for this display date
+      const adminUserId = await getAdminUserId();
+      const data = {
+        bookName: verse.bookName,
+        chapter: BigInt(verse.chapter),
+        verseNumber: BigInt(verse.verseNumber),
+        bibleVersion: verse.bibleVersion,
+        displayDate: verse.displayDate,
+        reflection: verse.verseText,
+        explanation: verse.explanation,
+        learnMore: verse.verseText,
+        application: verse.application,
+        verseIntroduction: verse.verseIntroduction,
+        backgroundAuthor: verse.backgroundAuthor,
+        backgroundBook: verse.backgroundBook,
+        backgroundContext: verse.backgroundContext,
+        wordStudies: JSON.stringify(verse.wordStudies),
+        practicalApplications: JSON.stringify(verse.practicalApplications),
+        keyThemes: JSON.stringify(verse.keyThemes),
+        crossReferences: JSON.stringify(verse.crossReferences),
+        finalThoughts: verse.finalThoughts,
+        takeaways: JSON.stringify(verse.takeaways),
+        isPublished: true,
+        createdBy: adminUserId,
+      };
+
       const existing = await prisma.dailyVerse.findFirst({
         where: { displayDate: verse.displayDate },
       });
 
       if (existing) {
-        console.log(
-          `  ⚠ Verse for ${verse.displayDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} already exists — skipping.`
-        );
-        skipped++;
-        continue;
+        await prisma.dailyVerse.update({ where: { id: existing.id }, data });
+        console.log(`  ↻ ${label}: ${verse.bookName} ${verse.chapter}:${verse.verseNumber} — updated`);
+        updated++;
+      } else {
+        await prisma.dailyVerse.create({ data });
+        console.log(`  ✅ ${label}: ${verse.bookName} ${verse.chapter}:${verse.verseNumber} — created`);
+        created++;
       }
-
-      const adminUserId = await getAdminUserId();
-      await prisma.dailyVerse.create({
-        data: {
-          bookName: verse.bookName,
-          chapter: BigInt(verse.chapter),
-          verseNumber: BigInt(verse.verseNumber),
-          bibleVersion: verse.bibleVersion,
-          displayDate: verse.displayDate,
-          reflection: verse.reflection,
-          explanation: verse.explanation,
-          learnMore: verse.learnMore,
-          isPublished: true,
-          createdBy: adminUserId,
-        },
-      });
-
-      const dayName = verse.displayDate.toLocaleDateString("en-US", {
-        weekday: "long",
-      });
-      const dateStr = verse.displayDate.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      });
-      console.log(
-        `  ✅ ${dayName} (${dateStr}): ${verse.bookName} ${verse.chapter}:${verse.verseNumber} — ${verse.bibleVersion}`
-      );
-      created++;
     } catch (error) {
-      console.error(
-        `  ❌ ${verse.bookName} ${verse.chapter}:${verse.verseNumber} — ${error.message}`
-      );
+      console.error(`  ❌ ${verse.bookName} ${verse.chapter}:${verse.verseNumber} — ${error.message}`);
+      skipped++;
     }
   }
 
-  // Summary
   const total = await prisma.dailyVerse.count({ where: { isPublished: true } });
   console.log("\n" + "═".repeat(50));
   console.log("📊 Seed Summary:");
   console.log(`   Created: ${created}`);
+  console.log(`   Updated: ${updated}`);
   console.log(`   Skipped: ${skipped}`);
   console.log(`   Total published daily verses: ${total}`);
   console.log("═".repeat(50));

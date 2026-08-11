@@ -178,6 +178,9 @@ export const addReadHistory = async (data, userId) => {
       where: { id: existing.id },
       data: { createdOn: new Date() },
     });
+    // A verse was read — make sure Home's cached Continue Reading stats are
+    // recomputed on next fetch instead of serving a stale percentage.
+    cache.del("bible", `home-stats:${userId}`).catch(() => {});
     return {
       status: 200,
       message: "Read history updated successfully",
@@ -201,6 +204,8 @@ export const addReadHistory = async (data, userId) => {
       createdOn: new Date(),
     },
   });
+  // Fresh verse recorded — ensure Home recomputes the chapter percentage now.
+  cache.del("bible", `home-stats:${userId}`).catch(() => {});
   return {
     status: 200,
     message: "Read history added successfully",
@@ -1313,19 +1318,29 @@ export const getHomeStats = async (userId) => {
         highlightCount,
         favoriteCount,
         noteCount,
-        readHistoryCount,
         planProgressCount,
         recentReads,
+        readBooks,
+        readChapters,
       ] = await Promise.all([
         prisma.highlight.count({ where: { createdBy: userId } }),
         prisma.favorite.count({ where: { createdBy: userId } }),
         prisma.note.count({ where: { createdBy: userId } }),
-        prisma.readHistory.count({ where: { createdBy: userId } }),
         prisma.userPlanProgress.count({ where: { userId } }),
         prisma.readHistory.findMany({
           where: { createdBy: userId },
           take: 5,
           orderBy: { createdOn: "desc" },
+        }),
+        prisma.readHistory.findMany({
+          where: { createdBy: userId },
+          distinct: ["bookName"],
+          select: { bookName: true },
+        }),
+        prisma.readHistory.findMany({
+          where: { createdBy: userId },
+          distinct: ["bookName", "chapter"],
+          select: { bookName: true, chapter: true },
         }),
       ]);
 
@@ -1344,20 +1359,47 @@ export const getHomeStats = async (userId) => {
         if (recentActivity.length >= 3) break;
       }
 
+      // Last chapter the user read + how many distinct verses within it they
+      // have recorded. This drives the "Continue Reading" chapter % so it
+      // accumulates across sessions instead of resetting on re-entry.
+      const lastRead = recentReads.length ? recentReads[0] : null;
+      let lastReadChapterVersesRead = 0;
+      if (lastRead) {
+        const lastReadVerses = await prisma.readHistory.findMany({
+          where: {
+            createdBy: userId,
+            bookName: lastRead.bookName,
+            chapter: lastRead.chapter,
+          },
+          distinct: ["verseNumber"],
+          select: { verseNumber: true },
+        });
+        lastReadChapterVersesRead = lastReadVerses.length;
+      }
+
       return {
         status: 200,
         message: "Home stats fetched successfully",
         data: {
-          chaptersRead: readHistoryCount,
+          booksRead: readBooks.length,
+          chaptersRead: readChapters.length,
           highlights: highlightCount,
           notes: noteCount,
           favorites: favoriteCount,
           planProgressCount,
           recentActivity,
+          lastRead: lastRead
+            ? {
+                bookName: lastRead.bookName,
+                chapter: Number(lastRead.chapter),
+                verseNumber: Number(lastRead.verseNumber),
+                versesRead: lastReadChapterVersesRead,
+              }
+            : null,
         },
       };
     },
-    120,
+    30,
   );
 };
 
