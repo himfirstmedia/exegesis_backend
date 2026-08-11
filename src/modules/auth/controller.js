@@ -124,6 +124,16 @@ export const uploadCover = async (req, res) => {
   }
 };
 
+export const uploadProfilePhoto = async (req, res) => {
+  try {
+    const result = await authService.uploadProfilePhoto(req.user.id, req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Upload profile photo error:", error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Profile photo upload failed: " + error.message }));
+  }
+};
+
 export const resendVerification = async (req, res) => {
   try {
     const result = await authService.resendVerification(req.body);

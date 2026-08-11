@@ -8,18 +8,12 @@ import { fileURLToPath } from "url";
 import { generateToken, verifyToken, generateSixDigitCode, serializeBigInt } from "../../utils/helpers.js";
 import { emailTemplates } from "../../utils/emailTemplates.js";
 import { OAuth2Client } from "google-auth-library";
+import { decodeImageUpload } from "./imageUpload.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// backend/uploads/covers — served statically at /uploads
+// backend/uploads — served statically at /uploads
 const COVERS_DIR = path.join(__dirname, "../../../uploads/covers");
-const ALLOWED_COVER_TYPES = new Set(["jpeg", "jpg", "png", "webp"]);
-
-const detectImageExt = (buf) => {
-  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpg";
-  if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
-  if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "webp";
-  return null;
-};
+const PROFILE_PHOTOS_DIR = path.join(__dirname, "../../../uploads/profile-photos");
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -710,31 +704,9 @@ export const updateCurrentUser = async (userId, data) => {
 };
 
 export const uploadCoverPhoto = async (userId, data) => {
-  const { coverPhoto, mimeType } = data || {};
-  if (!coverPhoto || typeof coverPhoto !== "string" || coverPhoto.length === 0) {
-    return { status: 400, message: "coverPhoto (base64) is required" };
-  }
-
-  // Reject clearly non-image base64 payloads early (simple size guard: ~5MB)
-  const sizeInBytes = Math.floor((coverPhoto.length * 3) / 4);
-  if (sizeInBytes > 5 * 1024 * 1024) {
-    return { status: 400, message: "Image is too large (max 5MB)" };
-  }
-
-  let buffer;
-  try {
-    buffer = Buffer.from(coverPhoto, "base64");
-  } catch {
-    return { status: 400, message: "Invalid image data" };
-  }
-
-  // Magic-byte check so only real images are stored (jpg/png/webp)
-  const detectedExt = detectImageExt(buffer);
-  if (!detectedExt) {
-    return { status: 400, message: "File is not a supported image (jpg/png/webp)" };
-  }
-  const requestedExt = (mimeType || "image/jpeg").split("/").pop()?.toLowerCase() || "jpg";
-  const ext = ALLOWED_COVER_TYPES.has(requestedExt) ? (requestedExt === "jpeg" ? "jpg" : requestedExt) : detectedExt;
+  const decoded = decodeImageUpload(data?.coverPhoto, "coverPhoto");
+  if (decoded.error) return decoded.error;
+  const { buffer, extension: ext } = decoded;
   const filename = `${crypto.randomUUID()}.${ext}`;
 
   try {
@@ -760,6 +732,37 @@ export const uploadCoverPhoto = async (userId, data) => {
     status: 200,
     message: "Cover photo updated successfully",
     data: { coverPhotoUrl: updatedUser.coverPhotoUrl },
+  };
+};
+
+export const uploadProfilePhoto = async (userId, data) => {
+  const decoded = decodeImageUpload(data?.profilePhoto, "profilePhoto");
+  if (decoded.error) return decoded.error;
+  const { buffer, extension } = decoded;
+  const filename = `${crypto.randomUUID()}.${extension}`;
+
+  try {
+    fs.mkdirSync(PROFILE_PHOTOS_DIR, { recursive: true });
+    fs.writeFileSync(path.join(PROFILE_PHOTOS_DIR, filename), buffer);
+  } catch (error) {
+    console.error("Profile photo write failed:", error);
+    return { status: 500, message: "Failed to store profile photo" };
+  }
+
+  const profilePhotoUrl = `/uploads/profile-photos/${filename}`;
+  const updatedUser = await prisma.systemUser.update({
+    where: { id: userId },
+    data: {
+      profilePhotoUrl,
+      updatedOn: new Date(),
+      updatedBy: userId,
+    },
+  });
+
+  return {
+    status: 200,
+    message: "Profile photo updated successfully",
+    data: { profilePhotoUrl: updatedUser.profilePhotoUrl },
   };
 };
 
