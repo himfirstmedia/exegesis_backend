@@ -8,7 +8,7 @@ This is the Node.js/Express version of the bible-pab-backend (Java Spring Boot).
 http://localhost:5001
 ```
 
-## Authentication
+## Authentication here
 Most endpoints require a JWT token. Include in request header:
 ```
 Authorization: Bearer <token>
