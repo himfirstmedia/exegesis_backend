@@ -652,8 +652,23 @@ export const addDailyDevotion = async (data, adminId) => {
     bookName,
     chapter,
     verseNumber,
+    bibleVersion,
     displayDate,
     displayTime,
+    reflection,
+    explanation,
+    learnMore,
+    application,
+    verseIntroduction,
+    backgroundAuthor,
+    backgroundBook,
+    backgroundContext,
+    wordStudies,
+    practicalApplications,
+    keyThemes,
+    crossReferences,
+    finalThoughts,
+    takeaways,
     published,
   } = data;
 
@@ -663,6 +678,24 @@ export const addDailyDevotion = async (data, adminId) => {
       message: "title, content, and displayDate are required",
     };
   }
+
+  const richContent = {
+    bibleVersion: bibleVersion || null,
+    reflection: reflection || null,
+    explanation: explanation || null,
+    learnMore: learnMore || null,
+    application: application || null,
+    verseIntroduction: verseIntroduction || null,
+    backgroundAuthor: backgroundAuthor || null,
+    backgroundBook: backgroundBook || null,
+    backgroundContext: backgroundContext || null,
+    wordStudies: wordStudies || null,
+    practicalApplications: practicalApplications || null,
+    keyThemes: keyThemes || null,
+    crossReferences: crossReferences || null,
+    finalThoughts: finalThoughts || null,
+    takeaways: takeaways || null,
+  };
 
   let dailyDevotion;
   if (id) {
@@ -678,6 +711,7 @@ export const addDailyDevotion = async (data, adminId) => {
         displayTime: displayTime ? new Date(displayTime) : null,
         isPublished: published ?? true,
         updatedBy: adminId,
+        ...richContent,
       },
     });
   } else {
@@ -692,6 +726,7 @@ export const addDailyDevotion = async (data, adminId) => {
         displayTime: displayTime ? new Date(displayTime) : null,
         createdBy: adminId,
         isPublished: published ?? true,
+        ...richContent,
       },
     });
   }
@@ -699,6 +734,17 @@ export const addDailyDevotion = async (data, adminId) => {
   const msg = id
     ? "Daily devotion updated successfully"
     : "Daily devotion added successfully";
+
+  // Admin changes must be visible immediately rather than waiting for the
+  // daily-devotion cache to expire.
+  await Promise.all([
+    cache.del("bible", "todays-devotion"),
+    cache.del("bible", "todays-devotion:en"),
+    cache.del("bible", "todays-devotion:ar"),
+    cache.del("bible", "todays-devotion:es"),
+    cache.del("bible", "todays-devotion:fr"),
+  ]);
+
   return { status: 200, message: msg, data: serializeBigInt(dailyDevotion) };
 };
 
