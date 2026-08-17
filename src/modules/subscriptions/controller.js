@@ -543,9 +543,10 @@ export const getSubscriptionStatus = async (req, res) => {
           (async () => {
             // Find ALL Stripe customers for this email (user may have multiple)
             const customers = await stripe.customers.list({ email: req.user.email, limit: 5 });
-            if (customers.data.length === 0) {
-              return res.json(formatApiResponse({ status: 200, message: "No subscription found", data: { ...user, tierMeta: null } }));
-            }
+            // No customers — nothing to reconcile. Do NOT respond here: the
+            // single response is sent once by the outer flow after the race,
+            // so returning early with a res.json would double-send headers.
+            if (customers.data.length === 0) return;
 
             // Collect active subscriptions from all customers
             const allSubs = [];
@@ -609,6 +610,9 @@ export const getSubscriptionStatus = async (req, res) => {
     }));
   } catch (error) {
     console.error("[SubscriptionController] getSubscriptionStatus error:", error);
+    // Never attempt a second response if one was already sent (e.g. by a
+    // stray res.json inside the reconciliation race) — that itself throws.
+    if (res.headersSent) return;
     return res.status(500).json(formatApiResponse({ status: 500, message: "Failed to get subscription status" }));
   }
 };

@@ -9,6 +9,60 @@ import {
   translateResult,
 } from "../../utils/translator.js";
 
+// Daily verses always need displayable text. If the stored bibleVersion has no
+// bundled XML (e.g. "WEB" from the app's local JSON list) we fall back to KJV
+// and only warn once per missing translation instead of on every fetch.
+const missingTranslationWarned = new Set();
+const DEFAULT_VERSE_TRANSLATION = "KJV";
+
+export const fetchVerseTextWithFallback = async (
+  bibleVersion,
+  bookName,
+  chapter,
+  verseNumber,
+) => {
+  try {
+    const verseData = await getVerse(
+      bibleVersion,
+      bookName,
+      chapter,
+      verseNumber,
+    );
+    if (verseData?.text) {
+      return { text: verseData.text, translation: bibleVersion };
+    }
+  } catch (e) {
+    if (String(bibleVersion || "").toUpperCase() !== DEFAULT_VERSE_TRANSLATION) {
+      const key = String(bibleVersion || "");
+      if (!missingTranslationWarned.has(key)) {
+        missingTranslationWarned.add(key);
+        console.warn(
+          `Daily verse: translation "${bibleVersion}" unavailable (${e.message}) — falling back to ${DEFAULT_VERSE_TRANSLATION}`,
+        );
+      }
+      try {
+        const fallback = await getVerse(
+          DEFAULT_VERSE_TRANSLATION,
+          bookName,
+          chapter,
+          verseNumber,
+        );
+        if (fallback?.text) {
+          return {
+            text: fallback.text,
+            translation: DEFAULT_VERSE_TRANSLATION,
+          };
+        }
+      } catch {
+        /* both translations failed — return empty */
+      }
+    } else {
+      console.warn("Could not fetch verse text for daily verse:", e.message);
+    }
+  }
+  return { text: "", translation: bibleVersion || DEFAULT_VERSE_TRANSLATION };
+};
+
 const parseLocalDate = (value) => {
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
     const [year, month, day] = value.split("-").map(Number);
@@ -657,14 +711,14 @@ export const getVerseByDate = async (data) => {
   }
 
   // Try language-specific cache first
-  const langCacheKey = `verse-by-date:${date}:${lang}`;
+  const langCacheKey = `verse-by-date:v2:${date}:${lang}`;
   const cachedLang = await cache.get("bible", langCacheKey);
   if (cachedLang !== null) return cachedLang;
 
   // Cache only the base verse data (non-language-specific)
   const base = await cache.getOrSet(
     "bible",
-    `verse-by-date:${date}`,
+    `verse-by-date:v2:${date}`,
     async () => {
       const startDate = new Date(date);
       startDate.setHours(0, 0, 0, 0);
@@ -685,22 +739,17 @@ export const getVerseByDate = async (data) => {
       if (!dailyVerse) return null;
 
       const bibleVersion = dailyVerse.bibleVersion || "KJV";
-      let verseText = "";
-      try {
-        const verseData = await getVerse(
+      const { text: verseText, translation: effectiveVersion } =
+        await fetchVerseTextWithFallback(
           bibleVersion,
           dailyVerse.bookName,
           Number(dailyVerse.chapter),
           Number(dailyVerse.verseNumber),
         );
-        verseText = verseData.text || "";
-      } catch (e) {
-        console.warn("Could not fetch verse text for daily verse:", e.message);
-      }
 
       return {
         dailyVerse: serializeBigInt(dailyVerse),
-        bibleVersion,
+        bibleVersion: effectiveVersion,
         verseText,
       };
     },
@@ -744,6 +793,7 @@ export const getVerseByDate = async (data) => {
       ...dv,
       reference: `${dv.bookName} ${dv.chapter}:${dv.verseNumber}`,
       translation: bibleVersion,
+      bibleVersion,
       text: verseText,
       explanation,
       learnMore,
@@ -781,14 +831,14 @@ export const getTodaysVerse = async (data = {}) => {
   const { lang = "en" } = data;
 
   // Try language-specific cache first
-  const langCacheKey = `todays-verse:${lang}`;
+  const langCacheKey = `todays-verse:v2:${lang}`;
   const cachedLang = await cache.get("bible", langCacheKey);
   if (cachedLang !== null) return cachedLang;
 
   // Cache only the base verse data (non-language-specific)
   const base = await cache.getOrSet(
     "bible",
-    "todays-verse",
+    "todays-verse:v2",
     async () => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -808,18 +858,13 @@ export const getTodaysVerse = async (data = {}) => {
       if (!dailyVerse) return null;
 
       const bibleVersion = dailyVerse.bibleVersion || "KJV";
-      let verseText = "";
-      try {
-        const verseData = await getVerse(
+      const { text: verseText, translation: effectiveVersion } =
+        await fetchVerseTextWithFallback(
           bibleVersion,
           dailyVerse.bookName,
           Number(dailyVerse.chapter),
           Number(dailyVerse.verseNumber),
         );
-        verseText = verseData.text || "";
-      } catch (e) {
-        console.warn("Could not fetch verse text for daily verse:", e.message);
-      }
 
       // Fetch explanation inside cache so it's cached together
       let explanation = dailyVerse.explanation ?? null;
@@ -840,7 +885,7 @@ export const getTodaysVerse = async (data = {}) => {
 
       return {
         dailyVerse: serializeBigInt(dailyVerse),
-        bibleVersion,
+        bibleVersion: effectiveVersion,
         verseText,
         explanation,
         learnMore,
@@ -875,6 +920,7 @@ export const getTodaysVerse = async (data = {}) => {
       ...dv,
       reference: `${dv.bookName} ${dv.chapter}:${dv.verseNumber}`,
       translation: bibleVersion,
+      bibleVersion,
       text: verseText,
       explanation,
       learnMore,

@@ -519,11 +519,11 @@ export const addDailyVerse = async (data, adminId) => {
   // Admin changes must be visible immediately rather than waiting for the
   // 30-minute daily-verse cache to expire.
   await Promise.all([
-    cache.del("bible", "todays-verse"),
-    cache.del("bible", "todays-verse:en"),
-    cache.del("bible", "todays-verse:ar"),
-    cache.del("bible", "todays-verse:es"),
-    cache.del("bible", "todays-verse:fr"),
+    cache.del("bible", "todays-verse:v2"),
+    cache.del("bible", "todays-verse:v2:en"),
+    cache.del("bible", "todays-verse:v2:ar"),
+    cache.del("bible", "todays-verse:v2:es"),
+    cache.del("bible", "todays-verse:v2:fr"),
   ]);
 
   return { status: 200, message: msg, data: serializeBigInt(dailyVerse) };

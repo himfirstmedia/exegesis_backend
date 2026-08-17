@@ -107,7 +107,10 @@ const setRedisTimings = async (key, audioBuffer, wordOffsetsMs) => {
 };
 
 // ── Edge TTS voices (free, Microsoft Neural) ──────────────────────────────
+// Ryan is deliberately FIRST: it is the app's default reading voice, and any
+// client-side "pick the first voice" fallback must land on it.
 const EDGE_VOICES = [
+  { name: "Ryan (Male)",     voiceId: "en-GB-RyanNeural",    source: "edge", category: "Neural" },
   { name: "Jenny (Female)",  voiceId: "en-US-JennyNeural",   source: "edge", category: "Neural" },
   { name: "Aria (Female)",   voiceId: "en-US-AriaNeural",    source: "edge", category: "Neural" },
   { name: "Guy (Male)",      voiceId: "en-US-GuyNeural",     source: "edge", category: "Neural" },
@@ -115,7 +118,6 @@ const EDGE_VOICES = [
   { name: "Emma (Female)",   voiceId: "en-US-EmmaNeural",    source: "edge", category: "Neural" },
   { name: "Brian (Male)",    voiceId: "en-US-BrianNeural",   source: "edge", category: "Neural" },
   { name: "Sonia (Female)",  voiceId: "en-GB-SoniaNeural",   source: "edge", category: "Neural" },
-  { name: "Ryan (Male)",     voiceId: "en-GB-RyanNeural",    source: "edge", category: "Neural" },
 ];
 
 // ── ElevenLabs voices (paid) ───────────────────────────────────────────────
@@ -129,7 +131,7 @@ const ELEVENLABS_VOICE_IDS = {
   "Serena": "pMsXgVXv3BLzN3jMGXJd",
 };
 
-const DEFAULT_EDGE_VOICE = "en-GB-RyanNeural";
+export const DEFAULT_EDGE_VOICE = "en-GB-RyanNeural";
 const DEFAULT_ELEVENLABS_VOICE = "21m00Tcm4TlvDq8ikWAM";
 const ELEVENLABS_MODEL = "eleven_multilingual_v2";
 

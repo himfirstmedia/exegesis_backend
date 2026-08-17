@@ -46,13 +46,22 @@ export const upsertBookPrologue = async (userId, body) => {
   const {
     bookName,
     author,
+    authorDetail,
     audience,
     dateWritten,
     locationWritten,
     purpose,
     keyTheme,
     summary,
+    background,
+    lessons,
+    chapters,
+    structure,
+    applications,
+    keyScripture,
     mainThemes,
+    keyPeople,
+    keyVerses,
     christConnection,
   } = body || {};
 
@@ -60,13 +69,22 @@ export const upsertBookPrologue = async (userId, body) => {
 
   const data = {
     author: author || null,
+    authorDetail: authorDetail || null,
     audience: audience || null,
     dateWritten: dateWritten || null,
     locationWritten: locationWritten || null,
     purpose: purpose || null,
     keyTheme: keyTheme || null,
     summary: summary || null,
+    background: background || null,
+    lessons: lessons || null,
+    chapters: Number.isFinite(Number(chapters)) && chapters !== null && chapters !== '' ? Number(chapters) : null,
+    structure: Array.isArray(structure) ? structure : [],
+    applications: Array.isArray(applications) ? applications : [],
+    keyScripture: Array.isArray(keyScripture) ? keyScripture : [],
     mainThemes: Array.isArray(mainThemes) ? mainThemes : [],
+    keyPeople: Array.isArray(keyPeople) ? keyPeople : [],
+    keyVerses: Array.isArray(keyVerses) ? keyVerses : [],
     christConnection: christConnection || null,
   };
 

@@ -116,8 +116,59 @@ export const TRANSLATION_DISPLAY_NAMES = {
   'YLT': { name: "Young's Literal Translation", year: '1898' }
 };
 
+// Alias map: alternate spellings / abbreviations that must resolve to a
+// canonical SHORT_IDS key. Daily-verse seed data and admin submissions
+// historically stored values like "NKJV" while the canonical id is "NKJ",
+// which made getVerse throw "Translation not found" and daily verses
+// silently return empty text.
+const TRANSLATION_ALIASES = {
+  'NKJV': 'NKJ', // seed data & older admin submissions used the KJV-style abbreviation
+  'BSB': 'Berean',
+  'BereanStandardBible': 'Berean',
+  'DARBY': 'Darby',
+  'DarbyTranslation': 'Darby',
+  'AMP': 'Amplified',
+  'AMPC': 'AmplifiedClassic',
+  'TPT': 'Passion',
+  'LIVING': 'TL',
+  'LivingBible': 'TL',
+};
+
+/**
+ * Resolve any user-facing translation identifier to its canonical SHORT_IDS
+ * key. Handles aliases (NKJV → NKJ), case variants (darby → Darby), full XML
+ * file names, and display names. Returns the original id if unknown so the
+ * caller can surface a precise "Translation not found".
+ */
+export const normalizeTranslationId = (id) => {
+  if (typeof id !== 'string') return id;
+  const trimmed = id.trim();
+  if (!trimmed) return id;
+  if (SHORT_IDS[trimmed]) return trimmed;
+  if (TRANSLATION_ALIASES[trimmed]) return TRANSLATION_ALIASES[trimmed];
+
+  const lower = trimmed.toLowerCase();
+  const canonical = Object.keys(SHORT_IDS).find(
+    (k) => k.toLowerCase() === lower,
+  );
+  if (canonical) return canonical;
+
+  const byDisplay = Object.entries(TRANSLATION_DISPLAY_NAMES).find(
+    ([, v]) => v.name.toLowerCase() === lower,
+  );
+  if (byDisplay) return byDisplay[0];
+
+  const byFullFile = Object.entries(SHORT_IDS).find(
+    ([, v]) => v.toLowerCase() === lower,
+  );
+  if (byFullFile) return byFullFile[0];
+
+  return trimmed;
+};
+
 export const getTranslationDisplayName = (id) => {
-  const display = TRANSLATION_DISPLAY_NAMES[id];
+  const canonical = normalizeTranslationId(id);
+  const display = TRANSLATION_DISPLAY_NAMES[canonical];
   if (display) {
     return display.name;
   }
@@ -131,7 +182,8 @@ const toShortId = (fileName) => {
 };
 
 const toFullId = (id) => {
-  return SHORT_IDS[id] || id;
+  const canonical = normalizeTranslationId(id);
+  return SHORT_IDS[canonical] || id;
 };
 
 const parseXml = (xmlContent) => {

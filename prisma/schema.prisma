@@ -797,13 +797,22 @@ model VerseWordStudy {
 model BookPrologue {
   bookName          String   @id @map("book_name")
   author            String?
+  authorDetail      String?  @map("author_detail")
   audience          String?
   dateWritten       String?  @map("date_written")
   locationWritten   String?  @map("location_written")
   purpose           String?
   keyTheme          String?  @map("key_theme")
   summary           String?
+  background        String?
+  lessons           String?
+  chapters          Int?
+  structure         Json?    @map("structure") // [{ range, title }] — chapter-structure breakdown
+  applications      Json?    @map("applications") // string[] — "Key Application for Today" bullets
+  keyScripture      Json?    @map("key_scripture") // [{ reference, text }] — verses quoted in the overview
   mainThemes        Json?    @map("main_themes")
+  keyPeople         Json?    @map("key_people")
+  keyVerses         Json?    @map("key_verses")
   christConnection  String?  @map("christ_connection")
   createdBy         String?  @map("created_by")
   createdOn         DateTime @default(now()) @map("created_on")
