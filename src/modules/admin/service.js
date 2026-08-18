@@ -540,6 +540,7 @@ export const getAllDailyVerses = async (data) => {
     bookName,
     chapter,
     verseNumber,
+    search,
   } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
@@ -571,6 +572,17 @@ export const getAllDailyVerses = async (data) => {
 
   if (verseNumber) {
     whereClause.verseNumber = BigInt(verseNumber);
+  }
+
+  if (search && String(search).trim()) {
+    const q = String(search).trim();
+    whereClause.OR = [
+      { bookName: { contains: q, mode: "insensitive" } },
+      { explanation: { contains: q, mode: "insensitive" } },
+      { application: { contains: q, mode: "insensitive" } },
+      { verseIntroduction: { contains: q, mode: "insensitive" } },
+      { finalThoughts: { contains: q, mode: "insensitive" } },
+    ];
   }
 
   if (smartDefault) {

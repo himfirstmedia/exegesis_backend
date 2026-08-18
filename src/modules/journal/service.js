@@ -413,13 +413,16 @@ export const createJournalPrompt = async (data, userId) => {
 };
 
 export const getJournalPrompts = async (data) => {
-  const { category, isActive, bookName, chapter } = data || {};
+  const { category, isActive, bookName, chapter, ids } = data || {};
 
   const whereClause = {};
   if (category) whereClause.category = category;
   if (isActive !== undefined) whereClause.isActive = isActive;
   if (bookName) whereClause.bookName = bookName;
   if (chapter) whereClause.chapter = BigInt(chapter);
+  if (ids && Array.isArray(ids) && ids.length > 0) {
+    whereClause.id = { in: ids.map((id) => BigInt(id)) };
+  }
 
   // Build a cache key from filters since prompts are shared across all users
   const filterKey = [category, isActive, bookName, chapter]

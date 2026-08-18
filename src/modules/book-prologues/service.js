@@ -28,7 +28,8 @@ export const getAllBookPrologues = async (body) => {
   const [data, total] = await Promise.all([
     prisma.bookPrologue.findMany({
       where,
-      orderBy: { bookName: 'asc' },
+      // Canonical Bible order (Genesis first), with alphabetical as a stable fallback.
+      orderBy: [{ sortOrder: 'asc' }, { bookName: 'asc' }],
       skip: page * pageSize,
       take: pageSize,
     }),

@@ -8,11 +8,64 @@ This is the Node.js/Express version of the bible-pab-backend (Java Spring Boot).
 http://localhost:5001
 ```
 
-## Authentication here
-Most endpoints require a JWT token. Include in request header:
+## Authentication
+Most endpoints require a JWT token. Include in the request header:
 ```
 Authorization: Bearer <token>
 ```
+
+### JWT Token Expiry
+
+| Setting | Behaviour |
+|---------|-----------|
+| `JWT_EXPIRES_IN` **unset** (default) | Tokens carry **no `exp` claim** — they never expire. A logged-in user retains API access indefinitely (months or years). |
+| `JWT_EXPIRES_IN` set (e.g. `30d`, `7d`, `1h`) | Tokens carry an `exp` claim. Once elapsed, the token is rejected and the client must re-authenticate. |
+
+The expiry is controlled entirely by the `JWT_EXPIRES_IN` environment variable. The backend reads it once at startup, so the server must be restarted for changes to take effect.
+
+### How the client handles token expiry
+
+When the client receives a **401** response:
+
+1. It immediately calls `POST /auth/refresh` with the current token.
+2. If the server returns a new token, the client stores it and retries the failed request.
+3. If refresh fails (e.g. `isLoggedIn` is false), the client clears stored credentials and shows **"Session Expired. Please login again."**
+
+With the default (no expiry), step 3 is never triggered by token age — only by explicit logout or an admin disabling the account.
+
+### Re-enabling expiring tokens — rollout guide
+
+If you later decide to enforce token expiry:
+
+1. **Set the env var** — add `JWT_EXPIRES_IN="30d"` (or your preferred duration) to `.env` and all deployment environments:
+   ```
+   JWT_EXPIRES_IN="30d"
+   ```
+
+2. **Restart the server** — the value is read once at boot:
+   ```
+   npm run dev   # or pm2 restart <app>, Docker restart, etc.
+   ```
+
+3. **What happens to existing sessions**
+   - All tokens issued **before** the restart still have **no `exp` claim** — they remain valid indefinitely until the next login.
+   - All tokens issued **after** the restart carry the configured expiry.
+   - To force all users onto the new expiry in one step, deploy a **session-clearing migration** (see below).
+
+4. **Optional: force-expire all old tokens at once**
+   To invalidate every existing token immediately, set the `isLoggedIn` flag to `false` on every user. The client will then fail the refresh step and be prompted to log in:
+   ```sql
+   UPDATE system_users SET is_logged_in = false;
+   ```
+   *(Reverts automatically when each user logs in again.)*
+
+5. **Client compatibility** — no app changes needed. The http-client already handles 401 → refresh → logout.
+
+### Security notes
+
+- Tokens are signed with the `JWT_SECRET` environment variable (HS256). Rotate this secret in production.
+- The `isLoggedIn` flag is only reset on explicit logout, password change, or an admin action. No background scheduler clears sessions.
+- Email verification codes use a separate `expiresAt` field (24 h) and are not affected by the JWT expiry setting.
 
 ## Response Format
 All responses follow this structure:

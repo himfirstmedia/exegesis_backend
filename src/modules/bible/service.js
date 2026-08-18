@@ -1,5 +1,6 @@
 import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
+import { canonicalBookIndex } from "../../constants/bible-books.js";
 import { getVerse } from "../../modules/bible-translations/service.js";
 import { cache } from "../../services/cacheService.js";
 import {
@@ -507,6 +508,8 @@ export const addVerseExplanation = async (data, userId) => {
       ? JSON.stringify(promptIds)
       : promptIds;
 
+  const sortOrder = canonicalBookIndex(bookName);
+
   let verseExplanation;
   if (id) {
     verseExplanation = await prisma.verseExplanation.update({
@@ -519,6 +522,7 @@ export const addVerseExplanation = async (data, userId) => {
         learnMore,
         bibleVersion,
         promptIds: promptIdsJson,
+        sortOrder,
         updatedBy: userId,
       },
     });
@@ -536,6 +540,7 @@ export const addVerseExplanation = async (data, userId) => {
         learnMore,
         bibleVersion,
         promptIds: promptIdsJson,
+        sortOrder,
         updatedBy: userId,
       },
       create: {
@@ -546,6 +551,7 @@ export const addVerseExplanation = async (data, userId) => {
         learnMore,
         bibleVersion,
         promptIds: promptIdsJson,
+        sortOrder,
         createdBy: userId,
       },
     });
@@ -558,20 +564,36 @@ export const addVerseExplanation = async (data, userId) => {
 };
 
 export const getAllVersesExplanation = async (data) => {
-  const { page = 1, pageSize = 20, bookName, lang = "en" } = data;
+  const { page = 1, pageSize = 20, bookName, search, lang = "en" } = data;
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
   const offset = (pageNum - 1) * pageSizeNum;
 
   const whereClause = {};
   if (bookName) whereClause.bookName = bookName;
+  if (search && String(search).trim()) {
+    const q = String(search).trim();
+    whereClause.OR = [
+      { bookName: { contains: q, mode: "insensitive" } },
+      { explanation: { contains: q, mode: "insensitive" } },
+      { learnMore: { contains: q, mode: "insensitive" } },
+      { bibleVersion: { contains: q, mode: "insensitive" } },
+    ];
+  }
 
   const [explanations, totalCount] = await Promise.all([
     prisma.verseExplanation.findMany({
       where: whereClause,
       skip: offset,
       take: pageSizeNum,
-      orderBy: { bookName: "asc" },
+      // Canonical Bible order (Genesis first), with book/chapter/verse as a
+      // stable fallback inside each book.
+      orderBy: [
+        { sortOrder: "asc" },
+        { bookName: "asc" },
+        { chapter: "asc" },
+        { verseNumber: "asc" },
+      ],
     }),
     prisma.verseExplanation.count({ where: whereClause }),
   ]);

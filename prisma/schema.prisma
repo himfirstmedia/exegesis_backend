@@ -321,6 +321,7 @@ model VerseExplanation {
   learnMore    String?   @map("learn_more")
   bibleVersion String?   @map("bible_version")
   promptIds    String?   @map("prompt_ids")
+  sortOrder    Int       @default(9999) @map("sort_order")
   createdBy    String?   @map("created_by")
   createdOn    DateTime? @map("created_on")
   updatedBy    String?   @map("updated_by")
@@ -796,6 +797,7 @@ model VerseWordStudy {
 
 model BookPrologue {
   bookName          String   @id @map("book_name")
+  sortOrder         Int      @default(9999) @map("sort_order")
   author            String?
   authorDetail      String?  @map("author_detail")
   audience          String?

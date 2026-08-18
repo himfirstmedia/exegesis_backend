@@ -2,7 +2,10 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../config/db.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "default-secret-key";
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
+// Optional expiry. When unset/empty the token carries no `exp` claim and
+// never expires — a logged-in user keeps API access indefinitely (months
+// or years later). Set JWT_EXPIRES_IN if you ever want expiring tokens.
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "";
 
 export const generateToken = (user) => {
   const payload = {
@@ -11,7 +14,11 @@ export const generateToken = (user) => {
     email: user.email,
     userRole: Number(user.userRole),
   };
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign(
+    payload,
+    JWT_SECRET,
+    JWT_EXPIRES_IN ? { expiresIn: JWT_EXPIRES_IN } : {},
+  );
 };
 
 export const verifyToken = (token) => {
