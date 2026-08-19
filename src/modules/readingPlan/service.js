@@ -3,6 +3,7 @@ import { prisma } from "../../config/db.js";
 import { generatePlanId } from "../../utils/helpers.js";
 import { cache } from "../../services/cacheService.js";
 import { translateText, translateMany } from "../../utils/translator.js";
+import { utcToday } from "../../utils/dates.js";
 
 export const createReadingPlan = async (data, userId) => {
   const {
@@ -1258,12 +1259,10 @@ export const getAdminPlanStatistics = async (data) => {
 
   const enrollmentTrend = [];
   for (let i = 0; i < 14; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    d.setHours(0, 0, 0, 0);
+    const d = utcToday(-i);
     const count = enrollments.filter((e) => {
       const ed = new Date(e.startDate);
-      ed.setHours(0, 0, 0, 0);
+      ed.setUTCHours(0, 0, 0, 0);
       return ed.getTime() === d.getTime();
     }).length;
     enrollmentTrend.push({ date: d.toISOString().split("T")[0], count });
@@ -1281,12 +1280,10 @@ export const getAdminPlanStatistics = async (data) => {
 
   const completionTrend = [];
   for (let i = 0; i < 14; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    d.setHours(0, 0, 0, 0);
+    const d = utcToday(-i);
     const count = completions.filter((c) => {
       const cd = new Date(c.completedDate);
-      cd.setHours(0, 0, 0, 0);
+      cd.setUTCHours(0, 0, 0, 0);
       return cd.getTime() === d.getTime();
     }).length;
     completionTrend.push({ date: d.toISOString().split("T")[0], count });

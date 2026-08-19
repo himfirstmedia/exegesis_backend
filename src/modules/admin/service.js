@@ -1,14 +1,7 @@
 import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { cache } from "../../services/cacheService.js";
-
-const parseLocalDate = (value) => {
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const [year, month, day] = value.split("-").map(Number);
-    return new Date(year, month - 1, day);
-  }
-  return new Date(value);
-};
+import { parseLocalDate, utcToday } from "../../utils/dates.js";
 
 export const getUsersByAdmin = async (data, adminId) => {
   const { search, userId, page = 1, pageSize = 10 } = data;
@@ -551,14 +544,10 @@ export const getAllDailyVerses = async (data) => {
   if (startDate || endDate) {
     whereClause.displayDate = {};
     if (startDate) {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      whereClause.displayDate.gte = start;
+      whereClause.displayDate.gte = parseLocalDate(startDate);
     }
     if (endDate) {
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      whereClause.displayDate.lte = end;
+      whereClause.displayDate.lte = parseLocalDate(endDate);
     }
   }
 
@@ -586,10 +575,8 @@ export const getAllDailyVerses = async (data) => {
   }
 
   if (smartDefault) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const futureDate = new Date(today);
-    futureDate.setDate(futureDate.getDate() + parseInt(futureDays));
+    const today = utcToday();
+    const futureDate = utcToday(parseInt(futureDays));
 
     whereClause.displayDate = { gte: today, lte: futureDate };
   }
@@ -719,7 +706,7 @@ export const addDailyDevotion = async (data, adminId) => {
         bookName: bookName || null,
         chapter: chapter ? BigInt(chapter) : null,
         verseNumber: verseNumber ? BigInt(verseNumber) : null,
-        displayDate: new Date(displayDate),
+        displayDate: parseLocalDate(displayDate),
         displayTime: displayTime ? new Date(displayTime) : null,
         isPublished: published ?? true,
         updatedBy: adminId,
@@ -734,7 +721,7 @@ export const addDailyDevotion = async (data, adminId) => {
         bookName: bookName || null,
         chapter: chapter ? BigInt(chapter) : null,
         verseNumber: verseNumber ? BigInt(verseNumber) : null,
-        displayDate: new Date(displayDate),
+        displayDate: parseLocalDate(displayDate),
         displayTime: displayTime ? new Date(displayTime) : null,
         createdBy: adminId,
         isPublished: published ?? true,
@@ -775,10 +762,8 @@ export const getAllDailyDevotions = async (data) => {
   const whereClause = {};
 
   if (smartDefault) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const futureDate = new Date(today);
-    futureDate.setDate(futureDate.getDate() + (futureDays || 2));
+    const today = utcToday();
+    const futureDate = utcToday(futureDays || 2);
 
     whereClause.OR = [
       { displayDate: { gte: today, lte: futureDate }, isPublished: true },
@@ -788,13 +773,13 @@ export const getAllDailyDevotions = async (data) => {
     if (startDate) {
       whereClause.displayDate = {
         ...whereClause.displayDate,
-        gte: new Date(startDate),
+        gte: parseLocalDate(startDate),
       };
     }
     if (endDate) {
       whereClause.displayDate = {
         ...whereClause.displayDate,
-        lte: new Date(endDate),
+        lte: parseLocalDate(endDate),
       };
     }
   }
@@ -943,10 +928,8 @@ export const getAllDailyExegesis = async (data) => {
   const whereClause = {};
 
   if (smartDefault) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const futureDate = new Date(today);
-    futureDate.setDate(futureDate.getDate() + (futureDays || 2));
+    const today = utcToday();
+    const futureDate = utcToday(futureDays || 2);
 
     whereClause.OR = [
       { displayDate: { gte: today, lte: futureDate }, isPublished: true },
@@ -956,12 +939,12 @@ export const getAllDailyExegesis = async (data) => {
     if (startDate)
       whereClause.displayDate = {
         ...whereClause.displayDate,
-        gte: new Date(startDate),
+        gte: parseLocalDate(startDate),
       };
     if (endDate)
       whereClause.displayDate = {
         ...whereClause.displayDate,
-        lte: new Date(endDate),
+        lte: parseLocalDate(endDate),
       };
   }
 

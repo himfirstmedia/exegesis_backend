@@ -9,6 +9,7 @@ import {
   translateMany,
   translateResult,
 } from "../../utils/translator.js";
+import { parseLocalDate, utcToday } from "../../utils/dates.js";
 
 // Daily verses always need displayable text. If the stored bibleVersion has no
 // bundled XML (e.g. "WEB" from the app's local JSON list) we fall back to KJV
@@ -62,14 +63,6 @@ export const fetchVerseTextWithFallback = async (
     }
   }
   return { text: "", translation: bibleVersion || DEFAULT_VERSE_TRANSLATION };
-};
-
-const parseLocalDate = (value) => {
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const [year, month, day] = value.split("-").map(Number);
-    return new Date(year, month - 1, day);
-  }
-  return new Date(value);
 };
 
 export const addHighlight = async (data, userId) => {
@@ -742,10 +735,8 @@ export const getVerseByDate = async (data) => {
     "bible",
     `verse-by-date:v2:${date}`,
     async () => {
-      const startDate = new Date(date);
-      startDate.setHours(0, 0, 0, 0);
-      const endDate = new Date(date);
-      endDate.setHours(23, 59, 59, 999);
+      const startDate = parseLocalDate(date);
+      const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000 - 1);
 
       const dailyVerse = await prisma.dailyVerse.findFirst({
         where: {
@@ -862,8 +853,7 @@ export const getTodaysVerse = async (data = {}) => {
     "bible",
     "todays-verse:v2",
     async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const today = utcToday();
 
       let dailyVerse = await prisma.dailyVerse.findFirst({
         where: { displayDate: { gte: today }, isPublished: true },
@@ -1013,8 +1003,7 @@ export const getTodaysDevotion = async (data = {}) => {
     "bible",
     "todays-devotion",
     async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const today = utcToday();
 
       let dailyDevotion = await prisma.dailyDevotion.findFirst({
         where: { displayDate: { gte: today }, isPublished: true },
@@ -1067,10 +1056,8 @@ export const getDevotionByDate = async (data) => {
     "bible",
     `devotion-by-date:${date}`,
     async () => {
-      const startDate = new Date(date);
-      startDate.setHours(0, 0, 0, 0);
-      const endDate = new Date(date);
-      endDate.setHours(23, 59, 59, 999);
+      const startDate = parseLocalDate(date);
+      const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000 - 1);
 
       const whereClause = {
         displayDate: {
@@ -1132,15 +1119,14 @@ export const getAllDailyDevotionsPublic = async (data) => {
 
   if (startDate || endDate) {
     whereClause.displayDate = {};
-    if (startDate) whereClause.displayDate.gte = new Date(startDate);
-    if (endDate) whereClause.displayDate.lte = new Date(endDate);
+    if (startDate) whereClause.displayDate.gte = parseLocalDate(startDate);
+    if (endDate) whereClause.displayDate.lte = parseLocalDate(endDate);
   }
 
   if (smartDefault) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const futureDate = new Date(today);
-    futureDate.setDate(futureDate.getDate() + (futureDays || 2));
+    const today = utcToday();
+    
+    const futureDate = utcToday(futureDays || 2);
 
     whereClause.OR = [
       { displayDate: { gte: today, lte: futureDate }, isPublished: true },
@@ -1204,8 +1190,8 @@ export const getTodaysExegesis = async (data = {}) => {
     "bible",
     "todays-exegesis",
     async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const today = utcToday();
+      
 
       let base = await prisma.dailyExegesis.findFirst({
         where: { displayDate: { gte: today }, isPublished: true },
@@ -1253,9 +1239,7 @@ export const getExegesisByDate = async (data) => {
   if (!date) return { status: 400, message: "Date is required" };
 
   const startDate = parseLocalDate(date);
-  startDate.setHours(0, 0, 0, 0);
-  const endDate = parseLocalDate(date);
-  endDate.setHours(23, 59, 59, 999);
+  const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000 - 1);
 
   const base = await prisma.dailyExegesis.findFirst({
     where: {
@@ -1296,15 +1280,14 @@ export const getAllDailyExegesisPublic = async (data) => {
 
   if (startDate || endDate) {
     whereClause.displayDate = {};
-    if (startDate) whereClause.displayDate.gte = new Date(startDate);
-    if (endDate) whereClause.displayDate.lte = new Date(endDate);
+    if (startDate) whereClause.displayDate.gte = parseLocalDate(startDate);
+    if (endDate) whereClause.displayDate.lte = parseLocalDate(endDate);
   }
 
   if (smartDefault) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const futureDate = new Date(today);
-    futureDate.setDate(futureDate.getDate() + (futureDays || 2));
+    const today = utcToday();
+    
+    const futureDate = utcToday(futureDays || 2);
 
     whereClause.OR = [
       { displayDate: { gte: today, lte: futureDate }, isPublished: true },

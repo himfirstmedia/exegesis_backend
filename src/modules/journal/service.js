@@ -1,6 +1,7 @@
 import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { cache } from "../../services/cacheService.js";
+import { parseLocalDate } from "../../utils/dates.js";
 import PDFDocument from "pdfkit";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -227,8 +228,8 @@ export const getAllJournalEntries = async (data, userId) => {
 
   if (startDate || endDate) {
     whereClause.createdOn = {};
-    if (startDate) whereClause.createdOn.gte = new Date(startDate);
-    if (endDate) whereClause.createdOn.lte = new Date(endDate);
+    if (startDate) whereClause.createdOn.gte = parseLocalDate(startDate);
+    if (endDate) whereClause.createdOn.lte = parseLocalDate(endDate);
   }
 
   const [entries, totalCount] = await Promise.all([
@@ -1366,8 +1367,8 @@ export const getPublicEntries = async (data, userId) => {
 
   if (startDate || endDate) {
     whereClause.createdOn = {};
-    if (startDate) whereClause.createdOn.gte = new Date(startDate);
-    if (endDate) whereClause.createdOn.lte = new Date(endDate);
+    if (startDate) whereClause.createdOn.gte = parseLocalDate(startDate);
+    if (endDate) whereClause.createdOn.lte = parseLocalDate(endDate);
   }
 
   const [entries, totalCount] = await Promise.all([
