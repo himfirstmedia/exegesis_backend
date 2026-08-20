@@ -16,6 +16,11 @@ const COVERS_DIR = path.join(__dirname, "../../../uploads/covers");
 const PROFILE_PHOTOS_DIR = path.join(__dirname, "../../../uploads/profile-photos");
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Validate that GOOGLE_CLIENT_ID is configured
+if (!process.env.GOOGLE_CLIENT_ID) {
+  console.warn("[Auth] GOOGLE_CLIENT_ID is not set in environment variables. Google login will not work properly.");
+}
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export const googleLogin = async (data, deviceInfo = null) => {
@@ -33,7 +38,14 @@ export const googleLogin = async (data, deviceInfo = null) => {
     });
     googleUser = ticket.getPayload();
   } catch (verifyError) {
-    console.error("[googleLogin] Token verification failed, falling back to request data:", verifyError.message);
+    // The audience mismatch usually means GOOGLE_CLIENT_ID on the server
+    // doesn't match the one used to generate the token on the client.
+    console.warn(
+      "[googleLogin] Token verification failed, falling back to request data.",
+      "Error:", verifyError.message,
+      "\n  Server GOOGLE_CLIENT_ID:", process.env.GOOGLE_CLIENT_ID ? `${process.env.GOOGLE_CLIENT_ID.substring(0, 12)}...` : 'NOT SET',
+      "\n  Hint: Ensure the GOOGLE_CLIENT_ID in your .env matches the one configured in Google Cloud Console.",
+    );
   }
 
   const googleId = googleUser?.sub || idToken;

@@ -1,41 +1,48 @@
-import { createTransporter, mailOptions } from "../config/email.js";
+import { createTransporter, buildMailOptions } from "../config/email.js";
 import { prisma } from "../config/db.js";
 
 const MAX_RETRIES = 3;
+const BATCH_SIZE = 5;
 
 export const sendEmail = async (to, subject, htmlContent) => {
   const transporter = createTransporter();
-  
-  const mailOptions = {
-    from: `"Exegesis App" <${process.env.MAIL_USERNAME}>`,
+
+  const mailOptions = buildMailOptions({
     to,
     subject,
     html: htmlContent,
-  };
+  });
 
   return transporter.sendMail(mailOptions);
 };
 
 export const processPendingMessages = async () => {
-  const pendingMessages = await prisma.message.findMany({
-    where: {
-      status: "PENDING",
-      failCount: { lt: MAX_RETRIES },
-    },
-    take: 10,
-  });
+  let pendingMessages;
 
-  if (pendingMessages.length === 0) {
-    // console.log("No pending messages to process");
+  try {
+    pendingMessages = await prisma.message.findMany({
+      where: {
+        status: "PENDING",
+        failCount: { lt: MAX_RETRIES },
+      },
+      take: BATCH_SIZE,
+      orderBy: { createdOn: "asc" },
+    });
+  } catch (dbError) {
+    console.error("[EmailScheduler] DB query failed:", dbError.message);
     return;
   }
 
-  console.log(`Processing ${pendingMessages.length} pending messages`);
+  if (!pendingMessages || pendingMessages.length === 0) {
+    return;
+  }
+
+  console.log(`[EmailScheduler] Processing ${pendingMessages.length} pending messages`);
 
   for (const msg of pendingMessages) {
     try {
       await sendEmail(msg.recipient, msg.subject || "Exegesis App Notification", msg.message);
-      
+
       await prisma.message.update({
         where: { id: msg.id },
         data: {
@@ -45,27 +52,31 @@ export const processPendingMessages = async () => {
           updatedOn: new Date(),
         },
       });
-      
-      console.log(`Email sent successfully to ${msg.recipient}`);
+
+      console.log(`[EmailScheduler] Email sent successfully to ${msg.recipient}`);
     } catch (error) {
-      console.error(`Failed to send email to ${msg.recipient}:`, error.message);
-      
-      const newFailCount = msg.failCount + 1;
+      console.error(`[EmailScheduler] Failed to send email to ${msg.recipient}:`, error.message);
+
+      const newFailCount = (msg.failCount || 0) + 1;
       const shouldStop = newFailCount >= MAX_RETRIES;
-      
-      await prisma.message.update({
-        where: { id: msg.id },
-        data: {
-          failCount: newFailCount,
-          lastError: error.message,
-          sendCount: { increment: 1 },
-          status: shouldStop ? "FAILED" : "PENDING",
-          updatedOn: new Date(),
-        },
-      });
-      
+
+      try {
+        await prisma.message.update({
+          where: { id: msg.id },
+          data: {
+            failCount: newFailCount,
+            lastError: error.message?.substring(0, 500),
+            sendCount: { increment: 1 },
+            status: shouldStop ? "FAILED" : "PENDING",
+            updatedOn: new Date(),
+          },
+        });
+      } catch (updateError) {
+        console.error(`[EmailScheduler] Failed to update message status:`, updateError.message);
+      }
+
       if (shouldStop) {
-        console.log(`Message ${msg.id} failed after ${MAX_RETRIES} attempts. Stopping.`);
+        console.log(`[EmailScheduler] Message ${msg.id} failed after ${MAX_RETRIES} attempts.`);
       }
     }
   }

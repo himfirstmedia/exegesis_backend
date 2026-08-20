@@ -1,3 +1,35 @@
+const CURRENT_YEAR = new Date().getFullYear();
+const SUPPORT_EMAIL = process.env.MAIL_SUPPORT_EMAIL || process.env.MAIL_USERNAME || "support@exegesisproject.org";
+const UNSUBSCRIBE_URL = process.env.UNSUBSCRIBE_URL || `mailto:${SUPPORT_EMAIL}?subject=unsubscribe`;
+
+// Physical address required by CAN-SPAM Act
+const COMPANY_ADDRESS = process.env.COMPANY_ADDRESS || "Exegesis Bible App";
+
+// Common footer shared across all templates
+const emailFooter = `
+<!-- Footer -->
+<tr>
+  <td style="background-color: #f8f9fa; padding: 24px 40px; text-align: center; border-top: 1px solid #eee;">
+    <p style="margin: 0 0 8px; font-size: 14px; color: #888888;">
+      Need help? Reply to this email or contact us at
+    </p>
+    <p style="margin: 0 0 12px; font-size: 14px; color: #1e3a5f;">
+      <a href="mailto:${SUPPORT_EMAIL}" style="color: #1e3a5f; text-decoration: none;">${SUPPORT_EMAIL}</a>
+    </p>
+    <p style="margin: 0 0 8px; font-size: 12px; color: #aaaaaa;">
+      <a href="${UNSUBSCRIBE_URL}" style="color: #aaaaaa; text-decoration: underline;">Unsubscribe</a>
+      &nbsp;|&nbsp;
+      <a href="mailto:${SUPPORT_EMAIL}?subject=Support" style="color: #aaaaaa; text-decoration: underline;">Contact Support</a>
+    </p>
+    <p style="margin: 12px 0 0; font-size: 11px; color: #bbbbbb;">
+      ${COMPANY_ADDRESS}
+    </p>
+    <p style="margin: 8px 0 0; font-size: 12px; color: #aaaaaa;">
+      &copy; ${CURRENT_YEAR} Exegesis Bible App. All rights reserved.
+    </p>
+  </td>
+</tr>`;
+
 export const emailTemplates = {
   verification: (code, firstName) => ({
     subject: "Exegesis App - Verify Your Email",
@@ -34,7 +66,7 @@ export const emailTemplates = {
               </h2>
               
               <p style="margin: 0 0 24px; font-size: 16px; line-height: 1.6; color: #555555; text-align: center;">
-                Hello <strong style="color: #1e3a5f;">${firstName || 'there'}</strong>,
+                Hello <strong style="color: #1e3a5f;">${firstName || "there"}</strong>,
               </p>
               
               <p style="margin: 0 0 32px; font-size: 16px; line-height: 1.6; color: #555555; text-align: center;">
@@ -71,7 +103,7 @@ export const emailTemplates = {
                       "Your word is a lamp for my feet, a light on my path."
                     </p>
                     <p style="margin: 0; font-size: 13px; color: #888888; text-align: right;">
-                      — Psalm 119:105
+                      &mdash; Psalm 119:105
                     </p>
                   </td>
                 </tr>
@@ -79,20 +111,7 @@ export const emailTemplates = {
             </td>
           </tr>
           
-          <!-- Footer -->
-          <tr>
-            <td style="background-color: #f8f9fa; padding: 24px 40px; text-align: center; border-top: 1px solid #eee;">
-              <p style="margin: 0 0 8px; font-size: 14px; color: #888888;">
-                Need help? Reply to this email or contact us at
-              </p>
-              <p style="margin: 0; font-size: 14px; color: #1e3a5f;">
-                <a href="mailto:support@exegesis.app" style="color: #1e3a5f; text-decoration: none;">support@exegesis.app</a>
-              </p>
-              <p style="margin: 16px 0 0; font-size: 12px; color: #aaaaaa;">
-                © ${new Date().getFullYear()} Exegesis Bible App. All rights reserved.
-              </p>
-            </td>
-          </tr>
+          ${emailFooter}
         </table>
       </td>
     </tr>
@@ -133,24 +152,28 @@ export const emailTemplates = {
           <tr>
             <td style="padding: 40px 40px 30px;">
               <h2 style="margin: 0 0 16px; font-size: 24px; font-weight: 600; color: #1e3a5f; text-align: center;">
-                Welcome, ${firstName}! 🙏
+                Welcome, ${firstName}!
               </h2>
               
               <p style="margin: 0 0 24px; font-size: 16px; line-height: 1.6; color: #555555; text-align: center;">
                 Your account has been successfully created. We're thrilled to have you join our community of believers growing in Scripture daily.
               </p>
               
-              <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-                <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e3a5f; text-align: center;">
-                  What's Next?
-                </h3>
-                <ul style="margin: 0; padding-left: 20px; color: #555555; line-height: 2;">
-                  <li>Complete your daily Bible reading plans</li>
-                  <li>Track your spiritual journey</li>
-                  <li>Explore verse explanations</li>
-                  <li>Connect with other believers</li>
-                </ul>
-              </div>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+                <tr>
+                  <td>
+                    <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e3a5f; text-align: center;">
+                      What's Next?
+                    </h3>
+                    <p style="margin: 0; padding-left: 20px; color: #555555; line-height: 2; font-size: 16px;">
+                      Complete your daily Bible reading plans<br/>
+                      Track your spiritual journey<br/>
+                      Explore verse explanations<br/>
+                      Connect with other believers
+                    </p>
+                  </td>
+                </tr>
+              </table>
               
               <p style="margin: 0; font-size: 16px; line-height: 1.6; color: #555555; text-align: center;">
                 <strong>Important:</strong> Please verify your email address using the code sent in a separate email to complete your account setup.
@@ -168,7 +191,7 @@ export const emailTemplates = {
                       "Trust in the Lord with all your heart and lean not on your own understanding."
                     </p>
                     <p style="margin: 0; font-size: 13px; color: #888888; text-align: right;">
-                      — Proverbs 3:5
+                      &mdash; Proverbs 3:5
                     </p>
                   </td>
                 </tr>
@@ -176,20 +199,7 @@ export const emailTemplates = {
             </td>
           </tr>
           
-          <!-- Footer -->
-          <tr>
-            <td style="background-color: #f8f9fa; padding: 24px 40px; text-align: center; border-top: 1px solid #eee;">
-              <p style="margin: 0 0 8px; font-size: 14px; color: #888888;">
-                Need help? Reply to this email or contact us at
-              </p>
-              <p style="margin: 0; font-size: 14px; color: #1e3a5f;">
-                <a href="mailto:support@exegesis.app" style="color: #1e3a5f; text-decoration: none;">support@exegesis.app</a>
-              </p>
-              <p style="margin: 16px 0 0; font-size: 12px; color: #aaaaaa;">
-                © ${new Date().getFullYear()} Exegesis Bible App. All rights reserved.
-              </p>
-            </td>
-          </tr>
+          ${emailFooter}
         </table>
       </td>
     </tr>
@@ -234,7 +244,7 @@ export const emailTemplates = {
               </h2>
               
               <p style="margin: 0 0 24px; font-size: 16px; line-height: 1.6; color: #555555; text-align: center;">
-                Hello <strong style="color: #1e3a5f;">${firstName || 'there'}</strong>,
+                Hello <strong style="color: #1e3a5f;">${firstName || "there"}</strong>,
               </p>
               
               <p style="margin: 0 0 32px; font-size: 16px; line-height: 1.6; color: #555555; text-align: center;">
@@ -255,11 +265,15 @@ export const emailTemplates = {
                 </tr>
               </table>
               
-              <div style="background-color: #fff3cd; border-radius: 8px; padding: 16px; margin-top: 24px; border-left: 4px solid #d4a84b;">
-                <p style="margin: 0; font-size: 14px; color: #856404; line-height: 1.6;">
-                  <strong>⚠️ Security Notice:</strong> If you didn't request this password reset, please ignore this email. Your account is still secure.
-                </p>
-              </div>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #fff3cd; border-radius: 8px; padding: 16px; margin-top: 24px; border-left: 4px solid #d4a84b;">
+                <tr>
+                  <td>
+                    <p style="margin: 0; font-size: 14px; color: #856404; line-height: 1.6;">
+                      <strong>Security Notice:</strong> If you didn't request this password reset, please ignore this email. Your account is still secure.
+                    </p>
+                  </td>
+                </tr>
+              </table>
               
               <p style="margin: 24px 0 0; font-size: 14px; color: #888888; text-align: center;">
                 This code will expire in <strong>24 hours</strong>.
@@ -267,20 +281,7 @@ export const emailTemplates = {
             </td>
           </tr>
           
-          <!-- Footer -->
-          <tr>
-            <td style="background-color: #f8f9fa; padding: 24px 40px; text-align: center; border-top: 1px solid #eee;">
-              <p style="margin: 0 0 8px; font-size: 14px; color: #888888;">
-                Need help? Reply to this email or contact us at
-              </p>
-              <p style="margin: 0; font-size: 14px; color: #1e3a5f;">
-                <a href="mailto:support@exegesis.app" style="color: #1e3a5f; text-decoration: none;">support@exegesis.app</a>
-              </p>
-              <p style="margin: 16px 0 0; font-size: 12px; color: #aaaaaa;">
-                © ${new Date().getFullYear()} Exegesis Bible App. All rights reserved.
-              </p>
-            </td>
-          </tr>
+          ${emailFooter}
         </table>
       </td>
     </tr>
