@@ -50,7 +50,7 @@ export const emailTemplates = {
           <tr>
             <td style="background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); padding: 40px 40px 30px; text-align: center;">
               <h1 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffffff; letter-spacing: 2px;">
-                EXEGESIS
+                EXEGESIS PROJECT
               </h1>
               <p style="margin: 8px 0 0; font-size: 14px; color: rgba(255,255,255,0.8); letter-spacing: 1px;">
                 BIBLE APP

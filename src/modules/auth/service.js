@@ -276,9 +276,9 @@ export const register = async (data) => {
       password: hashedPassword,
       firstName,
       lastName,
-      phoneNumber,
+      phoneNumber: phoneNumber || "",
       ...(dateOfBirth && !isNaN(Date.parse(dateOfBirth)) && { dateOfBirth: new Date(dateOfBirth) }),
-      gender,
+      gender: gender || "Not specified",
       userRole: userRole || 2n,
       emailVerified: false,
       status: true,
@@ -439,6 +439,11 @@ export const verifyCode = async (data) => {
       data: { status: true },
     });
   }
+
+  await prisma.systemUser.update({
+    where: { id: user.id },
+    data: { emailVerified: true },
+  });
 
   return { status: 200, message: "Verification code has been verified" };
 };

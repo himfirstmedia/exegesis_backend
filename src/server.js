@@ -26,6 +26,7 @@ import verseResourcesRouter from "./modules/verse-resources/route.js"
 import subscriptionsRouter from "./modules/subscriptions/routes.js"
 import popularSearchesRouter from "./modules/popular-searches/route.js"
 import aiRouter from "./modules/ai/route.js"
+import textToTextTranslationRouter from "./modules/text-to-text-translation/route.js"
 import { handleStripeWebhook } from "./modules/subscriptions/webhook.js"
 
 config();
@@ -94,6 +95,7 @@ app.use("/verse-resources", verseResourcesRouter)
 app.use("/subscriptions", subscriptionsRouter)
 app.use("/popular-searches", popularSearchesRouter)
 app.use("/ai", aiRouter)
+app.use("/translation", textToTextTranslationRouter)
 
 app.get("/health", (req, res) => {
   res.send(
