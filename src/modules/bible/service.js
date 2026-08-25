@@ -4,12 +4,15 @@ import { canonicalBookIndex } from "../../constants/bible-books.js";
 import { getVerse } from "../../modules/bible-translations/service.js";
 import { cache } from "../../services/cacheService.js";
 import {
-  translateText,
   translateLongText,
   translateMany,
-  translateResult,
 } from "../../utils/translator.js";
 import { parseLocalDate, utcToday } from "../../utils/dates.js";
+import {
+  translateDailyDevotionContent,
+  translateDailyExegesisContent,
+  translateDailyVerseContent,
+} from "./dailyContentTranslation.js";
 
 // Daily verses always need displayable text. If the stored bibleVersion has no
 // bundled XML (e.g. "WEB" from the app's local JSON list) we fall back to KJV
@@ -468,10 +471,7 @@ export const getVerseExplanation = async (data) => {
     message: "Verse explanation fetched successfully",
     data: { ...serialized, explanation, learnMore },
   };
-  const finalResult =
-    lang !== "en"
-      ? translateResult(verseExplanationResult, lang)
-      : verseExplanationResult;
+  const finalResult = verseExplanationResult;
 
   // Cache the language-specific result so subsequent requests skip translation
   await cache.set("bible", langCacheKey, finalResult, 86400);
@@ -617,7 +617,7 @@ export const getAllVersesExplanation = async (data) => {
     message: "Verse explanations fetched successfully",
     data: serialized,
   };
-  return lang !== "en" ? translateResult(result, lang) : result;
+  return result;
 };
 
 export const addVerseNote = async (data, userId) => {
@@ -726,7 +726,7 @@ export const getVerseByDate = async (data) => {
   }
 
   // Try language-specific cache first
-  const langCacheKey = `verse-by-date:v2:${date}:${lang}`;
+  const langCacheKey = `verse-by-date:v3:${date}:${lang}`;
   const cachedLang = await cache.get("bible", langCacheKey);
   if (cachedLang !== null) return cachedLang;
 
@@ -788,17 +788,6 @@ export const getVerseByDate = async (data) => {
     learnMore = explanationRecord.learnMore ?? learnMore;
   }
 
-  if (lang !== "en") {
-    const [tExplanation, tLearnMore] = await Promise.all([
-      explanation
-        ? translateLongText(explanation, lang)
-        : Promise.resolve(null),
-      learnMore ? translateLongText(learnMore, lang) : Promise.resolve(null),
-    ]);
-    explanation = tExplanation ?? explanation;
-    learnMore = tLearnMore ?? learnMore;
-  }
-
   const verseByDateResult = {
     status: 200,
     message: "Verse fetched successfully",
@@ -812,10 +801,12 @@ export const getVerseByDate = async (data) => {
       learnMore,
     },
   };
-  const finalResult =
-    lang !== "en"
-      ? translateResult(verseByDateResult, lang)
-      : verseByDateResult;
+  const finalResult = lang !== "en"
+    ? {
+        ...verseByDateResult,
+        data: await translateDailyVerseContent(verseByDateResult.data, lang),
+      }
+    : verseByDateResult;
 
   // Cache the language-specific result so subsequent requests skip translation
   await cache.set("bible", langCacheKey, finalResult, 3600);
@@ -844,7 +835,7 @@ export const getTodaysVerse = async (data = {}) => {
   const { lang = "en" } = data;
 
   // Try language-specific cache first
-  const langCacheKey = `todays-verse:v2:${lang}`;
+  const langCacheKey = `todays-verse:v3:${lang}`;
   const cachedLang = await cache.get("bible", langCacheKey);
   if (cachedLang !== null) return cachedLang;
 
@@ -910,21 +901,6 @@ export const getTodaysVerse = async (data = {}) => {
 
   const { dailyVerse: dv, bibleVersion, verseText, explanation: dvExplanation, learnMore: dvLearnMore } = base;
 
-  let explanation = dvExplanation;
-  let learnMore = dvLearnMore;
-
-  // Translate if non-English
-  if (lang !== "en") {
-    const [tExplanation, tLearnMore] = await Promise.all([
-      explanation
-        ? translateLongText(explanation, lang)
-        : Promise.resolve(null),
-      learnMore ? translateLongText(learnMore, lang) : Promise.resolve(null),
-    ]);
-    explanation = tExplanation ?? explanation;
-    learnMore = tLearnMore ?? learnMore;
-  }
-
   const todaysVerseResult = {
     status: 200,
     message: "Today's verse fetched successfully",
@@ -934,14 +910,16 @@ export const getTodaysVerse = async (data = {}) => {
       translation: bibleVersion,
       bibleVersion,
       text: verseText,
-      explanation,
-      learnMore,
+      explanation: dvExplanation,
+      learnMore: dvLearnMore,
     },
   };
-  const finalResult =
-    lang !== "en"
-      ? translateResult(todaysVerseResult, lang)
-      : todaysVerseResult;
+  const finalResult = lang !== "en"
+    ? {
+        ...todaysVerseResult,
+        data: await translateDailyVerseContent(todaysVerseResult.data, lang),
+      }
+    : todaysVerseResult;
 
   // Cache the language-specific result so subsequent requests skip translation
   await cache.set("bible", langCacheKey, finalResult, 1800);
@@ -982,18 +960,17 @@ export const getDailyVerseByRef = async (data) => {
   }
 
   const dv = serializeBigInt(base);
-  let reflection = dv.reflection || null;
-
-  if (lang !== "en" && reflection) {
-    reflection = await translateLongText(reflection, lang);
-  }
-
   const result = {
     status: 200,
     message: "Daily verse found",
-    data: { ...dv, reflection },
+    data: dv,
   };
-  return lang !== "en" ? translateResult(result, lang) : result;
+  return lang !== "en"
+    ? {
+        ...result,
+        data: await translateDailyVerseContent(result.data, lang),
+      }
+    : result;
 };
 
 export const getTodaysDevotion = async (data = {}) => {
@@ -1026,24 +1003,17 @@ export const getTodaysDevotion = async (data = {}) => {
     return { status: 404, message: "No daily devotion found for today" };
 
   const dv = serializeBigInt(base);
-  let title = dv.title;
-  let content = dv.content;
-
-  if (lang !== "en") {
-    const [tTitle, tContent] = await Promise.all([
-      translateLongText(title, lang),
-      translateLongText(content, lang),
-    ]);
-    title = tTitle ?? title;
-    content = tContent ?? content;
-  }
-
   const result = {
     status: 200,
     message: "Today's devotion fetched successfully",
-    data: { ...dv, title, content },
+    data: dv,
   };
-  return lang !== "en" ? translateResult(result, lang) : result;
+  return lang !== "en"
+    ? {
+        ...result,
+        data: await translateDailyDevotionContent(result.data, lang),
+      }
+    : result;
 };
 
 export const getDevotionByDate = async (data) => {
@@ -1082,24 +1052,17 @@ export const getDevotionByDate = async (data) => {
     return { status: 404, message: "No devotion found for the given date" };
 
   const dv = serializeBigInt(base);
-  let title = dv.title;
-  let content = dv.content;
-
-  if (lang !== "en") {
-    const [tTitle, tContent] = await Promise.all([
-      translateLongText(title, lang),
-      translateLongText(content, lang),
-    ]);
-    title = tTitle ?? title;
-    content = tContent ?? content;
-  }
-
   const result = {
     status: 200,
     message: "Devotion fetched successfully",
-    data: { ...dv, title, content },
+    data: dv,
   };
-  return lang !== "en" ? translateResult(result, lang) : result;
+  return lang !== "en"
+    ? {
+        ...result,
+        data: await translateDailyDevotionContent(result.data, lang),
+      }
+    : result;
 };
 
 export const getAllDailyDevotionsPublic = async (data) => {
@@ -1144,25 +1107,13 @@ export const getAllDailyDevotionsPublic = async (data) => {
     prisma.dailyDevotion.count({ where: whereClause }),
   ]);
 
-  const content = serializeBigInt(devotions);
+  let content = serializeBigInt(devotions);
   const totalPages = Math.ceil(totalElements / pageSize);
 
-  // Translate devotion titles and content
   if (lang !== "en" && content.length > 0) {
-    const [translatedTitles, translatedContent] = await Promise.all([
-      translateMany(
-        content.map((d) => d.title || ""),
-        lang,
-      ),
-      translateMany(
-        content.map((d) => d.content || ""),
-        lang,
-      ),
-    ]);
-    content.forEach((d, i) => {
-      d.title = translatedTitles[i] || d.title;
-      d.content = translatedContent[i] || d.content;
-    });
+    content = await Promise.all(
+      content.map((item) => translateDailyDevotionContent(item, lang)),
+    );
   }
 
   const result = {
@@ -1180,7 +1131,7 @@ export const getAllDailyDevotionsPublic = async (data) => {
       isLast: pageNum >= totalPages - 1,
     },
   };
-  return lang !== "en" ? translateResult(result, lang) : result;
+  return result;
 };
 
 export const getTodaysExegesis = async (data = {}) => {
@@ -1216,15 +1167,11 @@ export const getTodaysExegesis = async (data = {}) => {
     return { status: 404, message: "No daily exegesis found for today" };
 
   if (lang !== "en") {
-    const translated = await translateDailyExegesis(exegesis, lang);
-    return translateResult(
-      {
-        status: 200,
-        message: "Today's exegesis fetched successfully",
-        data: translated,
-      },
-      lang,
-    );
+    return {
+      status: 200,
+      message: "Today's exegesis fetched successfully",
+      data: await translateDailyExegesisContent(exegesis, lang),
+    };
   }
 
   return {
@@ -1254,13 +1201,15 @@ export const getExegesisByDate = async (data) => {
 
   const exegesis = serializeBigInt(base);
   const dataOut =
-    lang !== "en" ? await translateDailyExegesis(exegesis, lang) : exegesis;
+    lang !== "en"
+      ? await translateDailyExegesisContent(exegesis, lang)
+      : exegesis;
   const result = {
     status: 200,
     message: "Daily exegesis fetched successfully",
     data: dataOut,
   };
-  return lang !== "en" ? translateResult(result, lang) : result;
+  return result;
 };
 
 export const getAllDailyExegesisPublic = async (data) => {
@@ -1308,7 +1257,7 @@ export const getAllDailyExegesisPublic = async (data) => {
   let content = serializeBigInt(items);
   if (lang !== "en" && content.length > 0) {
     content = await Promise.all(
-      content.map((item) => translateDailyExegesis(item, lang)),
+      content.map((item) => translateDailyExegesisContent(item, lang)),
     );
   }
 
@@ -1329,35 +1278,7 @@ export const getAllDailyExegesisPublic = async (data) => {
     },
   };
 
-  return lang !== "en" ? translateResult(result, lang) : result;
-};
-
-const translateDailyExegesis = async (item, lang) => {
-  const fields = [
-    item.title,
-    item.introduction || "",
-    item.contextSummary || "",
-    item.teachingBody || "",
-    item.application || "",
-    item.prayer || "",
-  ];
-  const [
-    title,
-    introduction,
-    contextSummary,
-    teachingBody,
-    application,
-    prayer,
-  ] = await translateMany(fields, lang);
-  return {
-    ...item,
-    title: title || item.title,
-    introduction: introduction || item.introduction,
-    contextSummary: contextSummary || item.contextSummary,
-    teachingBody: teachingBody || item.teachingBody,
-    application: application || item.application,
-    prayer: prayer || item.prayer,
-  };
+  return result;
 };
 
 export const getHomeStats = async (userId) => {
@@ -1625,9 +1546,7 @@ export const getRecentActivity = async (userId, limit = 10, lang = "en") => {
     message: "Recent activity fetched successfully",
     data: serializeBigInt(activities),
   };
-  return lang !== "en"
-    ? translateResult(recentActivityResult, lang)
-    : recentActivityResult;
+  return recentActivityResult;
 };
 
 export const deleteVerseExplanation = async (data, userId) => {
@@ -1642,7 +1561,11 @@ export const getChapterJournalPrompts = async (data) => {
   const { bookName, chapter, lang } = data || {};
 
   if (!bookName || !chapter) {
-    return { status: 400, message: "Book and chapter are required" };
+    return {
+      status: 400,
+      message: "Book and chapter are required",
+      data: null,
+    };
   }
 
   const ch = BigInt(chapter);
@@ -1690,10 +1613,23 @@ export const getChapterJournalPrompts = async (data) => {
     prompts = [...prompts, ...defaults];
   }
 
+  const serializedPrompts = serializeBigInt(prompts);
+  if (lang && lang.toLowerCase() !== "en") {
+    const values = serializedPrompts.flatMap((prompt) => [
+      prompt.prompt || "",
+      prompt.description || "",
+    ]);
+    const translated = await translateMany(values, lang);
+    serializedPrompts.forEach((prompt, index) => {
+      prompt.prompt = translated[index * 2] || prompt.prompt;
+      prompt.description = translated[index * 2 + 1] || prompt.description;
+    });
+  }
+
   const result = {
     status: 200,
     message: "Chapter journal prompts fetched successfully",
-    data: serializeBigInt(prompts),
+    data: serializedPrompts,
   };
-  return lang !== "en" ? translateResult(result, lang) : result;
+  return result;
 };
