@@ -1,5 +1,8 @@
 import { cache } from "../services/cacheService.js";
-import { translateText as translateWithLibre } from "../modules/text-to-text-translation/service.js";
+import {
+  translateBatch as translateBatchWithLibre,
+  translateText as translateWithLibre,
+} from "../modules/text-to-text-translation/service.js";
 import {
   normalizeLanguage,
   translateLongText,
@@ -16,6 +19,7 @@ jest.mock("../services/cacheService.js", () => ({
 }));
 
 jest.mock("../modules/text-to-text-translation/service.js", () => ({
+  translateBatch: jest.fn(),
   translateText: jest.fn(),
 }));
 
@@ -25,6 +29,9 @@ describe("LibreTranslate compatibility adapter", () => {
     cache.set.mockReset().mockResolvedValue(undefined);
     translateWithLibre.mockReset().mockImplementation(async ({ q, target }) => ({
       translatedText: `${target}:${q}`,
+    }));
+    translateBatchWithLibre.mockReset().mockImplementation(async ({ q, target }) => ({
+      translations: q.map((text) => ({ translatedText: `${target}:${text}` })),
     }));
   });
 
@@ -54,6 +61,26 @@ describe("LibreTranslate compatibility adapter", () => {
     );
     await expect(translateMany(["First unique", "", "Third unique"], "ar"))
       .resolves.toEqual(["ar:First unique", "", "ar:Third unique"]);
+    expect(translateBatchWithLibre).toHaveBeenCalledTimes(1);
+    expect(translateWithLibre).not.toHaveBeenCalled();
+  });
+
+  test("translates ten short fields in one provider request", async () => {
+    const fields = Array.from(
+      { length: 10 },
+      (_, index) => `Unique prologue field ${index}`,
+    );
+
+    await expect(translateMany(fields, "fr")).resolves.toEqual(
+      fields.map((text) => `fr:${text}`),
+    );
+    expect(translateBatchWithLibre).toHaveBeenCalledTimes(1);
+    expect(translateBatchWithLibre).toHaveBeenCalledWith({
+      q: fields,
+      source: "en",
+      target: "fr",
+      format: "text",
+    });
   });
 
   test("returns original text when LibreTranslate is unavailable", async () => {
@@ -63,6 +90,16 @@ describe("LibreTranslate compatibility adapter", () => {
     await expect(translateText("Unique fallback", "ar")).resolves.toBe(
       "Unique fallback",
     );
+    warning.mockRestore();
+  });
+
+  test("returns original batch fields when LibreTranslate is unavailable", async () => {
+    const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
+    translateBatchWithLibre.mockRejectedValueOnce(new Error("offline"));
+
+    await expect(
+      translateMany(["Unique purpose", "Unique summary"], "sw"),
+    ).resolves.toEqual(["Unique purpose", "Unique summary"]);
     warning.mockRestore();
   });
 

@@ -1,6 +1,9 @@
 import { cache } from "../services/cacheService.js";
 import { splitText } from "../modules/text-to-text-translation/helper.js";
-import { translateText as translateWithLibre } from "../modules/text-to-text-translation/service.js";
+import {
+  translateBatch as translateBatchWithLibre,
+  translateText as translateWithLibre,
+} from "../modules/text-to-text-translation/service.js";
 
 const CACHE_TTL = 7 * 24 * 60 * 60;
 const CACHE_MAX = 500;
@@ -96,7 +99,88 @@ export const translateMany = async (texts = [], lang = "en") => {
   const results = [];
   for (let index = 0; index < texts.length; index += BATCH_SIZE) {
     const batch = texts.slice(index, index + BATCH_SIZE);
-    results.push(...(await Promise.all(batch.map((text) => translateText(text, target)))));
+    const batchCharacters = batch.reduce(
+      (total, text) => total + (typeof text === "string" ? text.length : 0),
+      0,
+    );
+    if (
+      batchCharacters > getMaxTextLength() ||
+      batch.some((text) => typeof text === "string" && text.length > getMaxTextLength())
+    ) {
+      results.push(
+        ...(await Promise.all(batch.map((text) => translateText(text, target)))),
+      );
+      continue;
+    }
+
+    const translated = new Array(batch.length);
+    const missing = [];
+    await Promise.all(
+      batch.map(async (text, batchIndex) => {
+        if (!text) {
+          translated[batchIndex] = text;
+          return;
+        }
+        const cacheKey = getCacheKey(text, target);
+        if (memoryCache.has(cacheKey)) {
+          translated[batchIndex] = memoryCache.get(cacheKey);
+          return;
+        }
+        if (inFlight.has(cacheKey)) {
+          translated[batchIndex] = await inFlight.get(cacheKey);
+          return;
+        }
+        const cached = await cache.get("translations", cacheKey);
+        if (typeof cached === "string") {
+          setMemoryCache(cacheKey, cached);
+          translated[batchIndex] = cached;
+          return;
+        }
+        missing.push({ text, batchIndex, cacheKey });
+      }),
+    );
+
+    if (missing.length > 0) {
+      const providerPromise = (async () => {
+        try {
+          const response = await translateBatchWithLibre({
+            q: missing.map((item) => item.text),
+            source: "en",
+            target,
+            format: "text",
+          });
+          return {
+            success: true,
+            values: response.translations.map(
+              (item, itemIndex) =>
+                item.translatedText || missing[itemIndex].text,
+            ),
+          };
+        } catch (error) {
+          warnProviderFailure(target, error.message);
+          return { success: false, values: missing.map((item) => item.text) };
+        }
+      })();
+
+      missing.forEach((item, itemIndex) => {
+        const itemPromise = providerPromise
+          .then((outcome) => outcome.values[itemIndex])
+          .finally(() => inFlight.delete(item.cacheKey));
+        inFlight.set(item.cacheKey, itemPromise);
+      });
+
+      const outcome = await providerPromise;
+      missing.forEach((item, itemIndex) => {
+        const value = outcome.values[itemIndex];
+        translated[item.batchIndex] = value;
+        if (outcome.success) {
+          setMemoryCache(item.cacheKey, value);
+          void cache.set("translations", item.cacheKey, value, CACHE_TTL);
+        }
+      });
+    }
+
+    results.push(...translated);
   }
   return results;
 };
