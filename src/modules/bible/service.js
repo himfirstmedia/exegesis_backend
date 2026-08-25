@@ -725,11 +725,6 @@ export const getVerseByDate = async (data) => {
     return { status: 400, message: "Date is required" };
   }
 
-  // Try language-specific cache first
-  const langCacheKey = `verse-by-date:v3:${date}:${lang}`;
-  const cachedLang = await cache.get("bible", langCacheKey);
-  if (cachedLang !== null) return cachedLang;
-
   // Cache only the base verse data (non-language-specific)
   const base = await cache.getOrSet(
     "bible",
@@ -808,9 +803,6 @@ export const getVerseByDate = async (data) => {
       }
     : verseByDateResult;
 
-  // Cache the language-specific result so subsequent requests skip translation
-  await cache.set("bible", langCacheKey, finalResult, 3600);
-
   return finalResult;
 };
 
@@ -833,11 +825,6 @@ async function getVerseExplanationData(bookName, chapter, verseNumber) {
 
 export const getTodaysVerse = async (data = {}) => {
   const { lang = "en" } = data;
-
-  // Try language-specific cache first
-  const langCacheKey = `todays-verse:v3:${lang}`;
-  const cachedLang = await cache.get("bible", langCacheKey);
-  if (cachedLang !== null) return cachedLang;
 
   // Cache only the base verse data (non-language-specific)
   const base = await cache.getOrSet(
@@ -920,9 +907,6 @@ export const getTodaysVerse = async (data = {}) => {
         data: await translateDailyVerseContent(todaysVerseResult.data, lang),
       }
     : todaysVerseResult;
-
-  // Cache the language-specific result so subsequent requests skip translation
-  await cache.set("bible", langCacheKey, finalResult, 1800);
 
   return finalResult;
 };

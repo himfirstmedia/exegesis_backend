@@ -21,6 +21,9 @@ describe("text-to-text translation service", () => {
       LIBRETRANSLATE_API_KEY: "secret",
       LIBRETRANSLATE_TIMEOUT_MS: "1000",
       LIBRETRANSLATE_MAX_CONCURRENCY: "2",
+      LIBRETRANSLATE_MIN_DELAY_MS: "1",
+      LIBRETRANSLATE_RETRY_ATTEMPTS: "3",
+      LIBRETRANSLATE_RETRY_DELAY_MS: "1",
       TRANSLATION_MAX_TEXT_LENGTH: "200",
       TRANSLATION_CHUNK_SIZE: "35",
       TRANSLATION_MAX_BATCH_ITEMS: "3",
@@ -80,7 +83,7 @@ describe("text-to-text translation service", () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
       active -= 1;
       const payload = JSON.parse(options.body);
-      return jsonResponse({ translatedText: payload.q });
+      return jsonResponse({ translatedText: `translated:${payload.q}` });
     });
 
     const result = await translateBatch({
@@ -114,5 +117,26 @@ describe("text-to-text translation service", () => {
 
     await expect(translateText({ q: "Hello", target: "ar" }))
       .rejects.toMatchObject({ status: 502 });
+  });
+
+  test("retries temporary provider errors", async () => {
+    global.fetch
+      .mockResolvedValueOnce(jsonResponse({ error: "overloaded" }, 500))
+      .mockResolvedValueOnce(jsonResponse({ translatedText: "Hola" }));
+
+    await expect(translateText({ q: "Hello retry", target: "es" }))
+      .resolves.toMatchObject({ translatedText: "Hola" });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("retries unchanged output for an explicit source language", async () => {
+    global.fetch
+      .mockResolvedValueOnce(jsonResponse({ translatedText: "Hello unchanged" }))
+      .mockResolvedValueOnce(jsonResponse({ translatedText: "Hola" }));
+
+    await expect(
+      translateText({ q: "Hello unchanged", source: "en", target: "es" }),
+    ).resolves.toMatchObject({ translatedText: "Hola" });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 });

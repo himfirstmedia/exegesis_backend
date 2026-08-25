@@ -1,4 +1,4 @@
-import { translateBatch } from "../text-to-text-translation/service.js";
+import { translateMany } from "../../utils/translator.js";
 
 const VERSE_FIELDS = [
   "text",
@@ -36,7 +36,11 @@ const getMaxBatchItems = () => {
 };
 
 const addText = (entries, value, setValue) => {
-  if (typeof value === "string" && value.trim()) {
+  if (
+    typeof value === "string" &&
+    value.trim() &&
+    !/^https?:\/\/\S+$/i.test(value.trim())
+  ) {
     entries.push({ value, setValue });
   }
 };
@@ -86,13 +90,12 @@ const translateEntries = async (entries, lang) => {
 
   const flush = async () => {
     if (!group.length) return;
-    const result = await translateBatch({
-      q: group.map((entry) => entry.value),
-      source: "en",
-      target: lang,
-    });
-    result.translations.forEach((translation, index) => {
-      group[index].setValue(translation.translatedText);
+    const result = await translateMany(
+      group.map((entry) => entry.value),
+      lang,
+    );
+    result.forEach((translation, index) => {
+      group[index].setValue(translation);
     });
     group = [];
     characterCount = 0;

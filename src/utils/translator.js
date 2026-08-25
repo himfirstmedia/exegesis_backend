@@ -7,6 +7,8 @@ const CACHE_MAX = 500;
 const BATCH_SIZE = 10;
 const memoryCache = new Map();
 const inFlight = new Map();
+const warningTimes = new Map();
+const unavailableUntil = new Map();
 
 const hashText = (text) => {
   let hash = 0;
@@ -24,7 +26,7 @@ const getMaxTextLength = () => {
 
 const getCacheKey = (text, lang) => {
   const model = process.env.LIBRETRANSLATE_MODEL_VERSION || "1.9.6";
-  return `v3:libretranslate:${model}:en:${lang}:${hashText(text)}`;
+  return `v4:libretranslate:${model}:en:${lang}:${hashText(text)}`;
 };
 
 const setMemoryCache = (key, value) => {
@@ -34,7 +36,15 @@ const setMemoryCache = (key, value) => {
   memoryCache.set(key, value);
 };
 
+const warnProviderFailure = (lang, message) => {
+  const now = Date.now();
+  if (now - (warningTimes.get(lang) || 0) < 30000) return;
+  warningTimes.set(lang, now);
+  console.warn(`[translator] LibreTranslate temporarily failed for ${lang}:`, message);
+};
+
 const translateChunk = async (text, lang) => {
+  if ((unavailableUntil.get(lang) || 0) > Date.now()) return text;
   const cacheKey = getCacheKey(text, lang);
   if (memoryCache.has(cacheKey)) return memoryCache.get(cacheKey);
   if (inFlight.has(cacheKey)) return inFlight.get(cacheKey);
@@ -53,11 +63,15 @@ const translateChunk = async (text, lang) => {
         target: lang,
       });
       const translated = result.translatedText || text;
+      unavailableUntil.delete(lang);
       setMemoryCache(cacheKey, translated);
       void cache.set("translations", cacheKey, translated, CACHE_TTL);
       return translated;
     } catch (error) {
-      console.warn(`[translator] LibreTranslate failed for ${lang}:`, error.message);
+      if (process.env.NODE_ENV !== "test") {
+        unavailableUntil.set(lang, Date.now() + 15000);
+      }
+      warnProviderFailure(lang, error.message);
       return text;
     }
   })().finally(() => inFlight.delete(cacheKey));

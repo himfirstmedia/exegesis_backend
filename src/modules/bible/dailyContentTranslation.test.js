@@ -1,20 +1,20 @@
-import { translateBatch } from "../text-to-text-translation/service.js";
+import { translateMany } from "../../utils/translator.js";
 import {
   translateDailyDevotionContent,
   translateDailyExegesisContent,
   translateDailyVerseContent,
 } from "./dailyContentTranslation.js";
 
-jest.mock("../text-to-text-translation/service.js", () => ({
-  translateBatch: jest.fn(),
+jest.mock("../../utils/translator.js", () => ({
+  translateMany: jest.fn(),
 }));
 
 describe("daily content translation", () => {
   beforeEach(() => {
-    translateBatch.mockReset();
-    translateBatch.mockImplementation(async ({ q }) => ({
-      translations: q.map((text) => ({ translatedText: `AR:${text}` })),
-    }));
+    translateMany.mockReset();
+    translateMany.mockImplementation(async (texts) =>
+      texts.map((text) => `AR:${text}`),
+    );
   });
 
   test("translates daily verse prose while preserving metadata", async () => {
@@ -28,6 +28,7 @@ describe("daily content translation", () => {
       text: "For God so loved the world.",
       explanation: "God's love is demonstrated.",
       reflection: "Consider God's love.",
+      learnMore: "https://example.com/learn-more",
       crossReferences: JSON.stringify(["Romans 5:8"]),
       practicalApplications: JSON.stringify(["Love your neighbor"]),
       keyThemes: JSON.stringify(["Love"]),
@@ -42,6 +43,7 @@ describe("daily content translation", () => {
     expect(result.text).toBe("AR:For God so loved the world.");
     expect(result.explanation).toBe("AR:God's love is demonstrated.");
     expect(result.reflection).toBe("AR:Consider God's love.");
+    expect(result.learnMore).toBe("https://example.com/learn-more");
     expect(JSON.parse(result.practicalApplications)).toEqual([
       "AR:Love your neighbor",
     ]);
@@ -94,7 +96,7 @@ describe("daily content translation", () => {
     const item = { text: "Verse", keyThemes: "not-json" };
 
     await expect(translateDailyVerseContent(item, "en")).resolves.toBe(item);
-    expect(translateBatch).not.toHaveBeenCalled();
+    expect(translateMany).not.toHaveBeenCalled();
 
     const translated = await translateDailyVerseContent(item, "ar");
     expect(translated.keyThemes).toBe("not-json");
@@ -102,7 +104,7 @@ describe("daily content translation", () => {
 
   test("returns the original record when translation is unavailable", async () => {
     const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
-    translateBatch.mockRejectedValueOnce(new Error("offline"));
+    translateMany.mockRejectedValueOnce(new Error("offline"));
     const item = { title: "Original", content: "Original content" };
 
     await expect(translateDailyDevotionContent(item, "ar")).resolves.toBe(item);
