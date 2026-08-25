@@ -205,11 +205,73 @@ export const translateBatch = async ({ q, ...options }) => {
   const totalCharacters = q.reduce((total, text) => total + text.length, 0);
   assertTextLimit(totalCharacters, config.maxTextLength, "Batch text");
 
-  const translations = await mapWithConcurrency(
-    q,
-    config.maxConcurrency,
-    (text) => translateText({ q: text, ...options }),
+  // Preserve chunking for unusually large batch items. Verse-sized items use
+  // LibreTranslate's native array input and complete in one provider request.
+  if (q.some((text) => text.length > config.chunkSize)) {
+    const translations = await mapWithConcurrency(
+      q,
+      config.maxConcurrency,
+      (text) => translateText({ q: text, ...options }),
+    );
+    return {
+      translations,
+      itemCount: translations.length,
+      characterCount: totalCharacters,
+    };
+  }
+
+  const prepared = q.map((text) => {
+    const normalized = options.format === "html"
+      ? text
+      : normalizeTranslationText(text);
+    return { original: text, ...preserveOuterWhitespace(normalized) };
+  });
+  const payload = {
+    q: prepared.map(({ value }) => value),
+    source: toLibreLanguageCode(options.source || "auto"),
+    target: toLibreLanguageCode(options.target),
+    format: options.format || "text",
+    ...(options.alternatives
+      ? { alternatives: options.alternatives }
+      : {}),
+    ...(config.apiKey ? { api_key: config.apiKey } : {}),
+  };
+  const result = await withProviderLimit(() =>
+    libreRequest("/translate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   );
+  const translatedTexts = result?.translatedText;
+  if (
+    !Array.isArray(translatedTexts) ||
+    translatedTexts.length !== prepared.length ||
+    translatedTexts.some((text) => typeof text !== "string" || !text.trim())
+  ) {
+    throw new AppError(502, "Translation provider returned an incomplete batch");
+  }
+
+  const detectedLanguages = Array.isArray(result.detectedLanguage)
+    ? result.detectedLanguage
+    : null;
+  const alternativeGroups = Array.isArray(result.alternatives?.[0])
+    ? result.alternatives
+    : null;
+  const translations = prepared.map((item, index) => ({
+    translatedText: `${item.leading}${translatedTexts[index]}${item.trailing}`,
+    ...(detectedLanguages?.[index]
+      ? { detectedLanguage: detectedLanguages[index] }
+      : result.detectedLanguage
+        ? { detectedLanguage: result.detectedLanguage }
+        : {}),
+    ...(alternativeGroups?.[index]
+      ? { alternatives: alternativeGroups[index] }
+      : {}),
+    source: options.source || "auto",
+    target: options.target,
+    characterCount: item.original.length,
+    chunkCount: 1,
+  }));
   return { translations, itemCount: translations.length, characterCount: totalCharacters };
 };
 

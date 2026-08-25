@@ -74,7 +74,7 @@ describe("text-to-text translation service", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  test("limits all provider calls while translating a batch", async () => {
+  test("translates a batch in one provider request", async () => {
     let active = 0;
     let maximumActive = 0;
     global.fetch.mockImplementation(async (_url, options) => {
@@ -83,17 +83,35 @@ describe("text-to-text translation service", () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
       active -= 1;
       const payload = JSON.parse(options.body);
-      return jsonResponse({ translatedText: `translated:${payload.q}` });
+      return jsonResponse({
+        translatedText: payload.q.map((text) => `translated:${text}`),
+      });
     });
 
     const result = await translateBatch({
-      q: ["a".repeat(60), "b".repeat(60), "c".repeat(60)],
+      q: ["a".repeat(20), "b".repeat(20), "c".repeat(20)],
       source: "en",
       target: "ar",
     });
 
     expect(result.itemCount).toBe(3);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
     expect(maximumActive).toBeLessThanOrEqual(2);
+    expect(result.translations.map((item) => item.translatedText)).toEqual([
+      `translated:${"a".repeat(20)}`,
+      `translated:${"b".repeat(20)}`,
+      `translated:${"c".repeat(20)}`,
+    ]);
+  });
+
+  test("rejects incomplete provider batch output", async () => {
+    global.fetch.mockResolvedValue(
+      jsonResponse({ translatedText: ["only one"] }),
+    );
+
+    await expect(
+      translateBatch({ q: ["one", "two"], source: "en", target: "es" }),
+    ).rejects.toMatchObject({ status: 502 });
   });
 
   test("proxies language detection and language discovery", async () => {
