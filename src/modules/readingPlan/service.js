@@ -1066,12 +1066,16 @@ export const getPlanDetail = async (data, userId = null) => {
     const allReflections = days.flatMap((d) => d.reflectionQuestions);
     const allQuizQuestions = days.flatMap((d) => d.quizQuestions.map((q) => q.question));
     const allQuizOptions = days.flatMap((d) => d.quizQuestions.flatMap((q) => q.options));
+    const allQuizExplanations = days.flatMap((d) =>
+      d.quizQuestions.map((q) => q.explanation || ''),
+    );
 
-    const [tDayTitles, tReflections, tQuizQuestions, tQuizOptions] = await Promise.all([
+    const [tDayTitles, tReflections, tQuizQuestions, tQuizOptions, tQuizExplanations] = await Promise.all([
       translateMany(dayTitles, lang),
       translateMany(allReflections, lang),
       translateMany(allQuizQuestions, lang),
       translateMany(allQuizOptions, lang),
+      translateMany(allQuizExplanations, lang),
     ]);
 
     let reflIdx = 0;
@@ -1085,10 +1089,16 @@ export const getPlanDetail = async (data, userId = null) => {
 
       const translatedQuizQuestions = d.quizQuestions.map((q) => {
         const tQuestion = tQuizQuestions[quizQIdx++] || q.question;
+        const tExplanation = tQuizExplanations[quizQIdx - 1] || q.explanation;
         const oCount = q.options.length;
         const tOptions = tQuizOptions.slice(quizOptIdx, quizOptIdx + oCount);
         quizOptIdx += oCount;
-        return { ...q, question: tQuestion, options: tOptions.length ? tOptions : q.options };
+        return {
+          ...q,
+          question: tQuestion,
+          options: tOptions.length ? tOptions : q.options,
+          explanation: tExplanation,
+        };
       });
 
       return {

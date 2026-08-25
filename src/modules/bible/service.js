@@ -4,6 +4,7 @@ import { canonicalBookIndex } from "../../constants/bible-books.js";
 import { getVerse } from "../../modules/bible-translations/service.js";
 import { cache } from "../../services/cacheService.js";
 import {
+  normalizeLanguage,
   translateLongText,
   translateMany,
 } from "../../utils/translator.js";
@@ -419,17 +420,13 @@ export const deleteFavorite = async (data, userId) => {
 
 export const getVerseExplanation = async (data) => {
   const { bookName, chapter, verseNumber, lang = "en" } = data;
+  const target = normalizeLanguage(lang);
 
   if (!bookName || !chapter || !verseNumber)
     return {
       status: 400,
       message: "bookName, chapter, and verseNumber are required",
     };
-
-  // Try language-specific cache first (avoids re-translating on every request)
-  const langCacheKey = `explanation:${bookName}:${chapter}:${verseNumber}:${lang}`;
-  const cachedLang = await cache.get("bible", langCacheKey);
-  if (cachedLang !== null) return cachedLang;
 
   // Cache the raw record (non-language-specific)
   const record = await cache.getOrSet(
@@ -455,12 +452,12 @@ export const getVerseExplanation = async (data) => {
   let explanation = serialized.explanation ?? null;
   let learnMore = serialized.learnMore ?? null;
 
-  if (lang !== "en") {
+  if (target.toLowerCase() !== "en") {
     const [tExplanation, tLearnMore] = await Promise.all([
       explanation
-        ? translateLongText(explanation, lang)
+        ? translateLongText(explanation, target)
         : Promise.resolve(null),
-      learnMore ? translateLongText(learnMore, lang) : Promise.resolve(null),
+      learnMore ? translateLongText(learnMore, target) : Promise.resolve(null),
     ]);
     explanation = tExplanation ?? explanation;
     learnMore = tLearnMore ?? learnMore;
@@ -471,12 +468,7 @@ export const getVerseExplanation = async (data) => {
     message: "Verse explanation fetched successfully",
     data: { ...serialized, explanation, learnMore },
   };
-  const finalResult = verseExplanationResult;
-
-  // Cache the language-specific result so subsequent requests skip translation
-  await cache.set("bible", langCacheKey, finalResult, 86400);
-
-  return finalResult;
+  return verseExplanationResult;
 };
 
 export const addVerseExplanation = async (data, userId) => {
@@ -553,6 +545,10 @@ export const addVerseExplanation = async (data, userId) => {
   const msg = id
     ? "Verse explanation updated successfully"
     : "Verse explanation added successfully";
+  await cache.del(
+    "bible",
+    `explanation:${bookName}:${chapter}:${verseNumber}`,
+  );
   return { status: 200, message: msg, data: serializeBigInt(verseExplanation) };
 };
 
@@ -872,6 +868,7 @@ export const getTodaysVerse = async (data = {}) => {
           console.warn("Could not fetch verse explanation:", e.message);
         }
       }
+
 
       return {
         dailyVerse: serializeBigInt(dailyVerse),
@@ -1406,6 +1403,7 @@ function formatActivityTime(time, lang = "en") {
 }
 
 export const getRecentActivity = async (userId, limit = 10, lang = "en") => {
+  lang = normalizeLanguage(lang);
   const limitNum = Math.min(parseInt(limit) || 10, 20);
 
   const [
@@ -1537,12 +1535,22 @@ export const deleteVerseExplanation = async (data, userId) => {
   const { id } = data;
   if (!id) return { status: 400, message: "Explanation ID is required" };
 
+  const existing = await prisma.verseExplanation.findUnique({
+    where: { id: BigInt(id) },
+  });
   await prisma.verseExplanation.delete({ where: { id: BigInt(id) } });
+  if (existing) {
+    await cache.del(
+      "bible",
+      `explanation:${existing.bookName}:${existing.chapter}:${existing.verseNumber}`,
+    );
+  }
   return { status: 200, message: "Verse explanation deleted successfully" };
 };
 
 export const getChapterJournalPrompts = async (data) => {
   const { bookName, chapter, lang } = data || {};
+  const target = normalizeLanguage(lang);
 
   if (!bookName || !chapter) {
     return {
@@ -1598,12 +1606,12 @@ export const getChapterJournalPrompts = async (data) => {
   }
 
   const serializedPrompts = serializeBigInt(prompts);
-  if (lang && lang.toLowerCase() !== "en") {
+  if (target.toLowerCase() !== "en") {
     const values = serializedPrompts.flatMap((prompt) => [
       prompt.prompt || "",
       prompt.description || "",
     ]);
-    const translated = await translateMany(values, lang);
+    const translated = await translateMany(values, target);
     serializedPrompts.forEach((prompt, index) => {
       prompt.prompt = translated[index * 2] || prompt.prompt;
       prompt.description = translated[index * 2 + 1] || prompt.description;

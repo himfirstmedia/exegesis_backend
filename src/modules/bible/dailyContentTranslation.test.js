@@ -6,6 +6,7 @@ import {
 } from "./dailyContentTranslation.js";
 
 jest.mock("../../utils/translator.js", () => ({
+  normalizeLanguage: jest.fn((lang) => typeof lang === "string" ? lang : "en"),
   translateMany: jest.fn(),
 }));
 

@@ -6,7 +6,7 @@
  * flow sent a second response — ERR_HTTP_HEADERS_SENT. The reconciliation
  * must only mutate state; the outer flow sends exactly one response.
  */
-import { getSubscriptionStatus } from "./controller.js";
+import { getSubscriptionStatus, listTiers } from "./controller.js";
 
 // Mock the Stripe client and Prisma BEFORE the controller module loads
 // (jest hoists these above the static import).
@@ -27,8 +27,15 @@ jest.mock("../../config/db.js", () => ({
     subscriptionTier: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
   },
+}));
+
+jest.mock("../../utils/translator.js", () => ({
+  normalizeLanguage: jest.fn((lang, fallback = "en") =>
+    typeof lang === "string" && lang.trim() ? lang.trim() : fallback),
+  translateMany: jest.fn(),
 }));
 
 const makeRes = () => {
@@ -158,5 +165,96 @@ describe("getSubscriptionStatus — single-response guarantee", () => {
     expect(stripeInstance.customers.list).not.toHaveBeenCalled();
     expect(res.body.returnCode).toBe(200);
     expect(res.body.returnData.subscriptionTier).toBe("covenant_sower");
+  });
+});
+
+describe("listTiers field-safe translation", () => {
+  test("translates only display fields and preserves tier metadata", async () => {
+    const prisma = getPrisma();
+    const translator = require("../../utils/translator.js");
+    const tier = {
+      id: "legacy_sower",
+      name: "Legacy Sower",
+      description: "For committed readers",
+      price: 33.33,
+      currency: "usd",
+      interval: "year",
+      stripeProductId: "prod_legacy",
+      stripePriceId: "price_legacy",
+      features: ["Advanced study", "Legacy badge"],
+      isActive: true,
+      sortOrder: 1,
+      maxSlots: 1000,
+      isFeatured: true,
+    };
+    prisma.subscriptionTier.findMany.mockResolvedValue([tier]);
+    translator.translateMany.mockResolvedValue([
+      "Sembrador legado",
+      "Para lectores comprometidos",
+      "Estudio avanzado",
+      "Insignia legado",
+    ]);
+
+    const res = makeRes();
+    await listTiers({ body: { lang: "es" } }, res);
+
+    expect(translator.normalizeLanguage).toHaveBeenCalledWith("es");
+    expect(translator.translateMany).toHaveBeenCalledWith(
+      ["Legacy Sower", "For committed readers", "Advanced study", "Legacy badge"],
+      "es",
+    );
+    expect(res.body.returnData.tiers[0]).toEqual({
+      ...tier,
+      name: "Sembrador legado",
+      description: "Para lectores comprometidos",
+      features: ["Estudio avanzado", "Insignia legado"],
+    });
+  });
+
+  test("defaults language to English and leaves fallback fields unchanged", async () => {
+    const prisma = getPrisma();
+    const translator = require("../../utils/translator.js");
+    prisma.subscriptionTier.findMany.mockResolvedValue([]);
+    translator.translateMany.mockClear();
+
+    const res = makeRes();
+    await listTiers({ body: {} }, res);
+
+    expect(translator.normalizeLanguage).toHaveBeenCalledWith("en");
+    expect(translator.translateMany).not.toHaveBeenCalled();
+    expect(res.body.returnData.tiers[0]).toEqual(expect.objectContaining({
+      id: "free",
+      name: "Free",
+      price: 0,
+      currency: "usd",
+      interval: "none",
+      features: ["Bible reading", "Daily verse", "Basic tools"],
+      isActive: true,
+      sortOrder: 0,
+    }));
+  });
+
+  test("returns original tier fields when translation fails", async () => {
+    const prisma = getPrisma();
+    const translator = require("../../utils/translator.js");
+    const tier = {
+      id: "covenant_sower",
+      name: "Covenant Sower",
+      description: "Full access",
+      price: 77.77,
+      currency: "usd",
+      interval: "year",
+      features: ["Priority support"],
+      isActive: true,
+      sortOrder: 2,
+      maxSlots: null,
+    };
+    prisma.subscriptionTier.findMany.mockResolvedValue([tier]);
+    translator.translateMany.mockRejectedValue(new Error("provider unavailable"));
+
+    const res = makeRes();
+    await listTiers({ body: { lang: "fr" } }, res);
+
+    expect(res.body.returnData.tiers).toEqual([tier]);
   });
 });

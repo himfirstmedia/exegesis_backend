@@ -13,7 +13,7 @@ export const startSession = async (req, res) => {
 
 export const getCurrentSession = async (req, res) => {
   try {
-    const result = await exegesisService.getCurrentSession(req.user.id);
+    const result = await exegesisService.getCurrentSession(req.user.id, req.body?.lang);
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error('[ExegesisController] getCurrentSession error:', error);
@@ -89,7 +89,7 @@ export const saveProgress = async (req, res) => {
 export const getSession = async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await exegesisService.getSession(id, req.user.id);
+    const result = await exegesisService.getSession(id, req.user.id, req.body?.lang);
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error('[ExegesisController] getSession error:', error);

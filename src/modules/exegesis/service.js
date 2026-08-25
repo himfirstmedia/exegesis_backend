@@ -1,6 +1,7 @@
 import { prisma } from '../../config/db.js';
 import { serializeBigInt } from '../../utils/helpers.js';
 import PDFDocument from 'pdfkit';
+import { translateSessionPrompts } from './translation.js';
 
 const LOOK_PROMPTS = [
   'What specific words or phrases stand out to you in this passage?',
@@ -28,7 +29,7 @@ export const startSession = async (userId, body) => {
     return {
       status: 200,
       message: 'Continuing existing session',
-      data: serializeBigInt(existing),
+      data: await translateSessionPrompts(serializeBigInt(existing), body?.lang),
     };
   }
 
@@ -52,11 +53,11 @@ export const startSession = async (userId, body) => {
   return {
     status: 200,
     message: 'Exegesis session started',
-    data: serializeBigInt(session),
+    data: await translateSessionPrompts(serializeBigInt(session), body?.lang),
   };
 };
 
-export const getCurrentSession = async (userId) => {
+export const getCurrentSession = async (userId, lang = 'en') => {
   const session = await prisma.exegesisSession.findFirst({
     where: { userId, completed: false },
     orderBy: { createdOn: 'desc' },
@@ -69,7 +70,7 @@ export const getCurrentSession = async (userId) => {
   return {
     status: 200,
     message: 'Active session found',
-    data: serializeBigInt(session),
+    data: await translateSessionPrompts(serializeBigInt(session), lang),
   };
 };
 
@@ -282,7 +283,7 @@ export const saveProgress = async (sessionId, userId, body) => {
   };
 };
 
-export const getSession = async (sessionId, userId) => {
+export const getSession = async (sessionId, userId, lang = 'en') => {
   const session = await prisma.exegesisSession.findFirst({
     where: { id: sessionId, userId },
   });
@@ -294,7 +295,7 @@ export const getSession = async (sessionId, userId) => {
   return {
     status: 200,
     message: 'Session found',
-    data: serializeBigInt(session),
+    data: await translateSessionPrompts(serializeBigInt(session), lang),
   };
 };
 

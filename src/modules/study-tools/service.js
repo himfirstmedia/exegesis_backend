@@ -1,10 +1,11 @@
 import { prisma } from '../../config/db.js';
 import { serializeBigInt } from '../../utils/helpers.js';
+import { translateStudyTools } from './translation.js';
 
 const TOOL_TYPES = ['COMMAND', 'PROMISE', 'WARNING', 'REPEATED_WORD', 'TRANSITION', 'CONTRAST'];
 
 export const getChapterTools = async (body) => {
-  const { bookName, chapter } = body || {};
+  const { bookName, chapter, lang = 'en' } = body || {};
 
   if (!bookName || !chapter) {
     return { status: 400, message: 'bookName and chapter are required' };
@@ -23,6 +24,7 @@ export const getChapterTools = async (body) => {
               originalWord: true,
               transliteration: true,
               shortDefinition: true,
+              fullDefinition: true,
               adminExplanation: true,
               language: true,
             },
@@ -32,11 +34,13 @@ export const getChapterTools = async (body) => {
     },
   });
 
+  const serialized = tools.map((tool) => serializeBigInt(tool));
+  const translated = await translateStudyTools(serialized, lang);
   const grouped = {};
-  for (const tool of tools) {
+  for (const tool of translated) {
     const type = tool.toolType;
     if (!grouped[type]) grouped[type] = [];
-    grouped[type].push(serializeBigInt(tool));
+    grouped[type].push(tool);
   }
 
   return {

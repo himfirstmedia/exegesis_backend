@@ -2,6 +2,7 @@ import {
   addVerseExplanation,
   deleteVerseExplanation,
   getAllVersesExplanation,
+  getVerseExplanation,
 } from '../service.js';
 
 /**
@@ -139,6 +140,28 @@ describe('addVerseExplanation', () => {
     expect(updated.data.explanation).toBe('Updated by unit test');
     expect(updated.data.learnMore).toBe('New learn more');
     expect(updated.data.bibleVersion).toBe('KJV');
+    await deleteRow(created.data.id);
+  });
+
+  it('invalidates the cached explanation after an update', async () => {
+    const created = await createTestRow();
+    await getVerseExplanation({ ...TEST_REF, lang: 'en' });
+
+    await addVerseExplanation(
+      {
+        id: Number(created.data.id),
+        ...TEST_REF,
+        explanation: 'Fresh explanation after cache invalidation',
+      },
+      'test-user',
+    );
+
+    const fetched = await getVerseExplanation({ ...TEST_REF, lang: 'en' });
+    expect(fetched.status).toBe(200);
+    if (!('data' in fetched)) throw new Error('Expected explanation data');
+    expect(fetched.data.explanation).toBe(
+      'Fresh explanation after cache invalidation',
+    );
     await deleteRow(created.data.id);
   });
 

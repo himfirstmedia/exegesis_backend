@@ -5,9 +5,14 @@ import { requireTier } from '../../middlewares/gating.middleware.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 import {
   searchStrongsSchema,
+  getStrongsEntrySchema,
+  getRelatedWordsSchema,
+  getVersesByStrongsSchema,
   getBookWordsSchema,
   getVerseWordsSchema,
   getVerseUniqueWordsSchema,
+  searchTopicsSchema,
+  getTopicVersesSchema,
   adminUpdateEntrySchema,
   adminUpsertVerseWordStudySchema,
   adminDeleteVerseWordStudySchema,
@@ -19,12 +24,12 @@ const router = express.Router();
 const authAndTier = [authenticate, requireTier('legacy_sower')];
 
 router.get('/search', ...authAndTier, validate(searchStrongsSchema, 'query'), strongsController.searchStrongs);
-router.get('/search-related/:strongsId', ...authAndTier, strongsController.getRelatedWords);
-router.get('/topics/search', ...authAndTier, strongsController.searchTopics);
-router.get('/topics/:topicName/verses', ...authAndTier, strongsController.getTopicVerses);
+router.get('/search-related/:strongsId', ...authAndTier, validate(getRelatedWordsSchema, 'query'), strongsController.getRelatedWords);
+router.get('/topics/search', ...authAndTier, validate(searchTopicsSchema, 'query'), strongsController.searchTopics);
+router.get('/topics/:topicName/verses', ...authAndTier, validate(getTopicVersesSchema, 'query'), strongsController.getTopicVerses);
 router.get('/book-words/:bookName', validate(getBookWordsSchema, 'query'), strongsController.getBookWords);
-router.get('/:strongsId', strongsController.getStrongsEntry);
-router.get('/:strongsId/verses', strongsController.getVersesByStrongs);
+router.get('/:strongsId', validate(getStrongsEntrySchema, 'query'), strongsController.getStrongsEntry);
+router.get('/:strongsId/verses', validate(getVersesByStrongsSchema, 'query'), strongsController.getVersesByStrongs);
 router.post('/verse-words', validate(getVerseWordsSchema, 'body'), strongsController.getVerseWords);
 router.post('/verse-unique-words', authenticate, validate(getVerseUniqueWordsSchema, 'body'), strongsController.getVerseUniqueWords);
 

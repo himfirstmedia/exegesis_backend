@@ -5,29 +5,29 @@ import { NotFoundError, ValidationError } from '../../utils/AppError.js';
 
 export const getStrongsEntry = asyncHandler(async (req, res) => {
   const { strongsId } = req.params;
-  const result = await strongsService.getStrongsEntry(strongsId);
+  const result = await strongsService.getStrongsEntry(strongsId, req.query.lang);
   res.json(formatApiResponse(result));
 });
 
 export const searchStrongs = asyncHandler(async (req, res) => {
-  const { q, limit, offset } = req.query;
+  const { q, limit, offset, lang } = req.query;
   if (!q || q.trim().length < 1) {
     throw new ValidationError('Search query is required');
   }
-  const result = await strongsService.searchStrongs(q, parseInt(limit) || 50, parseInt(offset) || 0);
+  const result = await strongsService.searchStrongs(q, parseInt(limit) || 50, parseInt(offset) || 0, lang);
   res.json(formatApiResponse(result));
 });
 
 export const getRelatedWords = asyncHandler(async (req, res) => {
   const { strongsId } = req.params;
-  const result = await strongsService.getRelatedWords(strongsId);
+  const result = await strongsService.getRelatedWords(strongsId, req.query.lang);
   res.json(formatApiResponse(result));
 });
 
 export const getVersesByStrongs = asyncHandler(async (req, res) => {
   const { strongsId } = req.params;
-  const { translation, limit } = req.query;
-  const result = await strongsService.getVersesByStrongs(strongsId, translation || 'Berean', limit ? parseInt(limit) : 50);
+  const { translation, limit, lang } = req.query;
+  const result = await strongsService.getVersesByStrongs(strongsId, translation || 'Berean', limit ? parseInt(limit) : 50, lang);
   res.json(formatApiResponse(result));
 });
 
@@ -36,39 +36,39 @@ export const getBookWords = asyncHandler(async (req, res) => {
   if (!bookName) {
     throw new ValidationError('bookName is required');
   }
-  const { limit, offset } = req.query;
-  const result = await strongsService.getBookWords(bookName, parseInt(limit) || 200, parseInt(offset) || 0);
+  const { limit, offset, lang } = req.query;
+  const result = await strongsService.getBookWords(bookName, parseInt(limit) || 200, parseInt(offset) || 0, lang);
   res.json(formatApiResponse(result));
 });
 
 export const getVerseUniqueWords = asyncHandler(async (req, res) => {
-  const { bookName, chapter, verse, translation, page, pageSize } = req.body;
+  const { bookName, chapter, verse, translation, page, pageSize, lang } = req.body;
   if (!bookName) {
     throw new ValidationError('bookName is required');
   }
-  const result = await strongsService.getVerseUniqueWords(bookName, chapter || null, verse || null, translation || 'BSB', page || 0, pageSize || 50);
+  const result = await strongsService.getVerseUniqueWords(bookName, chapter || null, verse || null, translation || 'BSB', page || 0, pageSize || 50, lang);
   res.json(formatApiResponse(result));
 });
 
 export const getVerseWords = asyncHandler(async (req, res) => {
-  const { bookName, chapter, verseNumber, translation } = req.body;
-  const result = await strongsService.getVerseWords(bookName, chapter, verseNumber, translation || 'Berean');
+  const { bookName, chapter, verseNumber, translation, lang } = req.body;
+  const result = await strongsService.getVerseWords(bookName, chapter, verseNumber, translation || 'Berean', lang);
   res.json(formatApiResponse(result));
 });
 
 export const searchTopics = asyncHandler(async (req, res) => {
-  const { q, limit } = req.query;
+  const { q, limit, lang } = req.query;
   if (!q || q.trim().length < 1) {
     throw new ValidationError('Search query is required');
   }
-  const result = await strongsService.searchTopics(q, parseInt(limit) || 50);
+  const result = await strongsService.searchTopics(q, parseInt(limit) || 50, lang);
   res.json(formatApiResponse(result));
 });
 
 export const getTopicVerses = asyncHandler(async (req, res) => {
   const { topicName } = req.params;
-  const { limit } = req.query;
-  const result = await strongsService.getTopicVerses(topicName, parseInt(limit) || 50);
+  const { limit, lang } = req.query;
+  const result = await strongsService.getTopicVerses(topicName, parseInt(limit) || 50, lang);
   res.json(formatApiResponse(result));
 });
 

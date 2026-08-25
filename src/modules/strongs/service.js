@@ -1,14 +1,20 @@
 import { prisma } from '../../config/db.js';
 import { cache } from '../../services/cacheService.js';
+import { translateBibleTopics, translateStrongsData } from './translation.js';
 
 const CACHE_TTL = 86400;
 
-export const getStrongsEntry = async (strongsId) => {
+const translateResponse = async (response, lang, translate = translateStrongsData) => {
+  if (response.data === undefined) return response;
+  return { ...response, data: await translate(response.data, lang) };
+};
+
+export const getStrongsEntry = async (strongsId, lang) => {
   const cacheKey = `${strongsId}`;
 
   const cached = await cache.get('strongs', cacheKey);
   if (cached) {
-    return { status: 200, message: 'Strongs entry fetched from cache', data: cached };
+    return translateResponse({ status: 200, message: 'Strongs entry fetched from cache', data: cached }, lang);
   }
 
   const entry = await prisma.strongsDictionary.findUnique({
@@ -21,10 +27,10 @@ export const getStrongsEntry = async (strongsId) => {
 
   await cache.set('strongs', cacheKey, entry, CACHE_TTL);
 
-  return { status: 200, message: 'Strongs entry fetched successfully', data: entry };
+  return translateResponse({ status: 200, message: 'Strongs entry fetched successfully', data: entry }, lang);
 };
 
-export const searchStrongs = async (query, limit = 50, offset = 0) => {
+export const searchStrongs = async (query, limit = 50, offset = 0, lang) => {
   const trimmedQuery = query.trim();
   const strongsQuery = trimmedQuery.toUpperCase();
   const where = {
@@ -73,14 +79,14 @@ export const searchStrongs = async (query, limit = 50, offset = 0) => {
     prisma.strongsDictionary.count({ where }),
   ]);
 
-  return {
+  return translateResponse({
     status: 200,
     message: 'Strongs search results',
     data: { data, total },
-  };
+  }, lang);
 };
 
-export const getRelatedWords = async (strongsId) => {
+export const getRelatedWords = async (strongsId, lang) => {
   // Find lemmas for this Strong's number via VerseWord table
   const verseWordLemmas = await prisma.verseWord.findMany({
     where: { strongsId },
@@ -90,7 +96,7 @@ export const getRelatedWords = async (strongsId) => {
 
   const lemmas = verseWordLemmas.map(r => r.lemma).filter(Boolean);
   if (lemmas.length === 0) {
-    return { status: 200, message: 'No related words found', data: [] };
+    return translateResponse({ status: 200, message: 'No related words found', data: [] }, lang);
   }
 
   // Find other Strong's numbers sharing those lemmas
@@ -106,7 +112,7 @@ export const getRelatedWords = async (strongsId) => {
 
   const relatedIds = relatedWords.map(r => r.strongsId).filter(Boolean);
   if (relatedIds.length === 0) {
-    return { status: 200, message: 'No related words found', data: [] };
+    return translateResponse({ status: 200, message: 'No related words found', data: [] }, lang);
   }
 
   const related = await prisma.strongsDictionary.findMany({
@@ -122,15 +128,15 @@ export const getRelatedWords = async (strongsId) => {
     orderBy: { strongsId: 'asc' },
   });
 
-  return { status: 200, message: 'Related words found', data: related };
+  return translateResponse({ status: 200, message: 'Related words found', data: related }, lang);
 };
 
-export const getVersesByStrongs = async (strongsId, translation = 'Berean', limit = 50) => {
+export const getVersesByStrongs = async (strongsId, translation = 'Berean', limit = 50, lang) => {
   const cacheKey = `${strongsId}:${translation}:${limit}`;
 
   const cached = await cache.get('strongs-verses', cacheKey);
   if (cached) {
-    return { status: 200, message: 'Verses fetched from cache', data: cached };
+    return translateResponse({ status: 200, message: 'Verses fetched from cache', data: cached }, lang);
   }
 
   const words = await prisma.verseWord.findMany({
@@ -165,10 +171,10 @@ export const getVersesByStrongs = async (strongsId, translation = 'Berean', limi
 
   await cache.set('strongs-verses', cacheKey, result, CACHE_TTL);
 
-  return { status: 200, message: 'Verses fetched successfully', data: result };
+  return translateResponse({ status: 200, message: 'Verses fetched successfully', data: result }, lang);
 };
 
-export const getBookWords = async (bookName, limit = 200, offset = 0) => {
+export const getBookWords = async (bookName, limit = 200, offset = 0, lang) => {
   // Find all unique Strong's IDs used in this book via verse_words
   const verseWordIds = await prisma.$queryRaw`
     SELECT DISTINCT vw.strongs_id
@@ -182,7 +188,7 @@ export const getBookWords = async (bookName, limit = 200, offset = 0) => {
 
   const strongsIds = verseWordIds.map(r => r.strongs_id).filter(Boolean);
   if (strongsIds.length === 0) {
-    return { status: 200, message: 'No Strongs words found for this book', data: [] };
+    return translateResponse({ status: 200, message: 'No Strongs words found for this book', data: [] }, lang);
   }
 
   // Get total count
@@ -222,19 +228,19 @@ export const getBookWords = async (bookName, limit = 200, offset = 0) => {
     verseCount: Array.isArray(entry.verseReferences) ? entry.verseReferences.length : 0,
   }));
 
-  return {
+  return translateResponse({
     status: 200,
     message: 'Book words fetched successfully',
     data: { data: enriched, total, hasNext: offset + limit < total },
-  };
+  }, lang);
 };
 
-export const getVerseWords = async (bookName, chapter, verseNumber, translation = 'Berean') => {
+export const getVerseWords = async (bookName, chapter, verseNumber, translation = 'Berean', lang) => {
   const cacheKey = `${translation}:${bookName}:${chapter}:${verseNumber ?? 'all'}`;
 
   const cached = await cache.get('verse-words', cacheKey);
   if (cached) {
-    return { status: 200, message: 'Verse words fetched from cache', data: cached };
+    return translateResponse({ status: 200, message: 'Verse words fetched from cache', data: cached }, lang);
   }
 
   const where = {
@@ -297,10 +303,10 @@ export const getVerseWords = async (bookName, chapter, verseNumber, translation 
 
   await cache.set('verse-words', cacheKey, result, CACHE_TTL);
 
-  return { status: 200, message: 'Verse words fetched successfully', data: result };
+  return translateResponse({ status: 200, message: 'Verse words fetched successfully', data: result }, lang);
 };
 
-export const searchTopics = async (query, limit = 50) => {
+export const searchTopics = async (query, limit = 50, lang) => {
   const where = {
     OR: [
       { topicName: { contains: query, mode: 'insensitive' } },
@@ -317,10 +323,14 @@ export const searchTopics = async (query, limit = 50) => {
     prisma.bibleTopic.count({ where }),
   ]);
 
-  return { status: 200, message: 'Topic search results', data: { data, total } };
+  return translateResponse(
+    { status: 200, message: 'Topic search results', data: { data, total } },
+    lang,
+    translateBibleTopics,
+  );
 };
 
-export const getTopicVerses = async (topicName, limit = 50) => {
+export const getTopicVerses = async (topicName, limit = 50, lang) => {
   const topic = await prisma.bibleTopic.findUnique({
     where: { topicName },
   });
@@ -331,7 +341,7 @@ export const getTopicVerses = async (topicName, limit = 50) => {
 
   const refs = topic.verseRefs || [];
   const results = refs.slice(0, limit);
-  return { status: 200, message: 'Topic verses found', data: results };
+  return translateResponse({ status: 200, message: 'Topic verses found', data: results }, lang);
 };
 
 export const adminUpdateEntry = async (strongsId, data) => {
@@ -368,12 +378,12 @@ export const adminUpdateEntry = async (strongsId, data) => {
   return { status: 200, message: 'Strongs entry updated', data: updated };
 };
 
-export const getVerseUniqueWords = async (bookName, chapter, verse, translation = 'BSB', page = 0, pageSize = 50) => {
+export const getVerseUniqueWords = async (bookName, chapter, verse, translation = 'BSB', page = 0, pageSize = 50, lang) => {
   const cacheKey = `unique:${translation}:${bookName}:${chapter}:${verse ?? 'all'}:p${page}:s${pageSize}`;
 
   const cached = await cache.get('verse-words', cacheKey);
   if (cached) {
-    return { status: 200, message: 'Verse unique words fetched from cache', data: cached };
+    return translateResponse({ status: 200, message: 'Verse unique words fetched from cache', data: cached }, lang);
   }
 
   // Get all verse_word records — optionally filtered by chapter and/or verse
@@ -477,11 +487,11 @@ export const getVerseUniqueWords = async (bookName, chapter, verse, translation 
 
   await cache.set('verse-words', cacheKey, result, 3600);
 
-  return {
+  return translateResponse({
     status: 200,
     message: 'Verse unique words fetched successfully',
     data: result,
-  };
+  }, lang);
 };
 
 // ── Sync verse references on StrongsDictionary from verse_word_studies ──

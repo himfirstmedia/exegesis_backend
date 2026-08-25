@@ -2,13 +2,14 @@ import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { cache } from "../../services/cacheService.js";
 import { parseLocalDate } from "../../utils/dates.js";
+import { normalizeLanguage, translateMany } from "../../utils/translator.js";
 import PDFDocument from "pdfkit";
 import path from "path";
 import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const LOGO_PATH = path.join(__dirname, "../../../src/assets/logo.png");
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
+const LOGO_PATH = path.join(moduleDirname, "../../../src/assets/logo.png");
 
 
 export const createJournalEntry = async (data, userId) => {
@@ -415,6 +416,7 @@ export const createJournalPrompt = async (data, userId) => {
 
 export const getJournalPrompts = async (data) => {
   const { category, isActive, bookName, chapter, ids } = data || {};
+  const lang = normalizeLanguage(data?.lang ?? "en");
 
   const whereClause = {};
   if (category) whereClause.category = category;
@@ -441,10 +443,30 @@ export const getJournalPrompts = async (data) => {
     300,
   );
 
+  const localizedPrompts = prompts.map((prompt) => ({ ...prompt }));
+  if (lang.toLowerCase() !== "en") {
+    const values = [];
+    const fields = [];
+    localizedPrompts.forEach((prompt) => {
+      ["prompt", "description"].forEach((field) => {
+        if (typeof prompt[field] === "string") {
+          values.push(prompt[field]);
+          fields.push([prompt, field]);
+        }
+      });
+    });
+    if (values.length > 0) {
+      const translated = await translateMany(values, lang);
+      fields.forEach(([prompt, field], index) => {
+        prompt[field] = translated[index];
+      });
+    }
+  }
+
   return {
     returnCode: 200,
     returnMessage: "Journal prompts fetched successfully",
-    returnData: serializeBigInt(prompts),
+    returnData: serializeBigInt(localizedPrompts),
   };
 };
 
@@ -533,6 +555,7 @@ export const createJournalTemplate = async (data, userId) => {
 
 export const getJournalTemplates = async (data) => {
   const { category, isActive } = data || {};
+  const lang = normalizeLanguage(data?.lang ?? "en");
 
   const whereClause = {};
   if (category) whereClause.category = category;
@@ -558,6 +581,33 @@ export const getJournalTemplates = async (data) => {
     ...t,
     prompts: t.promptsJson ? JSON.parse(t.promptsJson) : [],
   }));
+
+  if (lang.toLowerCase() !== "en") {
+    const values = [];
+    const fields = [];
+    parsed.forEach((template) => {
+      ["name", "description"].forEach((field) => {
+        if (typeof template[field] === "string") {
+          values.push(template[field]);
+          fields.push([template, field]);
+        }
+      });
+      if (Array.isArray(template.prompts)) {
+        template.prompts.forEach((prompt, index) => {
+          if (typeof prompt === "string") {
+            values.push(prompt);
+            fields.push([template.prompts, index]);
+          }
+        });
+      }
+    });
+    if (values.length > 0) {
+      const translated = await translateMany(values, lang);
+      fields.forEach(([record, field], index) => {
+        record[field] = translated[index];
+      });
+    }
+  }
 
   return {
     returnCode: 200,

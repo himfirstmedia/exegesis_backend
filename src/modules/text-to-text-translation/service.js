@@ -148,11 +148,7 @@ const translateChunk = async (chunk, options) => {
       }),
     );
     const translated = result?.translatedText;
-    const unchanged =
-      options.source !== "auto" &&
-      toLibreLanguageCode(options.source) !== toLibreLanguageCode(options.target) &&
-      translated?.trim() === value.trim();
-    if (typeof translated === "string" && translated.trim() && !unchanged) break;
+    if (typeof translated === "string" && translated.trim()) break;
     result = null;
     if (attempt < config.retryAttempts) {
       await new Promise((resolve) =>

@@ -129,14 +129,14 @@ describe("text-to-text translation service", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
-  test("retries unchanged output for an explicit source language", async () => {
-    global.fetch
-      .mockResolvedValueOnce(jsonResponse({ translatedText: "Hello unchanged" }))
-      .mockResolvedValueOnce(jsonResponse({ translatedText: "Hola" }));
+  test("accepts unchanged proper names without treating them as failures", async () => {
+    global.fetch.mockResolvedValueOnce(
+      jsonResponse({ translatedText: "Legacy Sower" }),
+    );
 
     await expect(
-      translateText({ q: "Hello unchanged", source: "en", target: "es" }),
-    ).resolves.toMatchObject({ translatedText: "Hola" });
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+      translateText({ q: "Legacy Sower", source: "en", target: "fr" }),
+    ).resolves.toMatchObject({ translatedText: "Legacy Sower" });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });

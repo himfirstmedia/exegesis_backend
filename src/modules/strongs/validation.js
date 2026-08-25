@@ -1,14 +1,39 @@
 import { z } from 'zod/v4';
 
+const lang = z.string().optional();
+
 export const searchStrongsSchema = z.object({
   q: z.string().min(1, 'Search query is required'),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+  lang,
 });
 
 export const getBookWordsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+  lang,
+});
+
+export const getStrongsEntrySchema = z.object({ lang });
+
+export const getRelatedWordsSchema = z.object({ lang });
+
+export const getVersesByStrongsSchema = z.object({
+  translation: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  lang,
+});
+
+export const searchTopicsSchema = z.object({
+  q: z.string().min(1, 'Search query is required'),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  lang,
+});
+
+export const getTopicVersesSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  lang,
 });
 
 export const getVerseWordsSchema = z.object({
@@ -16,6 +41,7 @@ export const getVerseWordsSchema = z.object({
   chapter: z.coerce.number().int().min(1),
   verseNumber: z.coerce.number().int().min(1).optional(),
   translation: z.string().optional(),
+  lang,
 });
 
 export const getVerseUniqueWordsSchema = z.object({
@@ -25,6 +51,7 @@ export const getVerseUniqueWordsSchema = z.object({
   translation: z.string().optional(),
   page: z.coerce.number().int().min(0).optional(),
   pageSize: z.coerce.number().int().min(1).max(200).optional(),
+  lang,
 });
 
 export const adminUpdateEntrySchema = z.object({

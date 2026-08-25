@@ -1,6 +1,7 @@
 import { cache } from "../services/cacheService.js";
 import { translateText as translateWithLibre } from "../modules/text-to-text-translation/service.js";
 import {
+  normalizeLanguage,
   translateLongText,
   translateMany,
   translateResult,
@@ -36,6 +37,15 @@ describe("LibreTranslate compatibility adapter", () => {
       source: "en",
       target: "ar",
     });
+  });
+
+  test("normalizes invalid language input to English", async () => {
+    expect(normalizeLanguage(123)).toBe("en");
+    expect(normalizeLanguage("../../es")).toBe("en");
+    expect(normalizeLanguage("zh-Hans")).toBe("zh-Hans");
+    await expect(translateText("Do not translate", 123)).resolves.toBe(
+      "Do not translate",
+    );
   });
 
   test("bypasses English and preserves empty batch positions", async () => {

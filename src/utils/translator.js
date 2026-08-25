@@ -8,7 +8,14 @@ const BATCH_SIZE = 10;
 const memoryCache = new Map();
 const inFlight = new Map();
 const warningTimes = new Map();
-const unavailableUntil = new Map();
+
+export const normalizeLanguage = (lang, fallback = "en") => {
+  if (typeof lang !== "string") return fallback;
+  const normalized = lang.trim();
+  return /^[a-z]{2,3}(?:-[A-Za-z]{2,4})?$/.test(normalized)
+    ? normalized
+    : fallback;
+};
 
 const hashText = (text) => {
   let hash = 0;
@@ -44,7 +51,6 @@ const warnProviderFailure = (lang, message) => {
 };
 
 const translateChunk = async (text, lang) => {
-  if ((unavailableUntil.get(lang) || 0) > Date.now()) return text;
   const cacheKey = getCacheKey(text, lang);
   if (memoryCache.has(cacheKey)) return memoryCache.get(cacheKey);
   if (inFlight.has(cacheKey)) return inFlight.get(cacheKey);
@@ -63,14 +69,10 @@ const translateChunk = async (text, lang) => {
         target: lang,
       });
       const translated = result.translatedText || text;
-      unavailableUntil.delete(lang);
       setMemoryCache(cacheKey, translated);
       void cache.set("translations", cacheKey, translated, CACHE_TTL);
       return translated;
     } catch (error) {
-      if (process.env.NODE_ENV !== "test") {
-        unavailableUntil.set(lang, Date.now() + 15000);
-      }
       warnProviderFailure(lang, error.message);
       return text;
     }
@@ -81,34 +83,38 @@ const translateChunk = async (text, lang) => {
 };
 
 export const translateText = async (text, lang = "en") => {
-  if (!text || !lang || lang.toLowerCase() === "en") return text;
-  if (text.length > getMaxTextLength()) return translateLongText(text, lang);
-  return translateChunk(text, lang);
+  const target = normalizeLanguage(lang);
+  if (!text || target.toLowerCase() === "en") return text;
+  if (text.length > getMaxTextLength()) return translateLongText(text, target);
+  return translateChunk(text, target);
 };
 
 export const translateMany = async (texts = [], lang = "en") => {
-  if (!lang || lang.toLowerCase() === "en") return texts;
+  const target = normalizeLanguage(lang);
+  if (target.toLowerCase() === "en") return texts;
 
   const results = [];
   for (let index = 0; index < texts.length; index += BATCH_SIZE) {
     const batch = texts.slice(index, index + BATCH_SIZE);
-    results.push(...(await Promise.all(batch.map((text) => translateText(text, lang)))));
+    results.push(...(await Promise.all(batch.map((text) => translateText(text, target)))));
   }
   return results;
 };
 
 export const translateLongText = async (text, lang = "en") => {
-  if (!text || !lang || lang.toLowerCase() === "en") return text;
+  const target = normalizeLanguage(lang);
+  if (!text || target.toLowerCase() === "en") return text;
   const chunks = splitText(text, getMaxTextLength());
   const translated = [];
   for (let index = 0; index < chunks.length; index += BATCH_SIZE) {
     const batch = chunks.slice(index, index + BATCH_SIZE);
-    translated.push(...(await Promise.all(batch.map((chunk) => translateChunk(chunk, lang)))));
+    translated.push(...(await Promise.all(batch.map((chunk) => translateChunk(chunk, target)))));
   }
   return translated.join("");
 };
 
 export const translateResult = async (result, lang = "en") => {
-  if (!lang || lang.toLowerCase() === "en" || !result?.message) return result;
-  return { ...result, message: await translateText(result.message, lang) };
+  const target = normalizeLanguage(lang);
+  if (target.toLowerCase() === "en" || !result?.message) return result;
+  return { ...result, message: await translateText(result.message, target) };
 };

@@ -17,6 +17,10 @@ import {
   BOOK_NAMES,
 } from "./service.js";
 import { prisma } from "../../config/db.js";
+import {
+  translateBookHeadings,
+  translateChapterHeadings,
+} from "./translation.js";
 
 export const listTranslations = async (req, res) => {
   try {
@@ -285,7 +289,7 @@ export const getChapterRangeVerses = async (req, res) => {
 export const listChapterHeadings = async (req, res) => {
   try {
     const { translationId } = req.params;
-    const { bookName, chapter } = req.body;
+    const { bookName, chapter, lang = "en" } = req.body;
 
     if (!translationId) {
       return res.status(400).json({
@@ -305,9 +309,10 @@ export const listChapterHeadings = async (req, res) => {
       bookName,
       chapter: parseInt(chapter),
     });
+    const data = await translateChapterHeadings(result.data, lang);
     return res.status(200).json({
       success: true,
-      data: result.data,
+      data,
     });
   } catch (error) {
     return res.status(404).json({
@@ -320,7 +325,7 @@ export const listChapterHeadings = async (req, res) => {
 export const listBookHeadings = async (req, res) => {
   try {
     const { translationId } = req.params;
-    const { bookName } = req.body;
+    const { bookName, lang = "en" } = req.body;
 
     if (!translationId) {
       return res.status(400).json({
@@ -337,9 +342,10 @@ export const listBookHeadings = async (req, res) => {
     }
 
     const result = await getBookHeadings({ bookName });
+    const data = await translateBookHeadings(result.data, lang);
     return res.status(200).json({
       success: true,
-      data: result.data,
+      data,
     });
   } catch (error) {
     return res.status(404).json({

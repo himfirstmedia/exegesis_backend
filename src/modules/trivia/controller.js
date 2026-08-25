@@ -1,5 +1,11 @@
 import * as triviaService from './service.js';
 import { formatApiResponse } from '../../utils/helpers.js';
+import {
+  translateSubmitResult,
+  translateTodaysTrivia,
+  translateTriviaQuestion,
+  translateTriviaQuestions,
+} from './translation.js';
 
 export const createQuestion = async (req, res) => {
   try {
@@ -34,6 +40,7 @@ export const deleteQuestion = async (req, res) => {
 export const getQuestion = async (req, res) => {
   try {
     const result = await triviaService.getQuestion(req.body.id);
+    result.data = await translateTriviaQuestion(result.data, req.body?.lang || 'en');
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error('[TriviaController] getQuestion error:', error);
@@ -44,6 +51,9 @@ export const getQuestion = async (req, res) => {
 export const getAllQuestions = async (req, res) => {
   try {
     const result = await triviaService.getAllQuestions(req.body);
+    if (result.data?.data) {
+      result.data.data = await translateTriviaQuestions(result.data.data, req.body?.lang || 'en');
+    }
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error('[TriviaController] getAllQuestions error:', error);
@@ -54,6 +64,7 @@ export const getAllQuestions = async (req, res) => {
 export const getRandomQuestion = async (req, res) => {
   try {
     const result = await triviaService.getRandomQuestion(req.user?.id, req.body);
+    result.data = await translateTriviaQuestion(result.data, req.body?.lang || 'en');
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error('[TriviaController] getRandomQuestion error:', error);
@@ -64,6 +75,7 @@ export const getRandomQuestion = async (req, res) => {
 export const submitAnswer = async (req, res) => {
   try {
     const result = await triviaService.submitAnswer(req.user.id, req.body);
+    result.data = await translateSubmitResult(result.data, req.body?.lang || 'en');
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error('[TriviaController] submitAnswer error:', error);
@@ -126,6 +138,7 @@ export const getUserPerformanceDetail = async (req, res) => {
 export const getTodaysTrivia = async (req, res) => {
   try {
     const result = await triviaService.getTodaysTrivia();
+    result.data = await translateTodaysTrivia(result.data, req.body?.lang || 'en');
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error('[TriviaController] getTodaysTrivia error:', error);

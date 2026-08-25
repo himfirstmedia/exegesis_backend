@@ -2,7 +2,7 @@ import { serializeBigInt } from '../../utils/helpers.js';
 import { prisma } from '../../config/db.js';
 import { cache } from '../../services/cacheService.js';
 import { getVerse } from '../bible-translations/service.js';
-import { translateText, translateMany, translateResult } from '../../utils/translator.js';
+import { normalizeLanguage, translateMany, translateResult } from '../../utils/translator.js';
 
 const CACHE_TTL = 86400;
 
@@ -95,55 +95,55 @@ async function getStudyToolsForVerse(bookName, chapter, verseNumber) {
     });
 }
 
-/** Translate UI-facing fields inside a verse resource object */
-async function translateResourceData(resource, lang) {
-  if (!resource || lang === 'en') return resource;
+/** Translate authored explanations while preserving references and lexical data. */
+export async function translateResourceData(resource, lang) {
+  const target = normalizeLanguage(lang);
+  if (!resource || target.toLowerCase() === 'en') return resource;
 
-  // commentaries: translate `text` field
-  if (resource.commentaries?.length) {
-    const texts = resource.commentaries.map((c) => c.text || '');
-    const translated = await translateMany(texts, lang);
-    resource.commentaries.forEach((c, i) => { c.text = translated[i] || c.text; });
-  }
+  const entries = [];
+  const addText = (value, setValue) => {
+    if (typeof value === 'string' && value.trim()) entries.push({ value, setValue });
+  };
 
-  // crossReferences: translate `text` field
-  if (resource.crossReferences?.length) {
-    const texts = resource.crossReferences.map((c) => c.text || '');
-    const translated = await translateMany(texts, lang);
-    resource.crossReferences.forEach((c, i) => { c.text = translated[i] || c.text; });
-  }
-
-  // wordStudies: translate `meaning` field
-  if (resource.wordStudies?.length) {
-    const meanings = resource.wordStudies.map((w) => w.meaning || '');
-    const translated = await translateMany(meanings, lang);
-    resource.wordStudies.forEach((w, i) => { w.meaning = translated[i] || w.meaning; });
-  }
-
-  // dictionaryTerms: translate `definition` and `description`
-  if (resource.dictionaryTerms?.length) {
-    const defs = resource.dictionaryTerms.map((d) => d.definition || '');
-    const descs = resource.dictionaryTerms.map((d) => d.description || '');
-    const [translatedDefs, translatedDescs] = await Promise.all([
-      translateMany(defs, lang),
-      translateMany(descs, lang),
-    ]);
-    resource.dictionaryTerms.forEach((d, i) => {
-      d.definition = translatedDefs[i] || d.definition;
-      d.description = translatedDescs[i] || d.description;
+  resource.commentaries?.forEach((item) => {
+    addText(item.title, value => { item.title = value; });
+    addText(item.text, value => { item.text = value; });
+  });
+  resource.crossReferences?.forEach((item) => {
+    addText(item.text, value => { item.text = value; });
+  });
+  resource.wordStudies?.forEach((item) => {
+    addText(item.meaning, value => { item.meaning = value; });
+  });
+  resource.dictionaryTerms?.forEach((item) => {
+    addText(item.definition, value => { item.definition = value; });
+    addText(item.description, value => { item.description = value; });
+  });
+  resource.interlinearWords?.forEach((item) => {
+    addText(item.translation, value => { item.translation = value; });
+  });
+  resource.relatedTopics?.forEach((item, index) => {
+    if (typeof item === 'string') {
+      addText(item, value => { resource.relatedTopics[index] = value; });
+    } else if (item && typeof item === 'object') {
+      addText(item.name, value => { item.name = value; });
+    }
+  });
+  resource.studyTools?.forEach((tool) => {
+    addText(tool.label, value => { tool.label = value; });
+    addText(tool.description, value => { tool.description = value; });
+    tool.studyToolWords?.forEach((word) => {
+      addText(word.adminExplanation, value => { word.adminExplanation = value; });
+      if (word.strongs) {
+        addText(word.strongs.shortDefinition, value => { word.strongs.shortDefinition = value; });
+        addText(word.strongs.fullDefinition, value => { word.strongs.fullDefinition = value; });
+        addText(word.strongs.adminExplanation, value => { word.strongs.adminExplanation = value; });
+      }
     });
-  }
+  });
 
-  // relatedTopics: translate `name` field (or plain strings)
-  if (resource.relatedTopics?.length) {
-    const names = resource.relatedTopics.map((t) => (typeof t === 'string' ? t : t.name || ''));
-    const translated = await translateMany(names, lang);
-    resource.relatedTopics.forEach((t, i) => {
-      if (typeof t === 'string') resource.relatedTopics[i] = translated[i] || t;
-      else t.name = translated[i] || t.name;
-    });
-  }
-
+  const translated = await translateMany(entries.map(entry => entry.value), target);
+  entries.forEach((entry, index) => entry.setValue(translated[index]));
   return resource;
 }
 
@@ -284,18 +284,6 @@ export const compareTranslations = async (data) => {
 
     if (results.length === 0) {
       return { status: 404, message: 'No translations found for this verse', data: [] };
-    }
-
-    // Translate version names and verse text
-    if (lang !== 'en') {
-      const [tVersions, tTexts] = await Promise.all([
-        translateMany(results.map((r) => r.version), lang),
-        translateMany(results.map((r) => r.text), lang),
-      ]);
-      results.forEach((r, i) => {
-        r.version = tVersions[i] || r.version;
-        r.text = tTexts[i] || r.text;
-      });
     }
 
     const response = { status: 200, message: 'Translations compared successfully', data: results };

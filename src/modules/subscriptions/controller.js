@@ -1,6 +1,7 @@
 import Stripe from "stripe";
 import { prisma } from "../../config/db.js";
 import { formatApiResponse } from "../../utils/helpers.js";
+import { normalizeLanguage, translateMany } from "../../utils/translator.js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { timeout: 10000 });
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://app.exegesisproject.org";
@@ -448,32 +449,77 @@ async function buildTiersFromStripe() {
 
 // ─── listTiers ────────────────────────────────────────────────────────────────
 
+const translateTierFields = async (tiers, lang) => {
+  if (lang.toLowerCase() === "en") return tiers;
+
+  const translatedTiers = tiers.map((tier) => ({
+    ...tier,
+    ...(Array.isArray(tier.features) && { features: [...tier.features] }),
+  }));
+  const entries = [];
+
+  translatedTiers.forEach((tier) => {
+    if (typeof tier.name === "string") {
+      entries.push({ value: tier.name, set: (value) => { tier.name = value; } });
+    }
+    if (typeof tier.description === "string") {
+      entries.push({ value: tier.description, set: (value) => { tier.description = value; } });
+    }
+    if (Array.isArray(tier.features)) {
+      tier.features.forEach((feature, index) => {
+        if (typeof feature === "string") {
+          entries.push({ value: feature, set: (value) => { tier.features[index] = value; } });
+        }
+      });
+    }
+  });
+
+  if (entries.length === 0) return translatedTiers;
+
+  try {
+    const translations = await translateMany(entries.map(({ value }) => value), lang);
+    entries.forEach((entry, index) => {
+      if (typeof translations[index] === "string") entry.set(translations[index]);
+    });
+    return translatedTiers;
+  } catch (error) {
+    console.warn(`[SubscriptionController] Tier translation to ${lang} failed:`, error.message);
+    return tiers;
+  }
+};
+
 export const listTiers = async (req, res) => {
+  const lang = normalizeLanguage(req.body?.lang ?? "en");
+
   try {
     // 1. Try Stripe first — real-time prices from the source of truth
     const fromStripe = await buildTiersFromStripe();
     if (fromStripe.length > 0) {
+      const tiers = await translateTierFields(fromStripe, lang);
       return res.json(
-        formatApiResponse({ status: 200, message: "Tiers retrieved", data: { tiers: fromStripe } }),
+        formatApiResponse({ status: 200, message: "Tiers retrieved", data: { tiers } }),
       );
     }
 
     // 2. Fallback to DB
     let tiers = await prisma.subscriptionTier.findMany({ orderBy: { sortOrder: "asc" } });
     if (tiers && tiers.length > 0) {
+      tiers = await translateTierFields(tiers, lang);
       return res.json(
         formatApiResponse({ status: 200, message: "Tiers retrieved", data: { tiers } }),
       );
     }
 
     // 3. Last resort — hardcoded defaults so the app never breaks
+    tiers = await translateTierFields(FALLBACK_TIERS, lang);
     return res.json(
-      formatApiResponse({ status: 200, message: "Tiers retrieved (fallback)", data: { tiers: FALLBACK_TIERS } }),
+      formatApiResponse({ status: 200, message: "Tiers retrieved (fallback)", data: { tiers } }),
     );
   } catch (error) {
     console.error("[SubscriptionController] listTiers error:", error);
+    const tiers = await translateTierFields(FALLBACK_TIERS, lang);
     return res.json(
-      formatApiResponse({ status: 200, message: "Tiers retrieved (fallback)", data: { tiers: FALLBACK_TIERS } }),
+      formatApiResponse({ status: 200, message: "Tiers retrieved (fallback)", data: { tiers } }),
     );
   }
 };

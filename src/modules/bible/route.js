@@ -1,7 +1,10 @@
 import express from "express";
 import * as bibleController from "./controller.js";
 import { authenticate } from "../../middlewares/auth.middleware.js";
-import { translateText } from "../../utils/translator.js";
+import {
+  normalizeLanguage,
+  translateText,
+} from "../../utils/translator.js";
 
 const router = express.Router();
 
@@ -10,7 +13,7 @@ const router = express.Router();
 router.use((req, res, next) => {
   const sendJson = res.json.bind(res);
   res.json = async (body) => {
-    const lang = req.body?.lang || "en";
+    const lang = normalizeLanguage(req.body?.lang);
     if (
       lang.toLowerCase() !== "en" &&
       typeof body?.returnMessage === "string"

@@ -1,4 +1,7 @@
-import { translateMany } from "../../utils/translator.js";
+import {
+  normalizeLanguage,
+  translateMany,
+} from "../../utils/translator.js";
 
 const VERSE_FIELDS = [
   "text",
@@ -115,7 +118,8 @@ const translateEntries = async (entries, lang) => {
 };
 
 const translateRecord = async (item, lang, fields, includeRichFields) => {
-  if (!item || !lang || lang.toLowerCase() === "en") return item;
+  const target = normalizeLanguage(lang);
+  if (!item || target.toLowerCase() === "en") return item;
 
   const translated = { ...item };
   const entries = [];
@@ -131,10 +135,10 @@ const translateRecord = async (item, lang, fields, includeRichFields) => {
   }
 
   try {
-    await translateEntries(entries, lang);
+    await translateEntries(entries, target);
     return translated;
   } catch (error) {
-    console.warn(`[daily-content] Translation to ${lang} failed:`, error.message);
+    console.warn(`[daily-content] Translation to ${target} failed:`, error.message);
     return item;
   }
 };
