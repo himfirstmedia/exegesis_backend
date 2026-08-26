@@ -1569,40 +1569,33 @@ export const getChapterJournalPrompts = async (data) => {
     take: 3,
   });
 
-  // 2) Top up to three with general prompts so the end-of-chapter
-  //    journaling section always has exactly 3 questions to fill/skip.
+  // 2) Chapter-aware defaults keep reflection relevant when an admin has not
+  //    curated all three prompts for this exact passage.
   let prompts = specific;
   if (prompts.length < 3) {
-    const general = await prisma.journalPrompt.findMany({
-      where: { isActive: true, bookName: null, chapter: null },
-      orderBy: [{ order: "asc" }, { id: "asc" }],
-      take: 3 - prompts.length,
-    });
-    prompts = [...prompts, ...general];
-  }
-
-  // 3) Curated defaults guarantee exactly 3 questions even when the DB
-  //    has no active prompts at all — every chapter still gets a journaling
-  //    section with three fill-in/skip questions.
-  if (prompts.length < 3) {
+    const reference = `${bookName} ${chapter}`;
     const defaults = [
       {
         id: -1,
-        prompt: "What stood out to you most in your reading today?",
+        prompt: `What does ${reference} reveal about God, people, or faith?`,
         category: "study",
       },
       {
         id: -2,
-        prompt: "How does this passage challenge or encourage you?",
+        prompt: `Which verse or event in ${reference} stands out to you, and why?`,
         category: "reflection",
       },
       {
         id: -3,
-        prompt: "What is one way you can apply this to your life this week?",
+        prompt: `What truth from ${reference} can you apply to your life this week?`,
         category: "application",
       },
-    ].slice(0, 3 - prompts.length);
-    prompts = [...prompts, ...defaults];
+    ];
+    const usedIds = new Set(prompts.map((prompt) => Number(prompt.id)));
+    prompts = [
+      ...prompts,
+      ...defaults.filter((prompt) => !usedIds.has(prompt.id)).slice(0, 3 - prompts.length),
+    ];
   }
 
   const serializedPrompts = serializeBigInt(prompts);

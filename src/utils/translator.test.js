@@ -83,6 +83,19 @@ describe("LibreTranslate compatibility adapter", () => {
     });
   });
 
+  test("translates a trivia-sized set in one provider request", async () => {
+    const fields = Array.from(
+      { length: 90 },
+      (_, index) => `Unique trivia field ${index}`,
+    );
+
+    await expect(translateMany(fields, "ar")).resolves.toEqual(
+      fields.map((text) => `ar:${text}`),
+    );
+    expect(translateBatchWithLibre).toHaveBeenCalledTimes(1);
+    expect(translateBatchWithLibre.mock.calls[0][0].q).toHaveLength(90);
+  });
+
   test("returns original text when LibreTranslate is unavailable", async () => {
     const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
     translateWithLibre.mockRejectedValueOnce(new Error("offline"));

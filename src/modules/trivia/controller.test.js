@@ -66,4 +66,24 @@ describe('trivia controller response languages', () => {
 
     expect(translateTodaysTrivia).toHaveBeenCalledWith(data, 'en');
   });
+
+  test('can return answer correctness without waiting for prose translation', async () => {
+    const data = {
+      isCorrect: true,
+      correctAnswer: 0,
+      correctAnswerText: 'Noah',
+      explanation: 'Noah built the ark.',
+    };
+    triviaService.submitAnswer.mockResolvedValue({ status: 200, message: 'OK', data });
+
+    await triviaController.submitAnswer(
+      {
+        body: { questionId: 1, selectedAnswer: 0, lang: 'ar', translateProse: false },
+        user: { id: 'user-1' },
+      },
+      makeRes(),
+    );
+
+    expect(translateSubmitResult).not.toHaveBeenCalled();
+  });
 });

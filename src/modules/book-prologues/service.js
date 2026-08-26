@@ -3,17 +3,25 @@ import { serializeBigInt } from '../../utils/helpers.js';
 import { normalizeLanguage, translateMany } from '../../utils/translator.js';
 
 const TRANSLATABLE_FIELDS = [
+  'summary',
+  'background',
+  'lessons',
+  'christConnection',
   'authorDetail',
   'audience',
   'dateWritten',
   'locationWritten',
   'purpose',
   'keyTheme',
-  'summary',
-  'background',
-  'lessons',
-  'christConnection',
 ];
+const PARAGRAPH_SEPARATOR = /(\r?\n[ \t]*\r?\n+)/;
+
+const replaceParagraph = (segments, index, value) => {
+  const source = segments[index] || '';
+  const leadingSpace = source.match(/^[ \t]*/)?.[0] || '';
+  const trailingSpace = source.match(/[ \t]*$/)?.[0] || '';
+  segments[index] = leadingSpace + value.trim() + trailingSpace;
+};
 
 const translateBookPrologue = async (prologue, lang = 'en') => {
   const target = normalizeLanguage(lang);
@@ -29,27 +37,50 @@ const translateBookPrologue = async (prologue, lang = 'en') => {
   };
   const entries = [];
   const addEntry = (value, setValue) => {
-    if (typeof value === 'string') entries.push({ value, setValue });
+    if (typeof value !== 'string') return;
+    const segments = value.split(PARAGRAPH_SEPARATOR);
+    const paragraphs = segments.map((text, index) => ({ index, text: text.trim() })).filter(({ index, text }) => index % 2 === 0 && text);
+    if (paragraphs.length <= 1) {
+      entries.push({ value, setValue });
+      return;
+    }
+    paragraphs.forEach(({ index, text }) => {
+      entries.push({
+        value: text,
+        setValue: (translatedValue) => {
+          replaceParagraph(segments, index, translatedValue);
+          setValue(segments.join(''));
+        },
+      });
+    });
   };
 
   TRANSLATABLE_FIELDS.forEach(field => {
-    addEntry(translated[field], value => { translated[field] = value; });
+    addEntry(translated[field], value => {
+      translated[field] = value;
+    });
   });
   if (Array.isArray(translated.structure)) {
     translated.structure.forEach(item => {
       if (item && typeof item === 'object' && !Array.isArray(item)) {
-        addEntry(item.title, value => { item.title = value; });
+        addEntry(item.title, value => {
+          item.title = value;
+        });
       }
     });
   }
   if (Array.isArray(translated.applications)) {
     translated.applications.forEach((item, index) => {
-      addEntry(item, value => { translated.applications[index] = value; });
+      addEntry(item, value => {
+        translated.applications[index] = value;
+      });
     });
   }
   if (Array.isArray(translated.mainThemes)) {
     translated.mainThemes.forEach((item, index) => {
-      addEntry(item, value => { translated.mainThemes[index] = value; });
+      addEntry(item, value => {
+        translated.mainThemes[index] = value;
+      });
     });
   }
 

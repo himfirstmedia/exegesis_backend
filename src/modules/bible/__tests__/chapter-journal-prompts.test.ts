@@ -38,6 +38,23 @@ describe('getChapterJournalPrompts', () => {
     expect(result.data.length).toBe(3);
   });
 
+  it('returns chapter-aware fallback questions instead of repeating global prompts', async () => {
+    const first = await getChapterJournalPrompts({
+      bookName: 'Zephaniah',
+      chapter: 998,
+    });
+    const second = await getChapterJournalPrompts({
+      bookName: 'Zephaniah',
+      chapter: 999,
+    });
+
+    expect(first.data.map((prompt: any) => prompt.prompt)).not.toEqual(
+      second.data.map((prompt: any) => prompt.prompt),
+    );
+    expect(first.data.every((prompt: any) => prompt.prompt.includes('Zephaniah 998'))).toBe(true);
+    expect(second.data.every((prompt: any) => prompt.prompt.includes('Zephaniah 999'))).toBe(true);
+  });
+
   it('returns 400 when bookName is missing', async () => {
     const result = await getChapterJournalPrompts({ chapter: 1 });
     expect(result.status).toBe(400);

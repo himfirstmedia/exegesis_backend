@@ -7,7 +7,7 @@ import {
 
 const CACHE_TTL = 7 * 24 * 60 * 60;
 const CACHE_MAX = 500;
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 100;
 const memoryCache = new Map();
 const inFlight = new Map();
 const warningTimes = new Map();

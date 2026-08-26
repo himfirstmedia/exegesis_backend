@@ -75,7 +75,9 @@ export const getRandomQuestion = async (req, res) => {
 export const submitAnswer = async (req, res) => {
   try {
     const result = await triviaService.submitAnswer(req.user.id, req.body);
-    result.data = await translateSubmitResult(result.data, req.body?.lang || 'en');
+    if (req.body?.translateProse !== false) {
+      result.data = await translateSubmitResult(result.data, req.body?.lang || 'en');
+    }
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error('[TriviaController] submitAnswer error:', error);

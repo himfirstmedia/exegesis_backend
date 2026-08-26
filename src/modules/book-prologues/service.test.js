@@ -149,4 +149,16 @@ describe('book prologue translation', () => {
     expect(result.data.applications).toEqual(['de:Apply this', null, { text: 'legacy' }]);
     expect(result.data.mainThemes).toEqual(['de:Grace', 7, null]);
   });
+
+  test('translates long prose as individual paragraphs and preserves spacing', async () => {
+    const source = makePrologue({
+      summary: 'Opening paragraph.\n\nSecond paragraph.\n\nClosing paragraph.',
+    });
+    prisma.bookPrologue.findUnique.mockResolvedValue(source);
+
+    const result = await getBookPrologue({ bookName: 'Genesis', lang: 'fr' });
+
+    expect(translateMany.mock.calls[0][0].slice(0, 3)).toEqual(['Opening paragraph.', 'Second paragraph.', 'Closing paragraph.']);
+    expect(result.data.summary).toBe('fr:Opening paragraph.\n\nfr:Second paragraph.\n\nfr:Closing paragraph.');
+  });
 });
