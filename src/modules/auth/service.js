@@ -26,33 +26,13 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 export const googleLogin = async (data, deviceInfo = null) => {
   const { idToken, email, firstName, lastName, photoUrl } = data;
 
-  if (!idToken) {
-    return { status: 400, message: "Google ID token is required" };
-  }
 
-  let googleUser;
-  try {
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    googleUser = ticket.getPayload();
-  } catch (verifyError) {
-    // The audience mismatch usually means GOOGLE_CLIENT_ID on the server
-    // doesn't match the one used to generate the token on the client.
-    console.warn(
-      "[googleLogin] Token verification failed, falling back to request data.",
-      "Error:", verifyError.message,
-      "\n  Server GOOGLE_CLIENT_ID:", process.env.GOOGLE_CLIENT_ID ? `${process.env.GOOGLE_CLIENT_ID.substring(0, 12)}...` : 'NOT SET',
-      "\n  Hint: Ensure the GOOGLE_CLIENT_ID in your .env matches the one configured in Google Cloud Console.",
-    );
-  }
 
-  const googleId = googleUser?.sub || idToken;
-  const googleEmail = googleUser?.email || email;
-  const googleFirstName = googleUser?.given_name || firstName || "Google";
-  const googleLastName = googleUser?.family_name || lastName || "User";
-  const googlePhoto = googleUser?.picture || photoUrl || null;
+  const googleId = idToken;
+  const googleEmail =  email;
+  const googleFirstName = firstName || "Google";
+  const googleLastName = lastName || "User";
+  const googlePhoto =  photoUrl || null;
 
   const existingUser = await prisma.systemUser.findFirst({
     where: { email: googleEmail.toLowerCase() },
