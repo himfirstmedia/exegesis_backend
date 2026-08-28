@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { translateText } from "../../utils/translator.js";
 import { formatApiResponse } from "../../utils/helpers.js";
 import {
@@ -15,6 +17,9 @@ import {
   getChapterHeadings,
   getBookHeadings,
   BOOK_NAMES,
+  getCatalog,
+  getBibleMetadata,
+  getXmlFilePath,
 } from "./service.js";
 import { prisma } from "../../config/db.js";
 import {
@@ -728,5 +733,95 @@ export const searchFTS = async (req, res) => {
       status: 500,
       message: error.message,
     }));
+  }
+};
+
+// ── Catalog, metadata & download (on-device download feature) ──
+
+export const listCatalog = async (req, res) => {
+  try {
+    const { language, search } = req.query;
+    let catalog = getCatalog();
+    if (language) {
+      catalog = catalog.filter((c) => c.language === language);
+    }
+    if (search && typeof search === 'string') {
+      const s = search.toLowerCase();
+      catalog = catalog.filter(
+        (c) =>
+          c.id.toLowerCase().includes(s) ||
+          c.name.toLowerCase().includes(s) ||
+          c.abbreviation.toLowerCase().includes(s) ||
+          c.fileName.toLowerCase().includes(s) ||
+          c.languageName.toLowerCase().includes(s)
+      );
+    }
+    return res.status(200).json({
+      success: true,
+      count: catalog.length,
+      data: catalog,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getTranslationMetadata = async (req, res) => {
+  try {
+    const { translationId } = req.params;
+    if (!translationId) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Translation ID is required' });
+    }
+    const meta = await getBibleMetadata(translationId);
+    return res.status(200).json({ success: true, data: meta });
+  } catch (error) {
+    return res.status(404).json({ success: false, message: error.message });
+  }
+};
+
+export const downloadTranslation = async (req, res) => {
+  try {
+    const { translationId } = req.params;
+    const filePath = getXmlFilePath(translationId);
+    if (!fs.existsSync(filePath)) {
+      return res
+        .status(404)
+        .json({ success: false, message: 'Translation not found' });
+    }
+    const stat = fs.statSync(filePath);
+    const fileName = path.basename(filePath);
+    const shortId = path.basename(filePath, '.xml');
+    const range = req.headers.range;
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+      const chunkSize = end - start + 1;
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Length', chunkSize);
+      res.setHeader('Content-Type', 'application/xml');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('X-Bible-Id', shortId);
+      res.setHeader('X-Bible-Size', String(stat.size));
+      fs.createReadStream(filePath, { start, end }).pipe(res);
+      return;
+    }
+    res.status(200);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Type', 'application/xml');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('X-Bible-Id', shortId);
+    res.setHeader('X-Bible-Size', String(stat.size));
+    fs.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    if (error.message === 'Translation not found') {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

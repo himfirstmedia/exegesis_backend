@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { parseString } from 'xml2js';
 import { cache } from '../../services/cacheService.js';
+import { discoverBibles } from './discovery.js';
 
 // Module directory — resolves via import.meta in ESM (production) and falls
 // back to the CJS-native __dirname under jest's CommonJS transform.
@@ -54,7 +55,11 @@ export const BOOK_NAME_TO_NUMBER = Object.fromEntries(
   Object.entries(BOOK_NAMES).map(([num, name]) => [name.toLowerCase(), parseInt(num)])
 );
 
-export const SHORT_IDS = {
+// Backwards-compatible hardcoded English short-id map — preserved for tests
+// and external consumers that expect a synchronous snapshot of the legacy
+// 28 English translations. The auto-discovered catalog (via discovery.js)
+// is the source of truth and exposes 1,048 translations.
+const LEGACY_HARDCODED_SHORT_IDS = {
   'ASV': 'EnglishASVBible',
   'Amplified': 'EnglishAmplifiedBible',
   'AmplifiedClassic': 'EnglishAmplifiedClassicBible',
@@ -85,6 +90,57 @@ export const SHORT_IDS = {
   'YLT': 'EnglishYLTBible'
 };
 
+// Build the dynamic catalog from the XML directory on module load.
+let _catalogCache = null;
+let _catalogById = new Map();
+let _catalogByFile = new Map();
+let _catalogByShortId = new Map();
+
+const buildCatalog = () => {
+  if (_catalogCache) return _catalogCache;
+  const entries = discoverBibles(XML_DIR);
+  _catalogCache = entries;
+  for (const e of entries) {
+    _catalogById.set(e.shortId, e);
+    _catalogByFile.set(e.fileId, e);
+    // Maintain a mapping from fileId -> shortId
+    _catalogByShortId.set(e.fileId, e.shortId);
+  }
+  // Merge in the legacy hardcoded shortIds so tests/external consumers
+  // that reference "KJV" or "NKJ" still resolve correctly.
+  for (const [shortId, fileId] of Object.entries(LEGACY_HARDCODED_SHORT_IDS)) {
+    if (!_catalogById.has(shortId)) {
+      const entry = _catalogByFile.get(fileId);
+      if (entry) {
+        _catalogById.set(shortId, entry);
+      }
+    }
+  }
+  return entries;
+};
+
+buildCatalog();
+
+/** Backwards-compatible SHORT_IDS: a proxy that lazily looks up the dynamic
+ *  catalog. Reads like a normal object, but reflects all 1,048 discovered
+ *  translations plus the legacy English shortIds. */
+export const SHORT_IDS = new Proxy({}, {
+  get: (_, shortId) => {
+    const entry = _catalogById.get(shortId);
+    return entry ? entry.fileId : undefined;
+  },
+  has: (_, shortId) => _catalogById.has(shortId),
+  ownKeys: () => Array.from(_catalogById.keys()),
+  getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }),
+});
+
+/** ISO 639-1 language code for a given shortId. */
+export const LANGUAGE_CODE = new Proxy({}, {
+  get: (_, shortId) => _catalogById.get(shortId)?.language,
+  has: (_, shortId) => _catalogById.has(shortId),
+});
+
+/** Legacy translation display names + years for the original 28 English versions. */
 export const TRANSLATION_DISPLAY_NAMES = {
   'ASV': { name: 'American Standard Version', year: '1901' },
   'Amplified': { name: 'Amplified Bible', year: '2015' },
@@ -114,6 +170,53 @@ export const TRANSLATION_DISPLAY_NAMES = {
   'TL': { name: 'The Living Bible', year: '1971' },
   'Tyndale': { name: 'Tyndale Bible', year: '1537' },
   'YLT': { name: "Young's Literal Translation", year: '1898' }
+};
+
+const DISPLAY_ABBREVIATIONS = {
+  Amplified: 'AMP',
+  AmplifiedClassic: 'AMPC',
+  Berean: 'BSB',
+  Darby: 'DARBY',
+  EASY: 'EASY',
+  NKJ: 'NKJV',
+  Passion: 'TPT',
+  TL: 'TLB',
+  Tyndale: 'TYNDALE',
+};
+
+const getCatalogVersionCode = (entry) => {
+  const known = DISPLAY_ABBREVIATIONS[entry.shortId];
+  if (known) return known;
+  if (TRANSLATION_DISPLAY_NAMES[entry.shortId]) return entry.shortId;
+
+  const base = entry.fileId.replace(/Bible$/, '');
+  const withoutLanguage =
+    entry.prefix && base.startsWith(entry.prefix)
+      ? base.slice(entry.prefix.length)
+      : base;
+  return withoutLanguage || (entry.shortId === base ? 'Bible' : entry.shortId);
+};
+
+const humanizeVersionCode = (code) =>
+  code
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .trim();
+
+const getCatalogPresentation = (entry) => {
+  const abbreviation = getCatalogVersionCode(entry);
+  const displayInfo = TRANSLATION_DISPLAY_NAMES[entry.shortId];
+  const baseName = displayInfo?.name || entry.displayName ||
+    (abbreviation === 'Bible' ? 'Holy Bible' : humanizeVersionCode(abbreviation));
+  const name = abbreviation && !baseName.toLowerCase().includes(abbreviation.toLowerCase())
+    ? `${baseName} (${abbreviation})`
+    : baseName;
+  return {
+    abbreviation,
+    name,
+    fileName: `${abbreviation}.xml`,
+    year: displayInfo?.year || null,
+  };
 };
 
 // Alias map: alternate spellings / abbreviations that must resolve to a
@@ -284,16 +387,17 @@ export const getAllTranslations = async () => {
   const cached = await cache.get('bible', 'translations:all:v2');
   if (cached) return cached;
 
-  const files = fs.readdirSync(XML_DIR).filter(f => f.endsWith('.xml'));
-
-  const translations = files.map((file) => {
-    const shortId = toShortId(file);
-    const displayInfo = TRANSLATION_DISPLAY_NAMES[shortId];
+  const entries = buildCatalog();
+  const translations = entries.map((e) => {
+    const displayInfo = TRANSLATION_DISPLAY_NAMES[e.shortId];
     return {
-      id: shortId,
-      name: displayInfo ? displayInfo.name : shortId,
-      shortName: shortId,
+      id: e.shortId,
+      name: displayInfo ? displayInfo.name : e.fileId.replace(/Bible$/, ''),
+      shortName: e.shortId,
       year: displayInfo?.year || null,
+      language: e.language,
+      languageName: e.languageName,
+      fileSize: e.fileSize,
       description: null,
       copyright: null,
       link: null,
@@ -596,6 +700,87 @@ export const getReadingProgress = async (id, startBookName, startChapter, endBoo
   };
 };
 
+// ── Catalog & download helpers (for on-device download feature) ──
+
+/** Returns the full discovered catalog (lightweight; no XML parse). */
+export const getCatalog = () => {
+  const entries = buildCatalog();
+  return entries.map((e) => {
+    const presentation = getCatalogPresentation(e);
+    return {
+      id: e.shortId,
+      fileId: e.fileId,
+      language: e.language,
+      languageName: e.languageName,
+      ...presentation,
+      fileSize: e.fileSize,
+    };
+  });
+};
+
+/** Returns a single catalog entry by shortId, fileId, or normalized id. */
+export const getCatalogEntry = (id) => {
+  buildCatalog();
+  if (!id) return null;
+  const direct = _catalogById.get(id) || _catalogByFile.get(id);
+  if (direct) return direct;
+  const normalized = normalizeTranslationId(id);
+  return _catalogById.get(normalized) || _catalogByFile.get(normalized) || null;
+};
+
+/** Lazy XML display-name parser. Reads the <bible translation="..."> attribute. */
+const _displayNameCache = new Map();
+export const getTranslationDisplayNameFromXml = async (id) => {
+  const entry = getCatalogEntry(id);
+  if (!entry) return id;
+  const cacheKey = entry.shortId;
+  if (_displayNameCache.has(cacheKey)) return _displayNameCache.get(cacheKey);
+  try {
+    const parsed = await getParsedBible(entry.shortId);
+    const t = parsed?.bible?.$?.translation;
+    if (t) {
+      _displayNameCache.set(cacheKey, t);
+      return t;
+    }
+  } catch {
+    // fall through to default
+  }
+  const fallback = entry.fileId.replace(/Bible$/, '');
+  _displayNameCache.set(cacheKey, fallback);
+  return fallback;
+};
+
+/** Returns the absolute file path for a translation, or throws. */
+export const getXmlFilePath = (id) => {
+  const entry = getCatalogEntry(id);
+  if (!entry) throw new Error('Translation not found');
+  return entry.filePath;
+};
+
+/** Lightweight metadata (no full parse on every call): books, chapters, verses. */
+const _metadataCache = new Map();
+export const getBibleMetadata = async (id) => {
+  const entry = getCatalogEntry(id);
+  if (!entry) throw new Error('Translation not found');
+  if (_metadataCache.has(entry.fileId)) return _metadataCache.get(entry.fileId);
+  const books = await getBooks(entry.fileId);
+  const totalChapters = books.reduce((s, b) => s + b.chaptersCount, 0);
+  const totalVerses = books.reduce((s, b) => s + b.totalVerses, 0);
+  const meta = {
+    id: entry.shortId,
+    fileId: entry.fileId,
+    language: entry.language,
+    languageName: entry.languageName,
+    ...getCatalogPresentation(entry),
+    fileSize: entry.fileSize,
+    bookCount: books.length,
+    chapterCount: totalChapters,
+    verseCount: totalVerses,
+  };
+  _metadataCache.set(entry.fileId, meta);
+  return meta;
+};
+
 // ── Chapter section headings (bundled public-domain dataset from BSB USFM) ──
 const HEADINGS_FILE = path.join(MODULE_DIR, 'data', 'chapter-headings.json');
 let headingsCache = null;
@@ -652,4 +837,3 @@ export const getBookHeadings = async (body = {}) => {
 
 // Pre-warm the default translation cache on module load
 getParsedBible('Berean').catch(() => {});
-

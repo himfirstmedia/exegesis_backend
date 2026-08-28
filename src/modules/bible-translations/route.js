@@ -17,7 +17,10 @@ import {
   listBookHeadings,
   getBookNames,
   getTranslationText,
-  getTranslationSettings
+  getTranslationSettings,
+  listCatalog,
+  getTranslationMetadata,
+  downloadTranslation,
 } from "./controller.js";
 import { authenticate } from "../../middlewares/auth.middleware.js";
 import { requireTier } from "../../middlewares/gating.middleware.js";
@@ -27,6 +30,9 @@ const router = express.Router();
 router.post("/translate-text", getTranslationText);
 router.get("/books/names", getBookNames);
 router.post("/", listTranslations);
+
+// New public catalog endpoints (no auth — public metadata for on-device downloads)
+router.get("/catalog", listCatalog);
 
 const authAndTier = [authenticate, requireTier('legacy_sower')];
 
@@ -50,6 +56,9 @@ router.post("/:translationId/chapter-range", getChapterRangeVerses);
 router.post("/:translationId/chapter-headings", listChapterHeadings);
 router.post("/:translationId/book-headings", listBookHeadings);
 router.post("/:translationId/reading", getReading);
+// Public metadata + download — public-domain texts
+router.get("/:translationId/metadata", getTranslationMetadata);
+router.get("/:translationId/download", downloadTranslation);
 router.get("/translate-text", getTranslationText);
 router.get("/settings", getTranslationSettings);
 

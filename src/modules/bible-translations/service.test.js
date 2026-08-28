@@ -3,6 +3,7 @@ import {
   getTranslationDisplayName,
   getVerse,
   getAllTranslations,
+  getCatalog,
 } from './service.js';
 
 describe('normalizeTranslationId', () => {
@@ -35,6 +36,25 @@ describe('normalizeTranslationId', () => {
   test('returns unknown ids untouched so callers surface Translation not found', () => {
     expect(normalizeTranslationId('WEB')).toBe('WEB');
     expect(normalizeTranslationId('WEBSTER')).toBe('WEBSTER');
+  });
+});
+
+describe('catalog presentation', () => {
+  test('uses recognizable names, abbreviations, and language-free display filenames', () => {
+    const catalog = getCatalog();
+    const kjv = catalog.find((entry) => entry.id === 'KJV');
+    const berean = catalog.find((entry) => entry.id === 'Berean');
+
+    expect(kjv).toMatchObject({
+      name: 'King James Version (KJV)',
+      abbreviation: 'KJV',
+      fileName: 'KJV.xml',
+    });
+    expect(berean).toMatchObject({
+      name: 'Berean Standard Bible (BSB)',
+      abbreviation: 'BSB',
+      fileName: 'BSB.xml',
+    });
   });
 });
 
