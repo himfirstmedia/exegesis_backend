@@ -2,6 +2,10 @@ import {
   normalizeTranslationId,
   getTranslationDisplayName,
   getVerse,
+  getVerses,
+  getVersesBatch,
+  getBooksWithMaxChapters,
+  getChapters,
   getAllTranslations,
   getCatalog,
 } from './service.js';
@@ -96,6 +100,54 @@ describe('getVerse (real XML files)', () => {
     await expect(getVerse('WEBSTER', 'Genesis', 1, 1)).rejects.toThrow(
       'Translation not found',
     );
+  });
+});
+
+describe('fast XML reader paths', () => {
+  test('returns a complete chapter with the existing response contract', async () => {
+    const chapter = await getVerses('French', 'Genesis', 1);
+    expect(chapter).toMatchObject({
+      bookNumber: 1,
+      bookName: 'Genesis',
+      chapterNumber: 1,
+    });
+    expect(chapter.verses).toHaveLength(31);
+    expect(chapter.verses[0].verseNumber).toBe(1);
+    expect(typeof chapter.verses[0].text).toBe('string');
+  });
+
+  test('decodes XML entities when parsing a chapter fragment', async () => {
+    const verse = await getVerse('Sundanese', 'Leviticus', 27, 3);
+    expect(verse.text).toContain('lalaki & 15');
+    expect(verse.text).not.toContain('&amp;');
+  });
+
+  test('derives books and chapter counts without a full XML parse', async () => {
+    const books = await getBooksWithMaxChapters('French');
+    const genesis = books.find((book) => book.bookName === 'Genesis');
+    expect(books).toHaveLength(66);
+    expect(genesis).toMatchObject({
+      bookNumber: 1,
+      chaptersCount: 50,
+      maxChapter: 50,
+    });
+
+    const chapters = await getChapters('French', 'Genesis');
+    expect(chapters.chapters).toHaveLength(50);
+    expect(chapters.chapters[0]).toEqual({
+      chapterNumber: 1,
+      versesCount: 31,
+    });
+  });
+
+  test('batch reads reuse chapter extraction and preserve missing chapters', async () => {
+    const chapters = await getVersesBatch('French', 'Genesis', [1, 999]);
+    expect(chapters[0].verses).toHaveLength(31);
+    expect(chapters[1]).toEqual({
+      bookName: 'Genesis',
+      chapterNumber: 999,
+      verses: [],
+    });
   });
 });
 

@@ -338,6 +338,124 @@ const getXmlPath = (id) => {
   return filePath;
 };
 
+// Reader requests only need one chapter, not a full object graph for a 5-7 MB
+// Bible. Cache a few raw XML strings and parse only the requested fragment.
+const RAW_XML_CACHE_MAX = 5;
+const rawXmlCache = new Map();
+const rawXmlCacheOrder = [];
+const rawXmlPromises = new Map();
+
+const touchRawXml = (fullId) => {
+  const index = rawXmlCacheOrder.indexOf(fullId);
+  if (index !== -1) rawXmlCacheOrder.splice(index, 1);
+  rawXmlCacheOrder.push(fullId);
+};
+
+const cacheRawXml = (fullId, xml) => {
+  if (rawXmlCache.size >= RAW_XML_CACHE_MAX && !rawXmlCache.has(fullId)) {
+    const oldest = rawXmlCacheOrder.shift();
+    if (oldest) rawXmlCache.delete(oldest);
+  }
+  rawXmlCache.set(fullId, xml);
+  touchRawXml(fullId);
+};
+
+const getRawBibleXml = async (id) => {
+  const fullId = toFullId(id);
+  if (rawXmlCache.has(fullId)) {
+    touchRawXml(fullId);
+    return rawXmlCache.get(fullId);
+  }
+  if (rawXmlPromises.has(fullId)) return rawXmlPromises.get(fullId);
+
+  const promise = fs.promises
+    .readFile(getXmlPath(id), 'utf8')
+    .then((xml) => {
+      cacheRawXml(fullId, xml);
+      rawXmlPromises.delete(fullId);
+      return xml;
+    })
+    .catch((error) => {
+      rawXmlPromises.delete(fullId);
+      throw error;
+    });
+  rawXmlPromises.set(fullId, promise);
+  return promise;
+};
+
+const extractBookXml = (xml, bookNumber) => {
+  const match = xml.match(
+    new RegExp(
+      `<book\\b[^>]*\\bnumber=["']${bookNumber}["'][^>]*>[\\s\\S]*?<\\/book>`,
+      'i',
+    ),
+  );
+  if (!match) throw new Error('Book not found');
+  return match[0];
+};
+
+const extractChapterXml = (bookXml, chapterNumber) => {
+  const match = bookXml.match(
+    new RegExp(
+      `<chapter\\b[^>]*\\bnumber=["']${chapterNumber}["'][^>]*>[\\s\\S]*?<\\/chapter>`,
+      'i',
+    ),
+  );
+  if (!match) throw new Error('Chapter not found');
+  return match[0];
+};
+
+const parseChapterVerses = async (chapterXml) => {
+  const parsed = await parseXml(chapterXml);
+  const chapter = parsed.chapter;
+  const verses = Array.isArray(chapter.verse) ? chapter.verse : [chapter.verse];
+  return verses.filter(Boolean).map((verse) => ({
+    verseNumber: parseInt(verse.$.number),
+    text: typeof verse === 'string' ? verse : (verse._ || verse),
+  }));
+};
+
+const resolveBookContext = (id, bookName) => {
+  const normalizedBookName = String(bookName || '').trim();
+  const bookNumber = BOOK_NAME_TO_NUMBER[normalizedBookName.toLowerCase()];
+  if (!bookNumber) throw new Error('Invalid book name');
+  return {
+    bookNumber,
+    bookName: BOOK_NAMES[bookNumber],
+    fullId: toFullId(id),
+  };
+};
+
+const countMatches = (text, expression) => {
+  expression.lastIndex = 0;
+  let count = 0;
+  while (expression.exec(text)) count += 1;
+  return count;
+};
+
+const extractBooksFromRawXml = (xml) => {
+  const books = [];
+  const testamentExpression = /<testament\b[^>]*\bname=["']([^"']+)["'][^>]*>([\s\S]*?)<\/testament>/gi;
+  let testamentMatch;
+  while ((testamentMatch = testamentExpression.exec(xml))) {
+    const testamentName = testamentMatch[1];
+    const testamentXml = testamentMatch[2];
+    const bookExpression = /<book\b[^>]*\bnumber=["'](\d+)["'][^>]*>([\s\S]*?)<\/book>/gi;
+    let bookMatch;
+    while ((bookMatch = bookExpression.exec(testamentXml))) {
+      const bookNumber = parseInt(bookMatch[1]);
+      books.push({
+        bookNumber,
+        bookName: BOOK_NAMES[bookNumber],
+        testament: testamentName,
+        chaptersCount: countMatches(bookMatch[2], /<chapter\b/gi),
+        totalVerses: countMatches(bookMatch[2], /<verse\b/gi),
+      });
+    }
+  }
+  return books;
+};
+
 const parseBibleXml = async (id) => {
   const filePath = getXmlPath(id);
   const xmlContent = fs.readFileSync(filePath, 'utf-8');
@@ -430,106 +548,85 @@ export const getTranslationInfo = async (id) => {
 };
 
 export const getBooks = async (id) => {
-  const cached = await cache.get('bible', `books:${id}`);
+  const fullId = toFullId(id);
+  const cacheKey = `books:${fullId}`;
+  const cached = await cache.get('bible', cacheKey);
   if (cached) return cached;
 
-  const parsed = await getParsedBible(id);
-  const testaments = Array.isArray(parsed.bible.testament) 
-    ? parsed.bible.testament 
-    : [parsed.bible.testament];
-  const result = extractBooks(testaments);
+  const xml = await getRawBibleXml(id);
+  const result = extractBooksFromRawXml(xml);
   
-  await cache.set('bible', `books:${id}`, result);
+  await cache.set('bible', cacheKey, result);
   return result;
 };
 
 export const getBooksWithMaxChapters = async (id) => {
-  const cached = await cache.get('bible', `books:${id}:with-max`);
+  const fullId = toFullId(id);
+  const cacheKey = `books:${fullId}:with-max`;
+  const cached = await cache.get('bible', cacheKey);
   if (cached) return cached;
 
-  const parsed = await getParsedBible(id);
-  const testaments = Array.isArray(parsed.bible.testament) 
-    ? parsed.bible.testament 
-    : [parsed.bible.testament];
-  
-  const result = extractBooks(testaments).map(book => ({
+  const result = (await getBooks(id)).map(book => ({
     ...book,
     maxChapter: book.chaptersCount
   }));
   
-  await cache.set('bible', `books:${id}:with-max`, result);
+  await cache.set('bible', cacheKey, result);
   return result;
 };
 
 export const getChapters = async (id, bookName) => {
-  const bookNumber = BOOK_NAME_TO_NUMBER[bookName.toLowerCase()];
-  if (!bookNumber) {
-    throw new Error('Invalid book name');
-  }
+  const context = resolveBookContext(id, bookName);
+  const { bookNumber } = context;
 
-  const cached = await cache.get('bible', `chapters:${id}:${bookName}`);
+  const cacheKey = `chapters:${context.fullId}:${context.bookName}`;
+  const cached = await cache.get('bible', cacheKey);
   if (cached) return cached;
 
-  const parsed = await getParsedBible(id);
-  const testaments = Array.isArray(parsed.bible.testament) 
-    ? parsed.bible.testament 
-    : [parsed.bible.testament];
-  
-  const book = findBook(testaments, bookNumber);
-  if (!book) {
-    throw new Error('Book not found');
+  const xml = await getRawBibleXml(id);
+  const bookXml = extractBookXml(xml, bookNumber);
+  const chapters = [];
+  const chapterExpression = /<chapter\b[^>]*\bnumber=["'](\d+)["'][^>]*>([\s\S]*?)<\/chapter>/gi;
+  let chapterMatch;
+  while ((chapterMatch = chapterExpression.exec(bookXml))) {
+    chapters.push({
+      chapterNumber: parseInt(chapterMatch[1]),
+      versesCount: countMatches(chapterMatch[2], /<verse\b/gi),
+    });
   }
-
-  const chapters = Array.isArray(book.chapter) ? book.chapter : [book.chapter];
   const result = {
     bookNumber,
-    bookName: BOOK_NAMES[bookNumber],
-    chapters: chapters.map(ch => ({
-      chapterNumber: parseInt(ch.$.number),
-      versesCount: (Array.isArray(ch.verse) ? ch.verse : [ch.verse]).length
-    }))
+    bookName: context.bookName,
+    chapters,
   };
-
-  await cache.set('bible', `chapters:${id}:${bookName}`, result);
+  
+  await cache.set('bible', cacheKey, result);
   return result;
 };
 
 export const getVerses = async (id, bookName, chapterNumber) => {
-  const bookNumber = BOOK_NAME_TO_NUMBER[bookName.toLowerCase()];
-  if (!bookNumber) {
-    throw new Error('Invalid book name');
+  const context = resolveBookContext(id, bookName);
+  const numericChapter = Number(chapterNumber);
+  if (!Number.isInteger(numericChapter) || numericChapter < 1) {
+    throw new Error('Invalid chapter number');
   }
 
-  const cached = await cache.get('bible', `verses:${id}:${bookName}:${chapterNumber}`);
+  const cacheKey = `verses:${context.fullId}:${context.bookName}:${numericChapter}`;
+  const cached = await cache.get('bible', cacheKey);
   if (cached) return cached;
 
-  const parsed = await getParsedBible(id);
-  const testaments = Array.isArray(parsed.bible.testament) 
-    ? parsed.bible.testament 
-    : [parsed.bible.testament];
-  
-  const book = findBook(testaments, bookNumber);
-  if (!book) {
-    throw new Error('Book not found');
-  }
-
-  const chapter = findChapter(book, chapterNumber);
-  if (!chapter) {
-    throw new Error('Chapter not found');
-  }
-
-  const verses = Array.isArray(chapter.verse) ? chapter.verse : [chapter.verse];
+  const xml = await getRawBibleXml(id);
+  const bookXml = extractBookXml(xml, context.bookNumber);
+  const chapterXml = extractChapterXml(bookXml, numericChapter);
+  const verses = await parseChapterVerses(chapterXml);
   const result = {
-    bookNumber,
-    bookName: BOOK_NAMES[bookNumber],
-    chapterNumber,
-    verses: verses.map(v => ({
-      verseNumber: parseInt(v.$.number),
-      text: typeof v === 'string' ? v : (v._ || v)
-    }))
+    bookNumber: context.bookNumber,
+    bookName: context.bookName,
+    chapterNumber: numericChapter,
+    verses,
   };
-
-  await cache.set('bible', `verses:${id}:${bookName}:${chapterNumber}`, result);
+  
+  await cache.set('bible', cacheKey, result);
   return result;
 };
 
@@ -595,45 +692,22 @@ export const searchVerses = async (id, query, limit = 50) => {
   return results;
 };
 
-/** Fetch multiple chapters at once (preserves chapter boundaries). Uses cached parsed XML. */
+/** Fetch multiple chapters at once while reusing the canonical chapter cache. */
 export const getVersesBatch = async (id, bookName, chapters) => {
-  const bookNumber = BOOK_NAME_TO_NUMBER[bookName.toLowerCase()];
-  if (!bookNumber) {
-    throw new Error('Invalid book name');
-  }
-
-  const parsed = await getParsedBible(id);
-  const testaments = Array.isArray(parsed.bible.testament)
-    ? parsed.bible.testament
-    : [parsed.bible.testament];
-
-  const book = findBook(testaments, bookNumber);
-  if (!book) {
-    throw new Error('Book not found');
-  }
-
-  const allChapters = Array.isArray(book.chapter) ? book.chapter : [book.chapter];
-  const result = [];
-
-  for (const chNum of chapters) {
-    const chapter = allChapters.find(ch => parseInt(ch.$.number) === chNum);
-    if (!chapter) {
-      result.push({ bookName, chapterNumber: chNum, verses: [] });
-      continue;
-    }
-    const verses = Array.isArray(chapter.verse) ? chapter.verse : [chapter.verse];
-    result.push({
-      bookName: BOOK_NAMES[bookNumber],
-      chapterNumber: chNum,
-      bookNumber,
-      verses: verses.map(v => ({
-        verseNumber: parseInt(v.$.number),
-        text: typeof v === 'string' ? v : (v._ || v),
-      })),
-    });
-  }
-
-  return result;
+  resolveBookContext(id, bookName);
+  return Promise.all(
+    chapters.map(async (chapter) => {
+      const numericChapter = Number(chapter);
+      try {
+        return await getVerses(id, bookName, numericChapter);
+      } catch (error) {
+        if (error?.message === 'Chapter not found') {
+          return { bookName, chapterNumber: numericChapter, verses: [] };
+        }
+        throw error;
+      }
+    }),
+  );
 };
 
 export const getChapterRange = async (id, bookName, startChapter, endChapter) => {
@@ -834,6 +908,3 @@ export const getBookHeadings = async (body = {}) => {
     },
   };
 };
-
-// Pre-warm the default translation cache on module load
-getParsedBible('Berean').catch(() => {});
