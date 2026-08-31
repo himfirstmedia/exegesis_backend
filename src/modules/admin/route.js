@@ -38,6 +38,12 @@ router.post(
   adminController.toggleUserVerification,
 );
 router.post(
+  "/create-user",
+  authenticate,
+  requireAdmin,
+  adminController.createUser,
+);
+router.post(
   "/get-admin-dashboard-stats",
   authenticate,
   requireAdmin,

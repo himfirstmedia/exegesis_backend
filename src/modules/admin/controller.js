@@ -113,6 +113,23 @@ export const toggleUserVerification = async (req, res) => {
   }
 };
 
+export const createUser = async (req, res) => {
+  try {
+    const result = await adminService.createUser(req.body, req.user.id);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Create user error:", error);
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error creating user: " + error.message,
+        }),
+      );
+  }
+};
+
 export const getAdminDashboardStats = async (req, res) => {
   try {
     const result = await adminService.getAdminDashboardStats();

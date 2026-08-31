@@ -2,6 +2,7 @@ import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { cache } from "../../services/cacheService.js";
 import { parseLocalDate, utcToday } from "../../utils/dates.js";
+import bcrypt from "bcryptjs";
 
 export const getUsersByAdmin = async (data, adminId) => {
   const { search, userId, page = 1, pageSize = 10 } = data;
@@ -215,6 +216,58 @@ export const toggleUserVerification = async (data, adminId) => {
     ? "User email verified successfully"
     : "User email verification revoked";
   return { status: 200, message: msg };
+};
+
+export const createUser = async (data, adminId) => {
+  const { username, email, password, firstName, lastName, phoneNumber, gender, dateOfBirth, userRole } = data;
+
+  if (!username || !email || !password) {
+    return { status: 400, message: "Username, email, and password are required" };
+  }
+
+  if (password.length < 6) {
+    return { status: 400, message: "Password must be at least 6 characters" };
+  }
+
+  // Check for existing username
+  const existingUsername = await prisma.systemUser.findFirst({ where: { username } });
+  if (existingUsername) {
+    return { status: 409, message: "Username already exists" };
+  }
+
+  // Check for existing email
+  const existingEmail = await prisma.systemUser.findFirst({ where: { email: email.toLowerCase() } });
+  if (existingEmail) {
+    return { status: 409, message: "Email already exists" };
+  }
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  const user = await prisma.systemUser.create({
+    data: {
+      username,
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      firstName: firstName || "",
+      lastName: lastName || "",
+      phoneNumber: phoneNumber || "",
+      gender: gender || "Not specified",
+      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+      userRole: userRole === 1 ? 1n : 2n,
+      emailVerified: true,   // Admin-created users are auto-verified
+      status: true,          // Admin-created users are active by default
+      loginCount: 0,
+      subscriptionTier: "free",
+      createdBy: adminId,
+    },
+  });
+
+  const { password: _, ...userWithoutPassword } = user;
+  return {
+    status: 201,
+    message: "User created successfully",
+    data: serializeBigInt({ ...userWithoutPassword, password: null }),
+  };
 };
 
 export const getAdminDashboardStats = async () => {
