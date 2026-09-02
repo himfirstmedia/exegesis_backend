@@ -34,6 +34,11 @@ router.post("/delete-highlight", authenticate, bibleController.deleteHighlight);
 router.post("/add-read-history", authenticate, bibleController.addReadHistory);
 router.post("/get-read-history", authenticate, bibleController.getReadHistory);
 router.post(
+  "/get-last-read-position",
+  authenticate,
+  bibleController.getLastReadPosition,
+);
+router.post(
   "/delete-read-history",
   authenticate,
   bibleController.deleteReadHistory,

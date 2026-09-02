@@ -86,6 +86,21 @@ export const getReadHistory = async (req, res) => {
   }
 };
 
+export const getLastReadPosition = async (req, res) => {
+  try {
+    const result = await bibleService.getLastReadPosition(req.body, req.user.id);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Get last read position error:", error);
+    return res.status(500).json(
+      formatApiResponse({
+        status: 500,
+        message: "Error getting last read position: " + error.message,
+      }),
+    );
+  }
+};
+
 export const deleteReadHistory = async (req, res) => {
   try {
     const result = await bibleService.deleteReadHistory(req.body, req.user.id);

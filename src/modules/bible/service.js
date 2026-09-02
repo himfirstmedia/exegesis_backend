@@ -317,6 +317,33 @@ export const getReadHistory = async (data, userId) => {
   };
 };
 
+export const getLastReadPosition = async (data, userId) => {
+  const { bookName } = data;
+  if (!bookName) {
+    return { status: 400, message: "Book name is required" };
+  }
+
+  const lastRead = await prisma.readHistory.findFirst({
+    where: { createdBy: userId, bookName },
+    orderBy: [{ createdOn: "desc" }, { id: "desc" }],
+  });
+
+  return {
+    status: 200,
+    message: lastRead
+      ? "Last read position fetched successfully"
+      : "No saved reading position found",
+    data: lastRead
+      ? {
+          bookName: lastRead.bookName,
+          chapter: Number(lastRead.chapter),
+          verseNumber: Number(lastRead.verseNumber),
+          createdOn: lastRead.createdOn?.toISOString() ?? null,
+        }
+      : null,
+  };
+};
+
 export const deleteReadHistory = async (data, userId) => {
   const { readHistoryIds } = data;
   if (!readHistoryIds || !Array.isArray(readHistoryIds))
