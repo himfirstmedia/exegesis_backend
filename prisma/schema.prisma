@@ -317,19 +317,101 @@ model VerseExplanation {
   bookName     String    @map("book_name")
   chapter      BigInt
   verseNumber  BigInt    @map("verse_number")
-  explanation  String?
-  learnMore    String?   @map("learn_more")
   bibleVersion String?   @map("bible_version")
-  promptIds    String?   @map("prompt_ids")
   sortOrder    Int       @default(9999) @map("sort_order")
   createdBy    String?   @map("created_by")
   createdOn    DateTime? @map("created_on")
   updatedBy    String?   @map("updated_by")
   updatedOn    DateTime? @map("updated_on")
 
+  // Relations
+  exegesis           VerseExegesis?
+  studyMetadata      VerseStudyMetadata?
+  wordStudies        VerseWordStudyEntry[]
+  practicalApps      VersePracticalApplication[]
+  crossReferences    VerseCrossReference[]
+  themes             VerseTheme[]
+
   @@unique([bookName, chapter, verseNumber])
   @@map("verse_explanations")
 }
+
+model VerseExegesis {
+  id              BigInt  @id @default(autoincrement())
+  explanationId   BigInt   @unique @map("explanation_id")
+  explanationText String  @db.Text @map("explanation_text")
+  applicationText String? @db.Text @map("application_text")
+  
+  explanation     VerseExplanation @relation(fields: [explanationId], references: [id], onDelete: Cascade)
+
+  @@map("verse_exegesis")
+}
+
+model VerseStudyMetadata {
+  id                BigInt  @id @default(autoincrement())
+  explanationId     BigInt   @unique @map("explanation_id")
+  introduction      String? @db.Text
+  backgroundAuthor  String? @map("background_author") @db.Text
+  backgroundBook    String? @map("background_book") @db.Text
+  backgroundContext String? @map("background_context") @db.Text
+  finalThoughts     String? @db.Text @map("final_thoughts")
+  
+  explanation       VerseExplanation @relation(fields: [explanationId], references: [id], onDelete: Cascade)
+
+  @@map("verse_study_metadata")
+}
+
+model VerseWordStudyEntry {
+  id               BigInt  @id @default(autoincrement())
+  explanationId     BigInt   @map("explanation_id")
+  strongsId        String?
+  surfaceText      String?  @map("surface_text")
+  customDefinition  String?  @map("custom_definition") @db.Text
+  sortOrder        Int      @default(0) @map("sort_order")
+
+  explanation      VerseExplanation @relation(fields: [explanationId], references: [id], onDelete: Cascade)
+  strongs          StrongsDictionary? @relation("VerseExplanationStrongs", fields: [strongsId], references: [strongsId])
+
+  @@map("verse_word_studies_detailed")
+}
+
+model VersePracticalApplication {
+  id               BigInt  @id @default(autoincrement())
+  explanationId     BigInt   @map("explanation_id")
+  applicationText  String  @db.Text @map("application_text")
+  sortOrder        Int      @default(0) @map("sort_order")
+
+  explanation      VerseExplanation @relation(fields: [explanationId], references: [id], onDelete: Cascade)
+
+  @@map("verse_practical_applications")
+}
+
+model VerseCrossReference {
+  id               BigInt  @id @default(autoincrement())
+  explanationId     BigInt   @map("explanation_id")
+  bookName         String   @map("book_name")
+  chapter          BigInt
+  verseNumber      BigInt   @map("verse_number")
+  referenceText    String?  @map("reference_text") @db.Text
+  commentary       String?  @db.Text
+  sortOrder        Int      @default(0) @map("sort_order")
+
+  explanation      VerseExplanation @relation(fields: [explanationId], references: [id], onDelete: Cascade)
+
+  @@map("verse_cross_references")
+}
+
+model VerseTheme {
+  id               BigInt  @id @default(autoincrement())
+  explanationId     BigInt   @map("explanation_id")
+  themeName        String  @map("theme_name")
+  sortOrder        Int      @default(0) @map("sort_order")
+
+  explanation      VerseExplanation @relation(fields: [explanationId], references: [id], onDelete: Cascade)
+
+  @@map("verse_themes")
+}
+
 
 model Message {
   id            BigInt      @id @default(autoincrement())
@@ -572,6 +654,7 @@ model StrongsDictionary {
   verseWords       VerseWord[]
   studyToolWords   StudyToolWord[]
   verseWordStudies VerseWordStudy[]
+  verseExplanationWordStudies VerseWordStudyEntry[] @relation("VerseExplanationStrongs")
 
   @@map("strongs_dictionary")
 }

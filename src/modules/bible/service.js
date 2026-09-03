@@ -455,10 +455,9 @@ export const getVerseExplanation = async (data) => {
       message: "bookName, chapter, and verseNumber are required",
     };
 
-  // Cache the raw record (non-language-specific)
   const record = await cache.getOrSet(
     "bible",
-    `explanation:${bookName}:${chapter}:${verseNumber}`,
+    `explanation-detailed:${bookName}:${chapter}:${verseNumber}`,
     async () => {
       return prisma.verseExplanation.findUnique({
         where: {
@@ -468,6 +467,14 @@ export const getVerseExplanation = async (data) => {
             verseNumber: BigInt(verseNumber),
           },
         },
+        include: {
+          exegesis: true,
+          studyMetadata: true,
+          wordStudies: { orderBy: { sortOrder: "asc" } },
+          practicalApps: { orderBy: { sortOrder: "asc" } },
+          crossReferences: { orderBy: { sortOrder: "asc" } },
+          themes: { orderBy: { sortOrder: "asc" } },
+        },
       });
     },
     86400,
@@ -476,26 +483,70 @@ export const getVerseExplanation = async (data) => {
   if (!record) return { status: 404, message: "Verse explanation not found" };
 
   const serialized = serializeBigInt(record);
-  let explanation = serialized.explanation ?? null;
-  let learnMore = serialized.learnMore ?? null;
-
+  
   if (target.toLowerCase() !== "en") {
-    const [tExplanation, tLearnMore] = await Promise.all([
-      explanation
-        ? translateLongText(explanation, target)
-        : Promise.resolve(null),
-      learnMore ? translateLongText(learnMore, target) : Promise.resolve(null),
-    ]);
-    explanation = tExplanation ?? explanation;
-    learnMore = tLearnMore ?? learnMore;
+    // Recursive translation for structured content
+    const translateDeep = async (obj) => {
+      if (typeof obj === "string") return translateLongText(obj, target);
+      if (Array.isArray(obj)) {
+        return Promise.all(obj.map(item => translateDeep(item)));
+      }
+      if (obj !== null && typeof obj === "object") {
+        const newObj = {};
+        for (const key in obj) {
+          newObj[key] = await translateDeep(obj[key]);
+        }
+        return newObj;
+      }
+      return obj;
+    };
+    
+    // We only translate the user-facing content fields
+    const translatedContent = await translateDeep({
+      exegesis: serialized.exegesis,
+      studyMetadata: serialized.studyMetadata,
+      wordStudies: serialized.wordStudies.map(ws => ({
+        surfaceText: ws.surfaceText,
+        customDefinition: ws.customDefinition,
+      })),
+      practicalApps: serialized.practicalApps.map(pa => ({
+        applicationText: pa.applicationText,
+      })),
+      crossReferences: serialized.crossReferences.map(cr => ({
+        referenceText: cr.referenceText,
+        commentary: cr.commentary,
+      })),
+      themes: serialized.themes.map(t => ({
+        themeName: t.themeName,
+      })),
+    });
+
+    // Merge translated parts back into serialized record
+    serialized.exegesis = { ...serialized.exegesis, ...translatedContent.exegesis };
+    serialized.studyMetadata = { ...serialized.studyMetadata, ...translatedContent.studyMetadata };
+    serialized.wordStudies = serialized.wordStudies.map((ws, i) => ({
+      ...ws,
+      ...translatedContent.wordStudies[i],
+    }));
+    serialized.practicalApps = serialized.practicalApps.map((pa, i) => ({
+      ...pa,
+      ...translatedContent.practicalApps[i],
+    }));
+    serialized.crossReferences = serialized.crossReferences.map((cr, i) => ({
+      ...cr,
+      ...translatedContent.crossReferences[i],
+    }));
+    serialized.themes = serialized.themes.map((t, i) => ({
+      ...t,
+      ...translatedContent.themes[i],
+    }));
   }
 
-  const verseExplanationResult = {
+  return {
     status: 200,
     message: "Verse explanation fetched successfully",
-    data: { ...serialized, explanation, learnMore },
+    data: serialized,
   };
-  return verseExplanationResult;
 };
 
 export const addVerseExplanation = async (data, userId) => {
@@ -503,80 +554,127 @@ export const addVerseExplanation = async (data, userId) => {
     bookName,
     chapter,
     verseNumber,
-    explanation,
-    learnMore,
     bibleVersion,
-    promptIds,
+    exegesis,
+    studyMetadata,
+    wordStudies,
+    practicalApps,
+    crossReferences,
+    themes,
     id,
   } = data;
+
   if (!bookName || !chapter || !verseNumber)
     return {
       status: 400,
       message: "bookName, chapter, and verseNumber are required",
     };
 
-  const promptIdsJson =
-    promptIds && Array.isArray(promptIds)
-      ? JSON.stringify(promptIds)
-      : promptIds;
-
   const sortOrder = canonicalBookIndex(bookName);
 
-  let verseExplanation;
-  if (id) {
-    verseExplanation = await prisma.verseExplanation.update({
-      where: { id: BigInt(id) },
-      data: {
-        bookName,
-        chapter: BigInt(chapter),
-        verseNumber: BigInt(verseNumber),
-        explanation,
-        learnMore,
-        bibleVersion,
-        promptIds: promptIdsJson,
-        sortOrder,
-        updatedBy: userId,
-      },
-    });
-  } else {
-    verseExplanation = await prisma.verseExplanation.upsert({
-      where: {
-        bookName_chapter_verseNumber: {
-          bookName,
-          chapter: BigInt(chapter),
-          verseNumber: BigInt(verseNumber),
-        },
-      },
-      update: {
-        explanation,
-        learnMore,
-        bibleVersion,
-        promptIds: promptIdsJson,
-        sortOrder,
-        updatedBy: userId,
-      },
-      create: {
-        bookName,
-        chapter: BigInt(chapter),
-        verseNumber: BigInt(verseNumber),
-        explanation,
-        learnMore,
-        bibleVersion,
-        promptIds: promptIdsJson,
-        sortOrder,
-        createdBy: userId,
-      },
-    });
-  }
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Handle Root
+      let root;
+      if (id) {
+        root = await tx.verseExplanation.update({
+          where: { id: BigInt(id) },
+          data: { bookName, chapter: BigInt(chapter), verseNumber: BigInt(verseNumber), bibleVersion, sortOrder, updatedBy: userId },
+        });
+      } else {
+        root = await tx.verseExplanation.upsert({
+          where: { bookName_chapter_verseNumber: { bookName, chapter: BigInt(chapter), verseNumber: BigInt(verseNumber) } },
+          update: { bibleVersion, sortOrder, updatedBy: userId },
+          create: { bookName, chapter: BigInt(chapter), verseNumber: BigInt(verseNumber), bibleVersion, sortOrder, createdBy: userId },
+        });
+      }
 
-  const msg = id
-    ? "Verse explanation updated successfully"
-    : "Verse explanation added successfully";
-  await cache.del(
-    "bible",
-    `explanation:${bookName}:${chapter}:${verseNumber}`,
-  );
-  return { status: 200, message: msg, data: serializeBigInt(verseExplanation) };
+      // 2. Handle Exegesis (1:1)
+      if (exegesis) {
+        await tx.verseExegesis.upsert({
+          where: { explanationId: root.id },
+          update: { explanationText: exegesis.explanationText, applicationText: exegesis.applicationText },
+          create: { explanationId: root.id, explanationText: exegesis.explanationText, applicationText: exegesis.applicationText },
+        });
+      }
+
+      // 3. Handle Metadata (1:1)
+      if (studyMetadata) {
+        await tx.verseStudyMetadata.upsert({
+          where: { explanationId: root.id },
+          update: { ...studyMetadata },
+          create: { explanationId: root.id, ...studyMetadata },
+        });
+      }
+
+      // 4. Handle Collections (1:N) - Delete and Re-insert for simplicity in Admin
+      await tx.verseWordStudy.deleteMany({ where: { explanationId: root.id } });
+      if (wordStudies) {
+        await tx.verseWordStudy.createMany({
+          data: wordStudies.map((ws, i) => ({
+            explanationId: root.id,
+            strongsId: ws.strongsId,
+            surfaceText: ws.surfaceText,
+            customDefinition: ws.customDefinition,
+            sortOrder: ws.sortOrder ?? i,
+          })),
+        });
+      }
+
+      await tx.versePracticalApplication.deleteMany({ where: { explanationId: root.id } });
+      if (practicalApps) {
+        await tx.versePracticalApplication.createMany({
+          data: practicalApps.map((pa, i) => ({
+            explanationId: root.id,
+            applicationText: pa.applicationText,
+            sortOrder: pa.sortOrder ?? i,
+          })),
+        });
+      }
+
+      await tx.verseCrossReference.deleteMany({ where: { explanationId: root.id } });
+      if (crossReferences) {
+        await tx.verseCrossReference.createMany({
+          data: crossReferences.map((cr, i) => ({
+            explanationId: root.id,
+            bookName: cr.bookName,
+            chapter: BigInt(cr.chapter),
+            verseNumber: BigInt(cr.verseNumber),
+            referenceText: cr.referenceText,
+            commentary: cr.commentary,
+            sortOrder: cr.sortOrder ?? i,
+          })),
+        });
+      }
+
+      await tx.verseTheme.deleteMany({ where: { explanationId: root.id } });
+      if (themes) {
+        await tx.verseTheme.createMany({
+          data: themes.map((t, i) => ({
+            explanationId: root.id,
+            themeName: t.themeName,
+            sortOrder: t.sortOrder ?? i,
+          })),
+        });
+      }
+
+      return root;
+    });
+
+    await cache.del("bible", `explanation-detailed:${bookName}:${chapter}:${verseNumber}`);
+    
+    return { 
+      status: 200, 
+      message: id ? "Verse explanation updated successfully" : "Verse explanation added successfully", 
+      data: serializeBigInt(await prisma.verseExplanation.findUnique({
+        where: { id: result.id },
+        include: { exegesis: true, studyMetadata: true, wordStudies: true, practicalApps: true, crossReferences: true, themes: true }
+      }))
+    };
+  } catch (error) {
+    console.error("Error in addVerseExplanation transaction:", error);
+    return { status: 500, message: "Internal server error during save: " + error.message };
+  }
 };
 
 export const getAllVersesExplanation = async (data) => {

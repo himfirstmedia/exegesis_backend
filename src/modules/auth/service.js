@@ -15,12 +15,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COVERS_DIR = path.join(__dirname, "../../../uploads/covers");
 const PROFILE_PHOTOS_DIR = path.join(__dirname, "../../../uploads/profile-photos");
 
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// Validate that GOOGLE_CLIENT_ID is configured
-if (!process.env.GOOGLE_CLIENT_ID) {
-  console.warn("[Auth] GOOGLE_CLIENT_ID is not set in environment variables. Google login will not work properly.");
-}
+
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export const googleLogin = async (data, deviceInfo = null) => {
