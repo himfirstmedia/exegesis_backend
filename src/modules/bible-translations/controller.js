@@ -159,7 +159,12 @@ export const listVersesBatch = async (req, res) => {
     const data = await getVersesBatch(translationId, bookName, numericChapters);
     return res.status(200).json({ success: true, data });
   } catch (error) {
-    return res.status(404).json({ success: false, message: error.message });
+    const msg = error?.message || String(error);
+    if (msg.includes("Translation not found")) {
+      return res.status(404).json({ success: false, message: msg });
+    }
+    console.error(`[verses-batch] Error for ${req.params.translationId}:`, msg);
+    return res.status(500).json({ success: false, message: msg });
   }
 };
 

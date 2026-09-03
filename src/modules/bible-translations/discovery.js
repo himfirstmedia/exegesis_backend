@@ -233,6 +233,22 @@ const readTranslationName = (filePath) => {
  * preserve backward compatibility. If a collision occurs, disambiguates
  * with a numeric suffix.
  */
+const stripLanguagePrefixFromId = (base) => {
+  if (!base) return base;
+  const prefix = findLanguagePrefix(base);
+  if (!prefix || prefix === 'English' || base === prefix) return base;
+
+  const suffix = base.slice(prefix.length);
+  if (!suffix) return base;
+
+  const shouldStrip =
+    /\d/.test(suffix) ||
+    /[A-Z]/.test(suffix.slice(1)) ||
+    /^[A-Z]{2,}/.test(suffix);
+
+  return shouldStrip ? suffix : base;
+};
+
 const buildShortId = (fileId, seen) => {
   if (LEGACY_SHORT_IDS[fileId]) {
     const id = LEGACY_SHORT_IDS[fileId];
@@ -240,18 +256,61 @@ const buildShortId = (fileId, seen) => {
     return id;
   }
   const base = fileId.replace(/Bible$/, '');
-  if (!seen.has(base)) {
-    seen.add(base);
-    return base;
+  const normalizedBase = stripLanguagePrefixFromId(base);
+  const candidate = normalizedBase || base;
+  if (!seen.has(candidate)) {
+    seen.add(candidate);
+    return candidate;
   }
   let i = 2;
-  let id = `${base}_${i}`;
+  let id = `${candidate}_${i}`;
   while (seen.has(id)) {
     i++;
-    id = `${base}_${i}`;
+    id = `${candidate}_${i}`;
   }
   seen.add(id);
   return id;
+};
+
+// Keep only a lean, production-friendly catalog: all free English options plus
+// one common free translation per widely used non-English language.
+export const CURATED_TRANSLATION_SHORT_IDS = new Set([
+  'Berean',
+  'KJV',
+  'NKJ',
+  'ASV',
+  'YLT',
+  'Darby',
+  'GW',
+  'EASY',
+  'TL',
+  'Spanish',
+  'French',
+  'Arabic',
+  'German',
+  'Portuguese',
+  'Russian',
+  'Italian',
+  'Hindi',
+  'Bengali',
+  'Urdu',
+  'Swahili',
+  'ChineseSimplified',
+  'Japanese',
+  'Korean',
+  'Yoruba',
+  'Indonesian',
+  'Polish',
+  'Romanian',
+  'Tagalog',
+  'Turkish',
+  'Ukrainian',
+  'Vietnamese',
+]);
+
+const shouldIncludeCatalogEntry = (entry) => {
+  if (!entry) return false;
+  return CURATED_TRANSLATION_SHORT_IDS.has(entry.shortId);
 };
 
 /**
@@ -285,8 +344,7 @@ export const discoverBibles = (xmlDir) => {
       'English';
     const shortId = buildShortId(fileId, seenShortIds);
     const displayName = readTranslationName(filePath);
-
-    entries.push({
+    const entry = {
       fileId,
       shortId,
       prefix: prefix || base,
@@ -296,7 +354,11 @@ export const discoverBibles = (xmlDir) => {
       fileName,
       filePath,
       fileSize,
-    });
+    };
+
+    if (shouldIncludeCatalogEntry(entry)) {
+      entries.push(entry);
+    }
   }
 
   return entries;

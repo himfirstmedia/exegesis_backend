@@ -189,6 +189,16 @@ const getCatalogVersionCode = (entry) => {
   if (known) return known;
   if (TRANSLATION_DISPLAY_NAMES[entry.shortId]) return entry.shortId;
 
+  const cleanedDisplayName = stripLanguagePrefixFromDisplayName(entry, entry.displayName || '');
+  const acronymVersionMatch = cleanedDisplayName.match(/\b[A-Z]{2,}\s*\d{2,}\b/);
+  if (acronymVersionMatch) return acronymVersionMatch[0].replace(/\s+/g, ' ');
+
+  const acronymMatch = cleanedDisplayName.match(/\b[A-Z]{2,}\b/);
+  if (acronymMatch) return acronymMatch[0];
+
+  const titleVersionMatch = cleanedDisplayName.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+\d{4}\b/);
+  if (titleVersionMatch) return titleVersionMatch[0];
+
   const base = entry.fileId.replace(/Bible$/, '');
   const withoutLanguage =
     entry.prefix && base.startsWith(entry.prefix)
@@ -201,20 +211,43 @@ const humanizeVersionCode = (code) =>
   code
     .replace(/_/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Za-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([A-Za-z])/g, '$1 $2')
     .trim();
+
+const escapeRegExp = (text = '') =>
+  text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const stripLanguagePrefixFromDisplayName = (entry, name) => {
+  if (!name) return name;
+  const prefixes = [entry.languageName, entry.prefix];
+  for (const prefix of prefixes) {
+    if (!prefix) continue;
+    const cleaned = name.replace(new RegExp(`^${escapeRegExp(prefix)}\\s*`, 'i'), '').trim();
+    if (cleaned && cleaned !== name) return cleaned;
+  }
+  return name;
+};
 
 const getCatalogPresentation = (entry) => {
   const abbreviation = getCatalogVersionCode(entry);
   const displayInfo = TRANSLATION_DISPLAY_NAMES[entry.shortId];
-  const baseName = displayInfo?.name || entry.displayName ||
+  const rawName = displayInfo?.name || entry.displayName ||
     (abbreviation === 'Bible' ? 'Holy Bible' : humanizeVersionCode(abbreviation));
-  const name = abbreviation && !baseName.toLowerCase().includes(abbreviation.toLowerCase())
-    ? `${baseName} (${abbreviation})`
-    : baseName;
+  const baseName = stripLanguagePrefixFromDisplayName(entry, rawName)
+    .replace(/^[\s(]+/, '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .replace(/[\s)]+$/g, '');
+  const shouldAppendAbbreviation =
+    abbreviation &&
+    abbreviation !== 'Bible' &&
+    !baseName.toLowerCase().includes(abbreviation.toLowerCase());
+  const name = shouldAppendAbbreviation ? `${baseName} (${abbreviation})` : baseName;
+  const safeAbbreviation = abbreviation === 'Bible' ? entry.shortId : abbreviation;
   return {
-    abbreviation,
+    abbreviation: safeAbbreviation,
     name,
-    fileName: `${abbreviation}.xml`,
+    fileName: `${safeAbbreviation}.xml`,
     year: displayInfo?.year || null,
   };
 };

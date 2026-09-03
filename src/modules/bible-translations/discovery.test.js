@@ -7,9 +7,13 @@ const MODULE_DIR = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 const XML_DIR = path.join(MODULE_DIR, 'Holy-Bible-XML-Format');
 
 describe('discoverBibles', () => {
-  test('discovers > 1000 entries from the XML directory', () => {
+  test('keeps the lean curated free-translation catalog', () => {
     const entries = discoverBibles(XML_DIR);
-    expect(entries.length).toBeGreaterThan(1000);
+    expect(entries.length).toBeLessThan(40);
+    expect(entries.length).toBeGreaterThan(10);
+    expect(entries.map((entry) => entry.shortId)).toEqual(
+      expect.arrayContaining(['Berean', 'KJV', 'ASV', 'French', 'Arabic', 'Spanish']),
+    );
   });
 
   test('every entry has all required fields', () => {
@@ -33,11 +37,11 @@ describe('discoverBibles', () => {
     }
   });
 
-  test('SwahiliSUVBible.xml → shortId "SwahiliSUV", language "sw"', () => {
+  test('SwahiliBible.xml → shortId "Swahili", language "sw"', () => {
     const entries = discoverBibles(XML_DIR);
-    const swahili = entries.find((e) => e.fileName === 'SwahiliSUVBible.xml');
+    const swahili = entries.find((e) => e.fileName === 'SwahiliBible.xml');
     expect(swahili).toBeDefined();
-    expect(swahili.shortId).toBe('SwahiliSUV');
+    expect(swahili.shortId).toBe('Swahili');
     expect(swahili.language).toBe('sw');
     expect(swahili.languageName).toBe('Swahili');
   });
@@ -51,9 +55,9 @@ describe('discoverBibles', () => {
   });
 
   test.each([
-    ['AcehBible.xml', 'ace', 'Aceh'],
-    ['AramaicBible.xml', 'arc', 'Aramaic'],
-    ['AssameseBible.xml', 'as', 'Assamese'],
+    ['FrenchBible.xml', 'fr', 'French'],
+    ['ArabicBible.xml', 'ar', 'Arabic'],
+    ['SpanishBible.xml', 'es', 'Spanish'],
   ])('%s is classified under its actual language', (fileName, code, name) => {
     const entries = discoverBibles(XML_DIR);
     const entry = entries.find((candidate) => candidate.fileName === fileName);
@@ -94,12 +98,11 @@ describe('discoverBibles', () => {
     expect(inconsistent).toEqual([]);
   });
 
-  test('Chinese* files all have language "zh"', () => {
+  test('ChineseSimplifiedBible.xml is included with language "zh"', () => {
     const entries = discoverBibles(XML_DIR);
-    const chinese = entries.filter((e) => e.fileName.startsWith('Chinese'));
-    expect(chinese.length).toBeGreaterThan(10);
-    for (const e of chinese) {
-      expect(e.language).toBe('zh');
-    }
+    const chinese = entries.find((e) => e.fileName === 'ChineseSimplifiedBible.xml');
+    expect(chinese).toBeDefined();
+    expect(chinese.language).toBe('zh');
+    expect(chinese.shortId).toBe('ChineseSimplified');
   });
 });

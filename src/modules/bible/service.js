@@ -608,9 +608,9 @@ export const addVerseExplanation = async (data, userId) => {
       }
 
       // 4. Handle Collections (1:N) - Delete and Re-insert for simplicity in Admin
-      await tx.verseWordStudy.deleteMany({ where: { explanationId: root.id } });
+      await tx.verseWordStudyEntry.deleteMany({ where: { explanationId: root.id } });
       if (wordStudies) {
-        await tx.verseWordStudy.createMany({
+        await tx.verseWordStudyEntry.createMany({
           data: wordStudies.map((ws, i) => ({
             explanationId: root.id,
             strongsId: ws.strongsId,
@@ -689,9 +689,8 @@ export const getAllVersesExplanation = async (data) => {
     const q = String(search).trim();
     whereClause.OR = [
       { bookName: { contains: q, mode: "insensitive" } },
-      { explanation: { contains: q, mode: "insensitive" } },
-      { learnMore: { contains: q, mode: "insensitive" } },
       { bibleVersion: { contains: q, mode: "insensitive" } },
+      { exegesis: { explanationText: { contains: q, mode: "insensitive" } } },
     ];
   }
 
@@ -721,15 +720,17 @@ export const getAllVersesExplanation = async (data) => {
   });
 
   if (lang !== "en" && serialized.explanations?.length > 0) {
-    const expls = serialized.explanations.map((e) => e.explanation || "");
-    const learns = serialized.explanations.map((e) => e.learnMore || "");
-    const [tExpls, tLearns] = await Promise.all([
+    const expls = serialized.explanations.map((e) => e.exegesis?.explanationText || "");
+    const apps = serialized.explanations.map((e) => e.exegesis?.applicationText || "");
+    const [tExpls, tApps] = await Promise.all([
       translateMany(expls, lang),
-      translateMany(learns, lang),
+      translateMany(apps, lang),
     ]);
     serialized.explanations.forEach((e, i) => {
-      e.explanation = tExpls[i] || e.explanation;
-      e.learnMore = tLearns[i] || e.learnMore;
+      if (e.exegesis) {
+        e.exegesis.explanationText = tExpls[i] || e.exegesis.explanationText;
+        e.exegesis.applicationText = tApps[i] || e.exegesis.applicationText;
+      }
     });
   }
 
