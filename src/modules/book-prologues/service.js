@@ -16,6 +16,55 @@ const TRANSLATABLE_FIELDS = [
 ];
 const PARAGRAPH_SEPARATOR = /(\r?\n[ \t]*\r?\n+)/;
 
+// Normalize an incoming keyScripture entry into the canonical structured shape:
+// { bookName, chapter, verse, translation, reference, text }. Legacy entries
+// stored as { reference, text } are coerced (chapter/verse parsed from reference
+// when possible) so editors relying on the structured fields keep working.
+const numOrNull = (val) => {
+  const n = Number(val);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+const parseReferenceParts = (reference = '') => {
+  const match = String(reference).match(/^(.+?)\s+(\d+):(\d+)/);
+  if (!match) return {};
+  return { bookName: match[1].trim(), chapter: numOrNull(match[2]), verse: numOrNull(match[3]) };
+};
+
+const normalizeKeyScripture = (entries) =>
+  entries
+    .filter((e) => e && typeof e === 'object')
+    .map((entry) => {
+      const base = {
+        bookName:
+          typeof entry.bookName === 'string' && entry.bookName.trim()
+            ? entry.bookName.trim()
+            : parseReferenceParts(entry.reference || entry.ref).bookName || '',
+        chapter:
+          numOrNull(entry.chapter) ??
+          parseReferenceParts(entry.reference || entry.ref).chapter,
+        verse:
+          numOrNull(entry.verse) ??
+          parseReferenceParts(entry.reference || entry.ref).verse,
+        translation:
+          typeof entry.translation === 'string' && entry.translation.trim()
+            ? entry.translation.trim()
+            : '',
+        reference:
+          typeof entry.reference === 'string' ? entry.reference : '',
+        text: typeof entry.text === 'string' ? entry.text : '',
+      };
+      // Keep a display reference even if only structured fields were supplied.
+      if (!base.reference && base.bookName && base.chapter && base.verse) {
+        base.reference = `${base.bookName} ${base.chapter}:${base.verse}${
+          base.translation ? ` (${base.translation})` : ''
+        }`;
+      }
+      return base;
+    })
+    .filter((entry) => entry.bookName || entry.reference || entry.text);
+
+
 const replaceParagraph = (segments, index, value) => {
   const source = segments[index] || '';
   const leadingSpace = source.match(/^[ \t]*/)?.[0] || '';
@@ -175,7 +224,7 @@ export const upsertBookPrologue = async (userId, body) => {
     chapters: Number.isFinite(Number(chapters)) && chapters !== null && chapters !== '' ? Number(chapters) : null,
     structure: Array.isArray(structure) ? structure : [],
     applications: Array.isArray(applications) ? applications : [],
-    keyScripture: Array.isArray(keyScripture) ? keyScripture : [],
+    keyScripture: Array.isArray(keyScripture) ? normalizeKeyScripture(keyScripture) : [],
     mainThemes: Array.isArray(mainThemes) ? mainThemes : [],
     keyPeople: Array.isArray(keyPeople) ? keyPeople : [],
     keyVerses: Array.isArray(keyVerses) ? keyVerses : [],

@@ -894,7 +894,7 @@ model BookPrologue {
   chapters          Int?
   structure         Json?    @map("structure") // [{ range, title }] — chapter-structure breakdown
   applications      Json?    @map("applications") // string[] — "Key Application for Today" bullets
-  keyScripture      Json?    @map("key_scripture") // [{ reference, text }] — verses quoted in the overview
+  keyScripture      Json?    @map("key_scripture") // [{ bookName, chapter, verse, translation, reference, text }] — verses quoted in the overview (reference/text autofilled from selector)
   mainThemes        Json?    @map("main_themes")
   keyPeople         Json?    @map("key_people")
   keyVerses         Json?    @map("key_verses")

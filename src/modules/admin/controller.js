@@ -428,6 +428,29 @@ const resolveTierFromPriceId = async (priceId, interval) => {
  * Fetch all active Stripe subscriptions, expanding only customer + price
  * (both at 3 levels deep — well within Stripe's 4-level limit).
  */
+/**
+ * Resolve the access-expiry Date for a Stripe subscription.
+ *
+ * `subscription.current_period_end` is the preferred source, but some test/
+ * legacy subscriptions omit it. In that case fall back to the latest invoice's
+ * `period_end` (or its creation time) so expiry is never silently empty.
+ */
+const resolveSubExpiry = async (sub) => {
+  if (sub.current_period_end) return new Date(sub.current_period_end * 1000);
+
+  try {
+    const invoiceId =
+      typeof sub.latest_invoice === "object" ? sub.latest_invoice?.id : sub.latest_invoice;
+    if (invoiceId) {
+      const invoice = await stripe.invoices.retrieve(invoiceId);
+      const ts = invoice.period_end || invoice.created;
+      if (ts) return new Date(ts * 1000);
+    }
+  } catch { /* fall through */ }
+
+  return null;
+};
+
 const fetchAllStripeSubscriptions = async () => {
   const subs = [];
   let hasMore = true;
@@ -463,6 +486,7 @@ export const getSubscribedUsers = async (req, res) => {
       const priceId = sub.items?.data?.[0]?.price?.id;
       const interval = sub.items?.data?.[0]?.price?.recurring?.interval;
       const tierId = await resolveTierFromPriceId(priceId, interval);
+      const expiry = await resolveSubExpiry(sub);
 
       stripeByCustomer.set(customerId, {
         stripeSubscriptionId: sub.id,
@@ -470,12 +494,8 @@ export const getSubscribedUsers = async (req, res) => {
         stripeEmail: email,
         stripeTier: tierId,
         stripeStatus: sub.status,
-        stripeCurrentPeriodEnd: sub.current_period_end
-          ? new Date(sub.current_period_end * 1000).toISOString()
-          : null,
-        accessExpiresAt: sub.current_period_end
-          ? new Date(sub.current_period_end * 1000)
-          : null,
+        stripeCurrentPeriodEnd: expiry ? expiry.toISOString() : null,
+        accessExpiresAt: expiry,
       });
     }
 
@@ -562,6 +582,12 @@ export const getSubscribedUsers = async (req, res) => {
         ? "Active in DB but no Stripe subscription found"
         : null;
 
+      const suspended = u.accountStatus === "suspended";
+      const expired =
+        u.accessExpiresAt != null &&
+        !isNaN(new Date(u.accessExpiresAt).getTime()) &&
+        new Date(u.accessExpiresAt).getTime() < Date.now();
+
       return {
         id: u.id,
         firstName: u.firstName,
@@ -572,7 +598,9 @@ export const getSubscribedUsers = async (req, res) => {
           ? (u.accessExpiresAt instanceof Date ? u.accessExpiresAt.toISOString() : u.accessExpiresAt)
           : null,
         legacySowerSlot: u.legacySowerSlot,
-        isSuspended: u.accountStatus === "suspended",
+        isSuspended: suspended,
+        isExpired: expired,
+        status: expired ? "expired" : suspended ? "suspended" : "active",
         createdOn: u.createdOn instanceof Date ? u.createdOn.toISOString() : u.createdOn,
         stripeCustomerId: u.stripeCustomerId,
         stripeSubscriptionId: stripeData?.stripeSubscriptionId || u.stripeSubscriptionId,
@@ -608,6 +636,10 @@ export const getSubscribedUsers = async (req, res) => {
         }).catch(() => {}); // non-fatal
       }
 
+      const stripeOnlyExpired =
+        stripeData.accessExpiresAt != null &&
+        new Date(stripeData.accessExpiresAt).getTime() < Date.now();
+
       stripeOnlyUsers.push({
         id: dbMatch?.id || null,
         firstName: dbMatch?.firstName || null,
@@ -617,6 +649,8 @@ export const getSubscribedUsers = async (req, res) => {
         accessExpiresAt: stripeData.stripeCurrentPeriodEnd,
         legacySowerSlot: dbMatch?.legacySowerSlot || null,
         isSuspended: false,
+        isExpired: stripeOnlyExpired,
+        status: stripeOnlyExpired ? "expired" : "active",
         createdOn: null,
         stripeCustomerId: customerId,
         stripeSubscriptionId: stripeData.stripeSubscriptionId,
@@ -635,12 +669,34 @@ export const getSubscribedUsers = async (req, res) => {
       (u) => u.subscriptionTier !== "free" || u.source !== "db" || u.stripeStatus === "active"
     );
 
+    const now = Date.now();
+    const WEEK = 7 * 24 * 60 * 60 * 1000;
+    const paidUsers = allUsers.filter(
+      (u) => u.subscriptionTier !== "free" && u.subscriptionTier !== "unknown"
+    );
+
+    const tierCounts = {};
+    for (const u of paidUsers) {
+      const base = String(u.subscriptionTier).replace(/_monthly$/, "");
+      tierCounts[base] = (tierCounts[base] || 0) + 1;
+    }
+
     const summary = {
       totalInDB: dbUsers.filter((u) => u.subscriptionTier !== "free").length,
       totalInStripe: stripeSubscriptions.length,
+      active: allUsers.filter((u) => u.status === "active").length,
+      suspended: allUsers.filter((u) => u.isSuspended).length,
+      expired: allUsers.filter((u) => u.isExpired).length,
+      paid: paidUsers.length,
+      expiringSoon: allUsers.filter((u) => {
+        if (!u.accessExpiresAt) return false;
+        const t = new Date(u.accessExpiresAt).getTime();
+        return t > now && t - now < WEEK;
+      }).length,
       outOfSync: allUsers.filter((u) => u.outOfSync).length,
       stripeOnly: stripeOnlyUsers.filter((u) => u.source === "stripe_only").length,
       autoSynced: syncPromises.length,
+      tierCounts,
     };
 
     return res.json(formatApiResponse({
@@ -673,9 +729,7 @@ export const syncStripeSubscribers = async (req, res) => {
       const priceId = sub.items?.data?.[0]?.price?.id;
       const interval = sub.items?.data?.[0]?.price?.recurring?.interval;
       const tierId = await resolveTierFromPriceId(priceId, interval);
-      const periodEnd = sub.current_period_end
-        ? new Date(sub.current_period_end * 1000)
-        : null;
+      const periodEnd = await resolveSubExpiry(sub);
 
       if (!email) continue;
 
@@ -1104,33 +1158,88 @@ export const refundUserSubscription = async (req, res) => {
       return res.status(404).json(formatApiResponse({ status: 404, message: "User not found" }));
     }
 
-    if (!user.stripeSubscriptionId) {
-      return res.status(400).json(formatApiResponse({ status: 400, message: "User has no active Stripe subscription to refund" }));
+    if (!user.stripeSubscriptionId && !user.stripeCustomerId) {
+      return res.status(400).json(formatApiResponse({
+        status: 400,
+        message: "User is not connected to Stripe (no customer or subscription). Set the tier/expiry manually instead.",
+      }));
     }
 
-    // Retrieve the Stripe subscription to get the latest invoice's payment intent
-    const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
-    const latestInvoice = subscription.latest_invoice;
+    // ── Resolve a refundable payment source (payment intent or charge) ──────
+    // Invoices do not always carry a top-level `payment_intent` (charges may be
+    // created directly with a charge-level PI, no `invoice` backref). So we walk
+    // a chain of fallbacks to find something Stripe will actually refund.
+    let paymentId = null;
+    let refundType = null;
 
-    if (!latestInvoice) {
-      return res.status(400).json(formatApiResponse({ status: 400, message: "No invoice found for this subscription" }));
+    // 1. From the latest invoice's payment_intent
+    if (user.stripeSubscriptionId) {
+      try {
+        const sub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId, { expand: ["latest_invoice"] });
+        const li = sub.latest_invoice;
+        if (li && typeof li === "object" && li.id) {
+          const invoice = await stripe.invoices.retrieve(li.id);
+          if (invoice.payment_intent) {
+            paymentId = typeof invoice.payment_intent === "object" ? invoice.payment_intent.id : invoice.payment_intent;
+            refundType = "payment_intent";
+          } else if (invoice.charge) {
+            paymentId = typeof invoice.charge === "object" ? invoice.charge.id : invoice.charge;
+            refundType = "charge";
+          }
+        }
+      } catch { /* fall through */ }
     }
 
-    const invoice = await stripe.invoices.retrieve(latestInvoice);
-    const paymentIntent = invoice.payment_intent;
-
-    if (!paymentIntent) {
-      return res.status(400).json(formatApiResponse({ status: 400, message: "No payment intent found for this invoice" }));
+    // 2. Latest captured, non-refunded charge for the customer (payment_intent at charge level)
+    if (!paymentId && (user.stripeSubscriptionId || user.stripeCustomerId)) {
+      try {
+        const charges = await stripe.charges.list({
+          customer: user.stripeCustomerId || undefined,
+          limit: 20,
+        });
+        const match = charges.data.find((c) => !c.refunded && c.captured);
+        if (match) {
+          paymentId = match.payment_intent || match.id;
+          refundType = match.payment_intent ? "payment_intent" : "charge";
+        }
+      } catch { /* fall through */ }
     }
 
-    // Process the refund
+    // 3. Any payment intent for the customer
+    if (!paymentId && user.stripeCustomerId) {
+      try {
+        const pis = await stripe.paymentIntents.list({ customer: user.stripeCustomerId, limit: 20 });
+        const match = pis.data.find((p) => p.status === "succeeded" && p.amount > 0);
+        if (match) {
+          paymentId = match.id;
+          refundType = "payment_intent";
+        }
+      } catch { /* fall through */ }
+    }
+
+    if (!paymentId) {
+      return res.status(400).json(formatApiResponse({
+        status: 400,
+        message: "No refundable payment found on Stripe for this subscription (no payment intent or charge).",
+      }));
+    }
+
+    // ── Issue the refund on the resolved payment source ─────────────────────
+    const refundParams = refundType === "payment_intent"
+      ? { payment_intent: paymentId }
+      : { charge: paymentId };
+
     const refund = await stripe.refunds.create({
-      payment_intent: paymentIntent,
+      ...refundParams,
       reason: reason === "duplicate" ? "duplicate" : "requested_by_customer",
     });
 
-    // Cancel the subscription
-    await stripe.subscriptions.cancel(user.stripeSubscriptionId);
+    // Cancel the subscription (non-fatal if it no longer exists)
+    if (user.stripeSubscriptionId) {
+      try {
+        await stripe.subscriptions.cancel(user.stripeSubscriptionId);
+      } catch { /* already cancelled/nonexistent */ }
+    }
 
     // Update user record
     await prisma.systemUser.update({
@@ -1148,7 +1257,7 @@ export const refundUserSubscription = async (req, res) => {
         eventType: "cancelled",
         tier: "free",
         stripeEventId: refund.id,
-        metadata: { action: "refunded", reason: reason || "requested_by_customer", refundId: refund.id, updatedBy: req.user.id },
+        metadata: { action: "refunded", reason: reason || "requested_by_customer", refundId: refund.id, refundType, updatedBy: req.user.id },
       },
     });
 
