@@ -38,6 +38,15 @@ const getMaxBatchItems = () => {
   return Number.isInteger(value) && value > 0 ? value : 100;
 };
 
+// Hard cap on how long a daily-content translation may take before the API
+// returns the original (English) text. The mobile client's HTTP timeout is 15s,
+// so letting a slow translation provider run for longer would surface as a
+// Network Error / failed request on the device. Tight just under that budget.
+const getTranslationTimeBudget = () => {
+  const value = Number.parseInt(process.env.TRANSLATION_TIME_BUDGET_MS, 10);
+  return Number.isInteger(value) && value > 0 ? value : 12000;
+};
+
 const addText = (entries, value, setValue) => {
   if (
     typeof value === "string" &&
@@ -85,17 +94,37 @@ const addWordStudies = (record, entries) => {
   }
 };
 
+const withTimeout = (promise, ms) => {
+  if (!ms || ms <= 0) return promise;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Translation exceeded ${ms}ms budget`)),
+      ms,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+};
+
 const translateEntries = async (entries, lang) => {
   const maxCharacters = getMaxBatchCharacters();
   const maxItems = getMaxBatchItems();
+  const budgetMs = getTranslationTimeBudget();
+  const startedAt = Date.now();
   let group = [];
   let characterCount = 0;
 
   const flush = async () => {
     if (!group.length) return;
-    const result = await translateMany(
-      group.map((entry) => entry.value),
-      lang,
+    // Keep the budget honest across multiple flushes: remaining budget goes
+    // down as time elapses, so a long devotion cannot exceed the cap in total.
+    const remaining = budgetMs - (Date.now() - startedAt);
+    const result = await withTimeout(
+      translateMany(
+        group.map((entry) => entry.value),
+        lang,
+      ),
+      Math.max(remaining, 1),
     );
     result.forEach((translation, index) => {
       group[index].setValue(translation);

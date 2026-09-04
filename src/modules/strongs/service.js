@@ -557,6 +557,21 @@ export const upsertVerseWordStudy = async ({ strongsId, bookName, chapter, verse
       include: { strongs: true },
     });
   } else {
+    // Ensure Strong's entry exists to satisfy FK constraint. If missing,
+    // create a minimal placeholder so the new verseWordStudy can reference it.
+    if (strongsId) {
+      try {
+        await prisma.strongsDictionary.upsert({
+          where: { strongsId },
+          update: {},
+          create: { strongsId, shortDefinition: `Imported entry for ${strongsId}`, language: 'hebrew' },
+        });
+      } catch (e) {
+        // Log but continue — if creation fails, the subsequent create may fail
+        console.error('[upsertVerseWordStudy] Could not ensure Strongs entry exists:', e);
+      }
+    }
+
     result = await prisma.verseWordStudy.create({
       data: {
         strongsId,

@@ -111,4 +111,22 @@ describe("daily content translation", () => {
     await expect(translateDailyDevotionContent(item, "ar")).resolves.toBe(item);
     warning.mockRestore();
   });
+
+  test("falls back to the original record when translation exceeds the time budget", async () => {
+    jest.useFakeTimers();
+    const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
+    // Simulate a slow / hanging translation provider by never resolving.
+    translateMany.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    const item = { title: "Slow title", content: "Slow content" };
+
+    const promise = translateDailyDevotionContent(item, "ar");
+    // Budget is 12s by default; advance the fake timers past it to abort.
+    jest.advanceTimersByTime(13000);
+    await expect(promise).resolves.toBe(item);
+    expect(translateMany).toHaveBeenCalled();
+    warning.mockRestore();
+    jest.useRealTimers();
+  });
 });

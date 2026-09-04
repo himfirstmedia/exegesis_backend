@@ -16,6 +16,48 @@ const MODULE_DIR = (() => {
 })();
 const XML_DIR = path.join(MODULE_DIR, 'Holy-Bible-XML-Format');
 
+// Persisted precomputed books/chapters metadata (books, chapter counts, verse
+// counts). Built once per translation by scanning the XML, then written to disk
+// so subsequent reads (and server restarts) never re-scan the multi-MB files.
+const BOOKS_INDEX_DIR = path.join(MODULE_DIR, 'index');
+const booksIndexPromise = new Map(); // fullId -> Promise<books[]>
+const booksIndexLoaded = new Map();  // fullId -> books[] (cached copy)
+
+const readBooksIndexFromDisk = (filePath) => {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Returns the precomputed books array for a translation, building + persisting it once. */
+const getPrecomputedBooks = async (id, buildFn) => {
+  const fullId = toFullId(id);
+  if (booksIndexLoaded.has(fullId)) return booksIndexLoaded.get(fullId);
+  if (booksIndexPromise.has(fullId)) return booksIndexPromise.get(fullId);
+
+  const filePath = path.join(BOOKS_INDEX_DIR, `${fullId}.books.json`);
+  const onDisk = readBooksIndexFromDisk(filePath);
+  if (onDisk) {
+    booksIndexLoaded.set(fullId, onDisk);
+    return onDisk;
+  }
+
+  const promise = buildFn().then((books) => {
+    booksIndexLoaded.set(fullId, books);
+    booksIndexPromise.delete(fullId);
+    fs.mkdirSync(BOOKS_INDEX_DIR, { recursive: true });
+    fs.promises.writeFile(filePath, JSON.stringify(books)).catch((err) => {
+      console.error(`[BooksIndex] Failed to persist index for ${fullId}:`, err?.message || err);
+    });
+    return books;
+  });
+  booksIndexPromise.set(fullId, promise);
+  return promise;
+};
+
 // In-memory cache for parsed XML documents — avoids re-parsing the same translation
 // XML file on every getVerses/getChapters call. Keyed by full translation ID.
 // LRU eviction: keeps the most recently used entries to cap memory.
@@ -586,9 +628,11 @@ export const getBooks = async (id) => {
   const cached = await cache.get('bible', cacheKey);
   if (cached) return cached;
 
-  const xml = await getRawBibleXml(id);
-  const result = extractBooksFromRawXml(xml);
-  
+  const result = await getPrecomputedBooks(id, async () => {
+    const xml = await getRawBibleXml(id);
+    return extractBooksFromRawXml(xml);
+  });
+
   await cache.set('bible', cacheKey, result);
   return result;
 };

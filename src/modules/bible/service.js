@@ -610,15 +610,37 @@ export const addVerseExplanation = async (data, userId) => {
       // 4. Handle Collections (1:N) - Delete and Re-insert for simplicity in Admin
       await tx.verseWordStudyEntry.deleteMany({ where: { explanationId: root.id } });
       if (wordStudies) {
-        await tx.verseWordStudyEntry.createMany({
-          data: wordStudies.map((ws, i) => ({
-            explanationId: root.id,
-            strongsId: ws.strongsId,
-            surfaceText: ws.surfaceText,
-            customDefinition: ws.customDefinition,
-            sortOrder: ws.sortOrder ?? i,
-          })),
-        });
+        // Collect unique, non-empty strongsIds provided in the payload
+        const inputStrongIds = Array.from(new Set(wordStudies.map(ws => ws.strongsId).filter(Boolean)));
+
+        // Find which strongsIds already exist
+        let existingStrongIds = new Set();
+        if (inputStrongIds.length > 0) {
+          const existing = await tx.strongsDictionary.findMany({ where: { strongsId: { in: inputStrongIds } }, select: { strongsId: true } });
+          existingStrongIds = new Set(existing.map((e) => e.strongsId));
+        }
+
+        // Determine missing strongsIds and create minimal dictionary entries for them
+        const missing = inputStrongIds.filter(sid => !existingStrongIds.has(sid));
+        if (missing.length > 0) {
+          // Create minimal entries. shortDefinition is required in schema.
+          const toCreate = missing.map((sid) => ({ strongsId: sid, shortDefinition: `Imported entry for ${sid}` }));
+          // Use createMany with skipDuplicates to avoid race errors; this runs inside tx
+          await tx.strongsDictionary.createMany({ data: toCreate, skipDuplicates: true });
+          // Add them to the existing set so subsequent inserts can reference them
+          missing.forEach((sid) => existingStrongIds.add(sid));
+        }
+
+        const preparedWordStudies = wordStudies.map((ws, i) => ({
+          explanationId: root.id,
+          strongsId: ws.strongsId && existingStrongIds.has(ws.strongsId) ? ws.strongsId : null,
+          surfaceText: ws.surfaceText,
+          customDefinition: ws.customDefinition,
+          sortOrder: ws.sortOrder ?? i,
+        }));
+
+        // Insert prepared rows now that missing Strong's entries exist
+        await tx.verseWordStudyEntry.createMany({ data: preparedWordStudies });
       }
 
       await tx.versePracticalApplication.deleteMany({ where: { explanationId: root.id } });
@@ -695,10 +717,15 @@ export const getAllVersesExplanation = async (data) => {
   }
 
   const [explanations, totalCount] = await Promise.all([
+    // Include small related payloads so list views can show explanation snippets
     prisma.verseExplanation.findMany({
       where: whereClause,
       skip: offset,
       take: pageSizeNum,
+      include: {
+        exegesis: true,
+        studyMetadata: true,
+      },
       // Canonical Bible order (Genesis first), with book/chapter/verse as a
       // stable fallback inside each book.
       orderBy: [
@@ -1024,14 +1051,24 @@ export const getTodaysVerse = async (data = {}) => {
       learnMore: dvLearnMore,
     },
   };
-  const finalResult = lang !== "en"
-    ? {
-        ...todaysVerseResult,
-        data: await translateDailyVerseContent(todaysVerseResult.data, lang),
-      }
-    : todaysVerseResult;
+  // Cache the language-specific (translated) response so every device hitting
+  // the same language/day shares one translation instead of each request paying
+  // the translation latency (which can exceed the app's HTTP timeout when the
+  // translation provider is slow). English is already cached via the base key.
+  const normLang = String(lang || "en").trim().toLowerCase();
+  if (normLang === "en") return todaysVerseResult;
 
-  return finalResult;
+  const translatedTodaysVerse = await cache.getOrSet(
+    "bible",
+    `todays-verse:v2:translated:${normLang}`,
+    async () => ({
+      ...todaysVerseResult,
+      data: await translateDailyVerseContent(todaysVerseResult.data, normLang),
+    }),
+    1800,
+  );
+
+  return translatedTodaysVerse;
 };
 
 export const getDailyVerseByRef = async (data) => {
@@ -1115,12 +1152,22 @@ export const getTodaysDevotion = async (data = {}) => {
     message: "Today's devotion fetched successfully",
     data: dv,
   };
-  return lang !== "en"
-    ? {
-        ...result,
-        data: await translateDailyDevotionContent(result.data, lang),
-      }
-    : result;
+  // Cache the language-specific (translated) response so all devices sharing a
+  // language/day reuse a single translation instead of each paying the latency.
+  const normLang = String(lang || "en").trim().toLowerCase();
+  if (normLang === "en") return result;
+
+  const translatedDevotion = await cache.getOrSet(
+    "bible",
+    `todays-devotion:translated:${normLang}`,
+    async () => ({
+      ...result,
+      data: await translateDailyDevotionContent(result.data, normLang),
+    }),
+    1800,
+  );
+
+  return translatedDevotion;
 };
 
 export const getDevotionByDate = async (data) => {
