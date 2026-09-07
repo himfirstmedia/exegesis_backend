@@ -6,14 +6,23 @@
  * flow sent a second response — ERR_HTTP_HEADERS_SENT. The reconciliation
  * must only mutate state; the outer flow sends exactly one response.
  */
-import { getSubscriptionStatus, listTiers } from "./controller.js";
+import {
+  createCheckoutSession,
+  getSubscriptionStatus,
+  listTiers,
+} from "./controller.js";
 
 // Mock the Stripe client and Prisma BEFORE the controller module loads
 // (jest hoists these above the static import).
 jest.mock("stripe", () =>
   jest.fn().mockImplementation(() => ({
     customers: { list: jest.fn() },
-    subscriptions: { list: jest.fn() },
+    subscriptions: {
+      list: jest.fn(),
+      retrieve: jest.fn(),
+      update: jest.fn(),
+    },
+    checkout: { sessions: { create: jest.fn() } },
     prices: { retrieve: jest.fn() },
   })),
 );
@@ -34,7 +43,8 @@ jest.mock("../../config/db.js", () => ({
 
 jest.mock("../../utils/translator.js", () => ({
   normalizeLanguage: jest.fn((lang, fallback = "en") =>
-    typeof lang === "string" && lang.trim() ? lang.trim() : fallback),
+    typeof lang === "string" && lang.trim() ? lang.trim() : fallback,
+  ),
   translateMany: jest.fn(),
 }));
 
@@ -76,7 +86,10 @@ describe("getSubscriptionStatus — single-response guarantee", () => {
       stripeSubscriptionId: null,
       legacySowerSlot: null,
     });
-    prisma.subscriptionTier.findUnique.mockResolvedValue({ id: "free", name: "Free" });
+    prisma.subscriptionTier.findUnique.mockResolvedValue({
+      id: "free",
+      name: "Free",
+    });
 
     const stripeInstance = getStripeInstance();
     stripeInstance.customers.list.mockResolvedValue({ data: [] });
@@ -104,23 +117,35 @@ describe("getSubscriptionStatus — single-response guarantee", () => {
     });
     prisma.systemUser.update.mockResolvedValue({});
     prisma.subscriptionTier.findFirst.mockResolvedValue(null); // price not in DB → Stripe lookup
-    prisma.subscriptionTier.findUnique.mockResolvedValue({ id: "covenant_sower", name: "Covenant Sower" });
+    prisma.subscriptionTier.findUnique.mockResolvedValue({
+      id: "covenant_sower",
+      name: "Covenant Sower",
+    });
 
     const stripeInstance = getStripeInstance();
-    stripeInstance.customers.list.mockResolvedValue({ data: [{ id: "cus_1" }] });
+    stripeInstance.customers.list.mockResolvedValue({
+      data: [{ id: "cus_1" }],
+    });
     stripeInstance.subscriptions.list.mockResolvedValue({
       data: [
         {
           id: "sub_1",
           current_period_end: Math.floor(Date.now() / 1000) + 86400,
-          items: { data: [{ price: { id: "price_1", recurring: { interval: "month" } } }] },
+          items: {
+            data: [
+              { price: { id: "price_1", recurring: { interval: "month" } } },
+            ],
+          },
           _customerId: "cus_1",
         },
       ],
     });
     stripeInstance.prices.retrieve.mockResolvedValue({
       id: "price_1",
-      product: { name: "Covenant Sower", metadata: { tierId: "covenant_sower" } },
+      product: {
+        name: "Covenant Sower",
+        metadata: { tierId: "covenant_sower" },
+      },
     });
 
     const req = { user: { id: "u1", email: "reader@example.com" } };
@@ -150,7 +175,10 @@ describe("getSubscriptionStatus — single-response guarantee", () => {
       stripeSubscriptionId: "sub_1",
       legacySowerSlot: null,
     });
-    prisma.subscriptionTier.findUnique.mockResolvedValue({ id: "covenant_sower", name: "Covenant Sower" });
+    prisma.subscriptionTier.findUnique.mockResolvedValue({
+      id: "covenant_sower",
+      name: "Covenant Sower",
+    });
 
     const stripeInstance = getStripeInstance();
     // Reconciliation must not run for paid users — these should never be called.
@@ -165,6 +193,94 @@ describe("getSubscriptionStatus — single-response guarantee", () => {
     expect(stripeInstance.customers.list).not.toHaveBeenCalled();
     expect(res.body.returnCode).toBe(200);
     expect(res.body.returnData.subscriptionTier).toBe("covenant_sower");
+  });
+});
+
+describe("createCheckoutSession — one subscription per user", () => {
+  test("rejects a second checkout for the same active plan", async () => {
+    const prisma = getPrisma();
+    prisma.systemUser.findUnique.mockResolvedValue({
+      id: "u1",
+      email: "reader@example.com",
+      firstName: "Reader",
+      lastName: "Example",
+      subscriptionTier: "legacy_sower_monthly",
+      stripeCustomerId: "cus_1",
+      stripeSubscriptionId: "sub_1",
+    });
+    prisma.subscriptionTier.findUnique.mockResolvedValue({
+      id: "legacy_sower_monthly",
+      stripePriceId: "price_legacy_monthly",
+    });
+
+    const stripeInstance = getStripeInstance();
+    stripeInstance.customers.retrieve.mockResolvedValue({ id: "cus_1" });
+    stripeInstance.subscriptions.retrieve.mockResolvedValue({
+      id: "sub_1",
+      status: "active",
+      items: { data: [{ id: "si_1", price: { id: "price_legacy_monthly" } }] },
+    });
+
+    const res = makeRes();
+    await createCheckoutSession(
+      {
+        body: { tier: "legacy_sower", interval: "month" },
+        user: { id: "u1" },
+      },
+      res,
+    );
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.returnMessage).toMatch(
+      /already have an active subscription/i,
+    );
+    expect(stripeInstance.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(stripeInstance.subscriptions.update).not.toHaveBeenCalled();
+  });
+
+  test("changes the existing subscription item instead of creating another subscription", async () => {
+    const prisma = getPrisma();
+    prisma.systemUser.findUnique.mockResolvedValue({
+      id: "u1",
+      email: "reader@example.com",
+      firstName: "Reader",
+      lastName: "Example",
+      subscriptionTier: "legacy_sower_monthly",
+      stripeCustomerId: "cus_1",
+      stripeSubscriptionId: "sub_1",
+    });
+    prisma.subscriptionTier.findUnique.mockResolvedValue({
+      id: "covenant_sower_monthly",
+      stripePriceId: "price_covenant_monthly",
+    });
+
+    const stripeInstance = getStripeInstance();
+    stripeInstance.customers.retrieve.mockResolvedValue({ id: "cus_1" });
+    stripeInstance.subscriptions.retrieve.mockResolvedValue({
+      id: "sub_1",
+      status: "active",
+      items: { data: [{ id: "si_1", price: { id: "price_legacy_monthly" } }] },
+    });
+    stripeInstance.subscriptions.update.mockResolvedValue({ id: "sub_1" });
+
+    const res = makeRes();
+    await createCheckoutSession(
+      {
+        headers: { origin: "https://app.exegesisproject.org" },
+        body: { tier: "covenant_sower", interval: "month" },
+        user: { id: "u1" },
+      },
+      res,
+    );
+
+    expect(res.body.returnCode).toBe(200);
+    expect(stripeInstance.subscriptions.update).toHaveBeenCalledWith(
+      "sub_1",
+      expect.objectContaining({
+        items: [{ id: "si_1", price: "price_covenant_monthly" }],
+      }),
+    );
+    expect(stripeInstance.checkout.sessions.create).not.toHaveBeenCalled();
   });
 });
 
@@ -200,7 +316,12 @@ describe("listTiers field-safe translation", () => {
 
     expect(translator.normalizeLanguage).toHaveBeenCalledWith("es");
     expect(translator.translateMany).toHaveBeenCalledWith(
-      ["Legacy Sower", "For committed readers", "Advanced study", "Legacy badge"],
+      [
+        "Legacy Sower",
+        "For committed readers",
+        "Advanced study",
+        "Legacy badge",
+      ],
       "es",
     );
     expect(res.body.returnData.tiers[0]).toEqual({
@@ -222,16 +343,18 @@ describe("listTiers field-safe translation", () => {
 
     expect(translator.normalizeLanguage).toHaveBeenCalledWith("en");
     expect(translator.translateMany).not.toHaveBeenCalled();
-    expect(res.body.returnData.tiers[0]).toEqual(expect.objectContaining({
-      id: "free",
-      name: "Free",
-      price: 0,
-      currency: "usd",
-      interval: "none",
-      features: ["Bible reading", "Daily verse", "Basic tools"],
-      isActive: true,
-      sortOrder: 0,
-    }));
+    expect(res.body.returnData.tiers[0]).toEqual(
+      expect.objectContaining({
+        id: "free",
+        name: "Free",
+        price: 0,
+        currency: "usd",
+        interval: "none",
+        features: ["Bible reading", "Daily verse", "Basic tools"],
+        isActive: true,
+        sortOrder: 0,
+      }),
+    );
   });
 
   test("returns original tier fields when translation fails", async () => {
@@ -250,7 +373,9 @@ describe("listTiers field-safe translation", () => {
       maxSlots: null,
     };
     prisma.subscriptionTier.findMany.mockResolvedValue([tier]);
-    translator.translateMany.mockRejectedValue(new Error("provider unavailable"));
+    translator.translateMany.mockRejectedValue(
+      new Error("provider unavailable"),
+    );
 
     const res = makeRes();
     await listTiers({ body: { lang: "fr" } }, res);

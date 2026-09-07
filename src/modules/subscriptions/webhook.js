@@ -13,6 +13,15 @@ const TIER_ORDER = {
   covenant_sower: 2,
 };
 
+const getSubscriptionPeriodEnd = (subscription) => {
+  const periodEnd =
+    subscription.current_period_end ??
+    subscription.items?.data?.[0]?.current_period_end;
+  return periodEnd != null && isFinite(periodEnd)
+    ? new Date(periodEnd * 1000)
+    : null;
+};
+
 const getNextLegacySlot = async () => {
   const last = await prisma.systemUser.findFirst({
     where: { legacySowerSlot: { not: null } },
@@ -22,7 +31,13 @@ const getNextLegacySlot = async () => {
   return (last?.legacySowerSlot ?? 0) + 1;
 };
 
-const logEvent = async (userId, eventType, tier, stripeEventId, metadata = {}) => {
+const logEvent = async (
+  userId,
+  eventType,
+  tier,
+  stripeEventId,
+  metadata = {},
+) => {
   try {
     await prisma.subscriptionEvent.create({
       data: { userId, eventType, tier, stripeEventId, metadata },
@@ -47,7 +62,9 @@ const resolveTierFromPriceId = async (priceId, interval) => {
   if (tier) return tier.id;
 
   try {
-    const price = await stripe.prices.retrieve(priceId, { expand: ["product"] });
+    const price = await stripe.prices.retrieve(priceId, {
+      expand: ["product"],
+    });
     const product = price.product;
     if (product && typeof product === "object" && !product.deleted) {
       if (product.metadata?.tierId) return product.metadata.tierId;
@@ -57,7 +74,9 @@ const resolveTierFromPriceId = async (priceId, interval) => {
         .replace(/^_|_$/g, "");
       if (slug) return interval === "month" ? `${slug}_monthly` : slug;
     }
-  } catch { /* non-fatal */ }
+  } catch {
+    /* non-fatal */
+  }
 
   return null;
 };
@@ -75,15 +94,25 @@ export const handleStripeWebhook = async (req, res) => {
       process.env.STRIPE_WEBHOOK_SECRET,
     );
   } catch (err) {
-    console.error("[StripeWebhook] Signature verification failed:", err.message);
+    console.error(
+      "[StripeWebhook] Signature verification failed:",
+      err.message,
+    );
     return res.status(400).json({ error: "Invalid signature" });
   }
 
   const data = event.data.object;
 
   try {
-    switch (event.type) {
+    // Stripe retries deliveries. Ignore an event that was already applied so
+    // renewals, slots, and subscription history are not processed twice.
+    const alreadyProcessed = await prisma.subscriptionEvent.findFirst({
+      where: { stripeEventId: event.id },
+      select: { id: true },
+    });
+    if (alreadyProcessed) return res.json({ received: true, duplicate: true });
 
+    switch (event.type) {
       // ── New checkout / upgrade checkout completed ────────────────────────
       case "checkout.session.completed": {
         const meta = data.metadata ?? {};
@@ -95,23 +124,32 @@ export const handleStripeWebhook = async (req, res) => {
         const newSubscriptionId = data.subscription;
 
         if (!userId || !tier) {
-          console.warn("[StripeWebhook] checkout.session.completed: missing userId or tier in metadata");
+          console.warn(
+            "[StripeWebhook] checkout.session.completed: missing userId or tier in metadata",
+          );
           break;
         }
 
-        const user = await prisma.systemUser.findUnique({ where: { id: userId } });
+        const user = await prisma.systemUser.findUnique({
+          where: { id: userId },
+        });
         if (!user) {
-          console.warn(`[StripeWebhook] checkout.session.completed: user not found: ${userId}`);
+          console.warn(
+            `[StripeWebhook] checkout.session.completed: user not found: ${userId}`,
+          );
           break;
         }
 
-        const newTierId = billingInterval === "month" ? `${tier}_monthly` : tier;
+        const newTierId =
+          billingInterval === "month" ? `${tier}_monthly` : tier;
         const currentOrder = TIER_ORDER[user.subscriptionTier] ?? 0;
         const newOrder = TIER_ORDER[newTierId] ?? 0;
 
         // Only apply if this is an upgrade or new subscription
         if (newOrder < currentOrder) {
-          console.log(`[StripeWebhook] checkout.session.completed: ignoring downgrade for user ${userId}`);
+          console.log(
+            `[StripeWebhook] checkout.session.completed: ignoring downgrade for user ${userId}`,
+          );
           break;
         }
 
@@ -119,29 +157,61 @@ export const handleStripeWebhook = async (req, res) => {
         let periodEnd = null;
         try {
           const sub = await stripe.subscriptions.retrieve(newSubscriptionId);
-          if (sub.current_period_end != null && isFinite(sub.current_period_end)) {
-            periodEnd = new Date(sub.current_period_end * 1000);
-          }
-        } catch { /* fall back */ }
+          periodEnd = getSubscriptionPeriodEnd(sub);
+        } catch {
+          /* fall back */
+        }
 
         if (!periodEnd) {
-          periodEnd = billingInterval === "month"
-            ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-            : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+          periodEnd =
+            billingInterval === "month"
+              ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+              : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
         }
 
         // If this was an upgrade checkout: cancel the previous subscription at period end
         // so the user isn't double-charged. Do this before updating the DB.
         const oldSubscriptionId = user.stripeSubscriptionId;
-        if (upgradeFrom && oldSubscriptionId && oldSubscriptionId !== newSubscriptionId) {
+        if (
+          oldSubscriptionId &&
+          oldSubscriptionId !== newSubscriptionId &&
+          !upgradeFrom
+        ) {
+          try {
+            await stripe.subscriptions.cancel(newSubscriptionId, {
+              prorate: false,
+            });
+          } catch (cancelErr) {
+            console.warn(
+              `[StripeWebhook] Could not cancel duplicate subscription ${newSubscriptionId}:`,
+              cancelErr.message,
+            );
+          }
+
+          await logEvent(userId, "cancelled", user.subscriptionTier, event.id, {
+            duplicateSubscriptionId: newSubscriptionId,
+            preservedSubscriptionId: oldSubscriptionId,
+          });
+          console.warn(
+            `[StripeWebhook] Cancelled duplicate subscription ${newSubscriptionId} for user ${userId}`,
+          );
+          break;
+        }
+
+        if (oldSubscriptionId && oldSubscriptionId !== newSubscriptionId) {
           try {
             await stripe.subscriptions.cancel(oldSubscriptionId, {
-              prorate: true,       // credit unused time back
+              prorate: true, // credit unused time back
             });
-            console.log(`[StripeWebhook] Cancelled old subscription ${oldSubscriptionId} after upgrade`);
+            console.log(
+              `[StripeWebhook] Cancelled old subscription ${oldSubscriptionId} after upgrade`,
+            );
           } catch (cancelErr) {
             // Non-fatal: old sub may already be cancelled or in a terminal state
-            console.warn(`[StripeWebhook] Could not cancel old subscription ${oldSubscriptionId}:`, cancelErr.message);
+            console.warn(
+              `[StripeWebhook] Could not cancel old subscription ${oldSubscriptionId}:`,
+              cancelErr.message,
+            );
           }
         }
 
@@ -158,11 +228,14 @@ export const handleStripeWebhook = async (req, res) => {
             stripeCustomerId: customerId,
             stripeSubscriptionId: newSubscriptionId,
             accessExpiresAt: periodEnd,
-            ...(legacySowerSlot !== user.legacySowerSlot && { legacySowerSlot }),
+            ...(legacySowerSlot !== user.legacySowerSlot && {
+              legacySowerSlot,
+            }),
           },
         });
 
-        const eventType = user.subscriptionTier === "free" ? "created" : "upgraded";
+        const eventType =
+          user.subscriptionTier === "free" ? "created" : "upgraded";
         await logEvent(userId, eventType, newTierId, event.id, {
           previousTier: user.subscriptionTier,
           billingInterval,
@@ -171,7 +244,9 @@ export const handleStripeWebhook = async (req, res) => {
           cancelledOldSub: upgradeFrom ? oldSubscriptionId : null,
         });
 
-        console.log(`[StripeWebhook] ${eventType}: user ${userId} → ${newTierId} (${billingInterval})`);
+        console.log(
+          `[StripeWebhook] ${eventType}: user ${userId} → ${newTierId} (${billingInterval})`,
+        );
         break;
       }
 
@@ -190,7 +265,9 @@ export const handleStripeWebhook = async (req, res) => {
         }
 
         if (!user) {
-          console.warn(`[StripeWebhook] customer.subscription.updated: no user found for sub ${subId}`);
+          console.warn(
+            `[StripeWebhook] customer.subscription.updated: no user found for sub ${subId}`,
+          );
           break;
         }
 
@@ -200,13 +277,13 @@ export const handleStripeWebhook = async (req, res) => {
         const newTierId = await resolveTierFromPriceId(priceId, interval);
 
         if (!newTierId) {
-          console.warn(`[StripeWebhook] customer.subscription.updated: could not resolve tier from priceId ${priceId}`);
+          console.warn(
+            `[StripeWebhook] customer.subscription.updated: could not resolve tier from priceId ${priceId}`,
+          );
           break;
         }
 
-        const periodEnd = data.current_period_end
-          ? new Date(data.current_period_end * 1000)
-          : null;
+        const periodEnd = getSubscriptionPeriodEnd(data);
 
         const currentOrder = TIER_ORDER[user.subscriptionTier] ?? 0;
         const newOrder = TIER_ORDER[newTierId] ?? 0;
@@ -224,7 +301,9 @@ export const handleStripeWebhook = async (req, res) => {
             subscriptionTier: newTierId,
             stripeSubscriptionId: subId,
             ...(periodEnd && { accessExpiresAt: periodEnd }),
-            ...(legacySowerSlot !== user.legacySowerSlot && { legacySowerSlot }),
+            ...(legacySowerSlot !== user.legacySowerSlot && {
+              legacySowerSlot,
+            }),
           },
         });
 
@@ -234,7 +313,9 @@ export const handleStripeWebhook = async (req, res) => {
           interval,
         });
 
-        console.log(`[StripeWebhook] ${eventType}: user ${user.id} → ${newTierId}`);
+        console.log(
+          `[StripeWebhook] ${eventType}: user ${user.id} → ${newTierId}`,
+        );
         break;
       }
 
@@ -251,17 +332,30 @@ export const handleStripeWebhook = async (req, res) => {
           // Get accurate period_end from the subscription itself
           try {
             const sub = await stripe.subscriptions.retrieve(subscriptionId);
-            const periodEnd = new Date(sub.current_period_end * 1000);
+            const periodEnd = getSubscriptionPeriodEnd(sub);
+            if (!periodEnd)
+              throw new Error("Stripe subscription has no period end");
             await prisma.systemUser.update({
               where: { id: user.id },
               data: { accessExpiresAt: periodEnd },
             });
-            await logEvent(user.id, "renewed", user.subscriptionTier, event.id, {
-              periodEnd: periodEnd.toISOString(),
-            });
-            console.log(`[StripeWebhook] renewed: user ${user.id} until ${periodEnd.toISOString()}`);
+            await logEvent(
+              user.id,
+              "renewed",
+              user.subscriptionTier,
+              event.id,
+              {
+                periodEnd: periodEnd.toISOString(),
+              },
+            );
+            console.log(
+              `[StripeWebhook] renewed: user ${user.id} until ${periodEnd.toISOString()}`,
+            );
           } catch (e) {
-            console.warn("[StripeWebhook] invoice.payment_succeeded: could not fetch subscription:", e.message);
+            console.warn(
+              "[StripeWebhook] invoice.payment_succeeded: could not fetch subscription:",
+              e.message,
+            );
           }
         }
         break;
@@ -302,7 +396,10 @@ export const handleStripeWebhook = async (req, res) => {
     }
   } catch (error) {
     console.error("[StripeWebhook] Error processing event:", error);
-    // Return 200 so Stripe doesn't keep retrying on our logic errors
+    // Return a failure so Stripe retries transient database/API failures.
+    // Event processing is idempotent because completed event IDs are checked
+    // before the switch above.
+    return res.status(500).json({ error: "Webhook processing failed" });
   }
 
   return res.json({ received: true });

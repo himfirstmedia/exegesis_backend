@@ -4,15 +4,28 @@ import { formatApiResponse } from "../../utils/helpers.js";
 import { normalizeLanguage, translateMany } from "../../utils/translator.js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { timeout: 10000 });
-const FRONTEND_URL = process.env.FRONTEND_URL || "https://app.exegesisproject.org";
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || "https://app.exegesisproject.org";
 
 // Deep link scheme for the mobile app — Stripe redirects back into the app after payment.
 // Falls back to the web URL for web clients.
 const APP_SCHEME = process.env.APP_DEEP_LINK_SCHEME || "exegesis://";
 
-const successUrl = (path) => `${APP_SCHEME}${path}?subscription=success`;
-const cancelUrl  = (path) => `${APP_SCHEME}${path}?subscription=cancelled`;
-const returnUrl  = (path) => `${APP_SCHEME}${path}`;
+const isWebRequest = (req) => {
+  const origin = req.headers.origin || req.headers.referer || "";
+  return origin.startsWith("http://") || origin.startsWith("https://");
+};
+
+const redirectUrl = (req, path, status) => {
+  if (isWebRequest(req)) {
+    const separator = path.includes("?") ? "&" : "?";
+    return `${FRONTEND_URL}${path}${separator}subscription=${status}`;
+  }
+  return `${APP_SCHEME}${path}?subscription=${status}`;
+};
+
+const returnUrl = (req, path) =>
+  isWebRequest(req) ? `${FRONTEND_URL}${path}` : `${APP_SCHEME}${path}`;
 
 // ─── Tier ordering ────────────────────────────────────────────────────────────
 
@@ -25,6 +38,15 @@ const TIER_ORDER = {
 };
 
 const BASE_TIER = (tierId) => tierId.replace(/_monthly$/, "");
+
+const getSubscriptionPeriodEnd = (subscription) => {
+  const periodEnd =
+    subscription.current_period_end ??
+    subscription.items?.data?.[0]?.current_period_end;
+  return periodEnd != null && isFinite(periodEnd)
+    ? new Date(periodEnd * 1000)
+    : null;
+};
 
 const MONTHLY_PRICE_ENV = {
   legacy_sower: "STRIPE_LEGACY_SOWER_MONTHLY_PRICE_ID",
@@ -41,11 +63,14 @@ const YEARLY_PRICE_ENV = {
 const getPriceId = async (tier, interval) => {
   // 1. Try DB first (stripePriceId from SubscriptionTier table)
   const tierId = interval === "month" ? `${tier}_monthly` : tier;
-  const tierRecord = await prisma.subscriptionTier.findUnique({ where: { id: tierId } });
+  const tierRecord = await prisma.subscriptionTier.findUnique({
+    where: { id: tierId },
+  });
   if (tierRecord?.stripePriceId) return tierRecord.stripePriceId;
 
   // 2. Fallback to env var map
-  const envKey = interval === "month" ? MONTHLY_PRICE_ENV[tier] : YEARLY_PRICE_ENV[tier];
+  const envKey =
+    interval === "month" ? MONTHLY_PRICE_ENV[tier] : YEARLY_PRICE_ENV[tier];
   return envKey ? process.env[envKey] : null;
 };
 
@@ -57,7 +82,9 @@ const getOrCreateStripeCustomer = async (user) => {
     try {
       const existing = await stripe.customers.retrieve(user.stripeCustomerId);
       if (!existing.deleted) return existing.id;
-    } catch { /* customer may have been deleted on Stripe side — fall through */ }
+    } catch {
+      /* customer may have been deleted on Stripe side — fall through */
+    }
   }
 
   // Search Stripe by email to avoid duplicate customers
@@ -85,6 +112,18 @@ const getOrCreateStripeCustomer = async (user) => {
   return customer.id;
 };
 
+const getActiveStripeSubscription = async (customerId) => {
+  const subscriptions = await stripe.subscriptions.list({
+    customer: customerId,
+    status: "all",
+    limit: 100,
+  });
+
+  return subscriptions.data.find((subscription) =>
+    ["active", "trialing", "past_due"].includes(subscription.status),
+  );
+};
+
 // ─── createCheckoutSession ────────────────────────────────────────────────────
 
 export const createCheckoutSession = async (req, res) => {
@@ -94,15 +133,19 @@ export const createCheckoutSession = async (req, res) => {
     const billingInterval = interval === "month" ? "month" : "year";
 
     if (!tier || !["legacy_sower", "covenant_sower"].includes(tier)) {
-      return res.status(400).json(formatApiResponse({
-        status: 400,
-        message: "Invalid tier. Must be 'legacy_sower' or 'covenant_sower'",
-      }));
+      return res.status(400).json(
+        formatApiResponse({
+          status: 400,
+          message: "Invalid tier. Must be 'legacy_sower' or 'covenant_sower'",
+        }),
+      );
     }
 
     const user = await prisma.systemUser.findUnique({ where: { id: userId } });
     if (!user) {
-      return res.status(404).json(formatApiResponse({ status: 404, message: "User not found" }));
+      return res
+        .status(404)
+        .json(formatApiResponse({ status: 404, message: "User not found" }));
     }
 
     const currentBase = BASE_TIER(user.subscriptionTier);
@@ -113,10 +156,12 @@ export const createCheckoutSession = async (req, res) => {
       user.subscriptionTier !== "free" &&
       TIER_ORDER[targetBase] < TIER_ORDER[currentBase]
     ) {
-      return res.status(400).json(formatApiResponse({
-        status: 400,
-        message: "Downgrades must be done through the billing portal",
-      }));
+      return res.status(400).json(
+        formatApiResponse({
+          status: 400,
+          message: "Downgrades must be done through the billing portal",
+        }),
+      );
     }
 
     // Legacy Sower cap
@@ -125,96 +170,108 @@ export const createCheckoutSession = async (req, res) => {
         where: { subscriptionTier: { startsWith: "legacy_sower" } },
       });
       if (count >= 1000) {
-        return res.status(400).json(formatApiResponse({
-          status: 400,
-          message: "Legacy Sower slots are full (1,000/1,000 claimed)",
-        }));
+        return res.status(400).json(
+          formatApiResponse({
+            status: 400,
+            message: "Legacy Sower slots are full (1,000/1,000 claimed)",
+          }),
+        );
       }
     }
 
     const priceId = await getPriceId(tier, billingInterval);
     if (!priceId) {
-      return res.status(500).json(formatApiResponse({
-        status: 500,
-        message: "Stripe price ID not configured for this plan",
-      }));
+      return res.status(500).json(
+        formatApiResponse({
+          status: 500,
+          message: "Stripe price ID not configured for this plan",
+        }),
+      );
     }
 
     // ── Reuse or create Stripe customer (no duplicates) ──────────────────
     const customerId = await getOrCreateStripeCustomer(user);
 
-    // ── Upgrade path: user already has an active subscription ─────────────
-    // We use a Checkout session in `subscription_update` mode instead of
-    // calling stripe.subscriptions.update() directly.
-    //
-    // Why: calling update() switches the plan immediately (before payment is
-    // confirmed). If the proration invoice fails or the user never pays, the
-    // DB already shows the higher tier — a false upgrade.
-    //
-    // subscription_update mode sends the user through a Stripe-hosted payment
-    // page and only fires checkout.session.completed (+ customer.subscription.updated)
-    // AFTER payment succeeds. The DB is updated only in those webhooks.
-    if (user.stripeSubscriptionId && user.subscriptionTier !== "free") {
-      try {
-        const currentSub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+    // Update the existing Stripe subscription in place. Creating another
+    // Checkout subscription here would leave one user paying for two plans.
+    const currentSubscription = user.stripeSubscriptionId
+      ? await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
+      : await getActiveStripeSubscription(customerId);
 
-        if (currentSub.status === "active") {
-          const session = await stripe.checkout.sessions.create({
-            mode: "subscription",
-            customer: customerId,
-            // subscription_update_confirm attaches the checkout to the existing sub
-            subscription_data: {
-              metadata: { userId, tier, interval: billingInterval },
-            },
-            line_items: [{ price: priceId, quantity: 1 }],
-            // Tell Stripe this checkout should update (not create) a subscription
-            // by passing the existing subscription ID via metadata and using
-            // payment_method_collection = if_required (no charge if card on file)
-            metadata: { userId, tier, interval: billingInterval, upgradeFrom: user.subscriptionTier },
-            success_url: successUrl("subscription/upgraded"),
-            cancel_url: cancelUrl("sower"),
-            allow_promotion_codes: true,
-            // If the customer already has a payment method, skip collection
-            payment_method_collection: "if_required",
-          });
-
-          return res.json(formatApiResponse({
-            status: 200,
-            message: "Upgrade checkout session created",
-            data: { url: session.url, upgraded: false },
-          }));
-        }
-      } catch (stripeErr) {
-        console.warn("[createCheckoutSession] Could not create upgrade session, falling through to new checkout:", stripeErr.message);
+    if (
+      currentSubscription &&
+      ["active", "trialing", "past_due"].includes(currentSubscription.status)
+    ) {
+      const currentItem = currentSubscription.items?.data?.[0];
+      if (!currentItem?.id) {
+        return res.status(409).json(
+          formatApiResponse({
+            status: 409,
+            message: "Active subscription has no billable plan item",
+          }),
+        );
       }
+
+      if (currentItem.price?.id === priceId) {
+        return res.status(409).json(
+          formatApiResponse({
+            status: 409,
+            message: "You already have an active subscription to this plan",
+          }),
+        );
+      }
+
+      await stripe.subscriptions.update(currentSubscription.id, {
+        items: [{ id: currentItem.id, price: priceId }],
+        proration_behavior: "create_prorations",
+        metadata: { userId, tier, interval: billingInterval },
+      });
+
+      return res.json(
+        formatApiResponse({
+          status: 200,
+          message: "Subscription updated",
+          data: {
+            url: redirectUrl(req, "/sower", "upgraded"),
+            upgraded: true,
+          },
+        }),
+      );
     }
 
     // ── New subscription: create a Checkout session tied to the customer ─
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      customer: customerId,          // ← reuse existing customer, no duplicate
+      customer: customerId, // ← reuse existing customer, no duplicate
       line_items: [{ price: priceId, quantity: 1 }],
       client_reference_id: userId,
       metadata: { userId, tier, interval: billingInterval },
-      success_url: successUrl("subscription/success"),
-      cancel_url: cancelUrl("sower"),
+      success_url: redirectUrl(req, "/sower", "success"),
+      cancel_url: redirectUrl(req, "/sower", "cancelled"),
       allow_promotion_codes: true,
       subscription_data: {
         metadata: { userId, tier, interval: billingInterval },
       },
     });
 
-    return res.json(formatApiResponse({
-      status: 200,
-      message: "Checkout session created",
-      data: { url: session.url, upgraded: false },
-    }));
+    return res.json(
+      formatApiResponse({
+        status: 200,
+        message: "Checkout session created",
+        data: { url: session.url, upgraded: false },
+      }),
+    );
   } catch (error) {
-    console.error("[SubscriptionController] createCheckoutSession error:", error);
-    return res.status(500).json(formatApiResponse({
-      status: 500,
-      message: "Failed to create checkout session",
-    }));
+    console.error(
+      "[SubscriptionController] createCheckoutSession error:",
+      error,
+    );
+    return res.status(500).json(
+      formatApiResponse({
+        status: 500,
+        message: "Failed to create checkout session",
+      }),
+    );
   }
 };
 
@@ -222,31 +279,39 @@ export const createCheckoutSession = async (req, res) => {
 
 export const createPortalSession = async (req, res) => {
   try {
-    const user = await prisma.systemUser.findUnique({ where: { id: req.user.id } });
+    const user = await prisma.systemUser.findUnique({
+      where: { id: req.user.id },
+    });
 
     if (!user?.stripeCustomerId) {
-      return res.status(400).json(formatApiResponse({
-        status: 400,
-        message: "No active subscription found",
-      }));
+      return res.status(400).json(
+        formatApiResponse({
+          status: 400,
+          message: "No active subscription found",
+        }),
+      );
     }
 
     const session = await stripe.billingPortal.sessions.create({
       customer: user.stripeCustomerId,
-      return_url: returnUrl("profile"),
+      return_url: returnUrl(req, "/sower"),
     });
 
-    return res.json(formatApiResponse({
-      status: 200,
-      message: "Portal session created",
-      data: { url: session.url },
-    }));
+    return res.json(
+      formatApiResponse({
+        status: 200,
+        message: "Portal session created",
+        data: { url: session.url },
+      }),
+    );
   } catch (error) {
     console.error("[SubscriptionController] createPortalSession error:", error);
-    return res.status(500).json(formatApiResponse({
-      status: 500,
-      message: "Failed to create portal session",
-    }));
+    return res.status(500).json(
+      formatApiResponse({
+        status: 500,
+        message: "Failed to create portal session",
+      }),
+    );
   }
 };
 
@@ -369,7 +434,10 @@ async function buildTiersFromStripe() {
         expand: ["product"],
       });
     } catch (e) {
-      console.warn(`[Stripe] Failed to retrieve yearly price ${yearlyPriceId} for ${tierId}:`, e.message);
+      console.warn(
+        `[Stripe] Failed to retrieve yearly price ${yearlyPriceId} for ${tierId}:`,
+        e.message,
+      );
       continue;
     }
 
@@ -391,7 +459,10 @@ async function buildTiersFromStripe() {
       currency: yearlyPrice.currency,
       features,
       isActive: product.active,
-      sortOrder: parseInt(product.metadata?.sortOrder || String(tiers.length + 1), 10),
+      sortOrder: parseInt(
+        product.metadata?.sortOrder || String(tiers.length + 1),
+        10,
+      ),
       maxSlots: product.metadata?.maxSlots
         ? parseInt(product.metadata.maxSlots, 10)
         : undefined,
@@ -420,7 +491,10 @@ async function buildTiersFromStripe() {
           stripePriceId: monthlyPrice.id,
         });
       } catch (e) {
-        console.warn(`[Stripe] Failed to retrieve monthly price ${monthlyPriceId} for ${tierId}:`, e.message);
+        console.warn(
+          `[Stripe] Failed to retrieve monthly price ${monthlyPriceId} for ${tierId}:`,
+          e.message,
+        );
       }
     }
   }
@@ -460,15 +534,30 @@ const translateTierFields = async (tiers, lang) => {
 
   translatedTiers.forEach((tier) => {
     if (typeof tier.name === "string") {
-      entries.push({ value: tier.name, set: (value) => { tier.name = value; } });
+      entries.push({
+        value: tier.name,
+        set: (value) => {
+          tier.name = value;
+        },
+      });
     }
     if (typeof tier.description === "string") {
-      entries.push({ value: tier.description, set: (value) => { tier.description = value; } });
+      entries.push({
+        value: tier.description,
+        set: (value) => {
+          tier.description = value;
+        },
+      });
     }
     if (Array.isArray(tier.features)) {
       tier.features.forEach((feature, index) => {
         if (typeof feature === "string") {
-          entries.push({ value: feature, set: (value) => { tier.features[index] = value; } });
+          entries.push({
+            value: feature,
+            set: (value) => {
+              tier.features[index] = value;
+            },
+          });
         }
       });
     }
@@ -477,13 +566,20 @@ const translateTierFields = async (tiers, lang) => {
   if (entries.length === 0) return translatedTiers;
 
   try {
-    const translations = await translateMany(entries.map(({ value }) => value), lang);
+    const translations = await translateMany(
+      entries.map(({ value }) => value),
+      lang,
+    );
     entries.forEach((entry, index) => {
-      if (typeof translations[index] === "string") entry.set(translations[index]);
+      if (typeof translations[index] === "string")
+        entry.set(translations[index]);
     });
     return translatedTiers;
   } catch (error) {
-    console.warn(`[SubscriptionController] Tier translation to ${lang} failed:`, error.message);
+    console.warn(
+      `[SubscriptionController] Tier translation to ${lang} failed:`,
+      error.message,
+    );
     return tiers;
   }
 };
@@ -497,29 +593,47 @@ export const listTiers = async (req, res) => {
     if (fromStripe.length > 0) {
       const tiers = await translateTierFields(fromStripe, lang);
       return res.json(
-        formatApiResponse({ status: 200, message: "Tiers retrieved", data: { tiers } }),
+        formatApiResponse({
+          status: 200,
+          message: "Tiers retrieved",
+          data: { tiers },
+        }),
       );
     }
 
     // 2. Fallback to DB
-    let tiers = await prisma.subscriptionTier.findMany({ orderBy: { sortOrder: "asc" } });
+    let tiers = await prisma.subscriptionTier.findMany({
+      orderBy: { sortOrder: "asc" },
+    });
     if (tiers && tiers.length > 0) {
       tiers = await translateTierFields(tiers, lang);
       return res.json(
-        formatApiResponse({ status: 200, message: "Tiers retrieved", data: { tiers } }),
+        formatApiResponse({
+          status: 200,
+          message: "Tiers retrieved",
+          data: { tiers },
+        }),
       );
     }
 
     // 3. Last resort — hardcoded defaults so the app never breaks
     tiers = await translateTierFields(FALLBACK_TIERS, lang);
     return res.json(
-      formatApiResponse({ status: 200, message: "Tiers retrieved (fallback)", data: { tiers } }),
+      formatApiResponse({
+        status: 200,
+        message: "Tiers retrieved (fallback)",
+        data: { tiers },
+      }),
     );
   } catch (error) {
     console.error("[SubscriptionController] listTiers error:", error);
     const tiers = await translateTierFields(FALLBACK_TIERS, lang);
     return res.json(
-      formatApiResponse({ status: 200, message: "Tiers retrieved (fallback)", data: { tiers } }),
+      formatApiResponse({
+        status: 200,
+        message: "Tiers retrieved (fallback)",
+        data: { tiers },
+      }),
     );
   }
 };
@@ -541,7 +655,9 @@ const resolveTierFromPriceId = async (priceId, interval) => {
   }
 
   try {
-    const price = await stripe.prices.retrieve(priceId, { expand: ["product"] });
+    const price = await stripe.prices.retrieve(priceId, {
+      expand: ["product"],
+    });
     const product = price.product;
     if (product && typeof product === "object" && !product.deleted) {
       if (product.metadata?.tierId) return product.metadata.tierId;
@@ -551,7 +667,9 @@ const resolveTierFromPriceId = async (priceId, interval) => {
         .replace(/^_|_$/g, "");
       if (slug) return interval === "month" ? `${slug}_monthly` : slug;
     }
-  } catch { /* non-fatal */ }
+  } catch {
+    /* non-fatal */
+  }
 
   return null;
 };
@@ -572,7 +690,9 @@ export const getSubscriptionStatus = async (req, res) => {
     });
 
     if (!user) {
-      return res.status(404).json(formatApiResponse({ status: 404, message: "User not found" }));
+      return res
+        .status(404)
+        .json(formatApiResponse({ status: 404, message: "User not found" }));
     }
 
     // ── Stripe reconciliation ─────────────────────────────────────────────
@@ -588,7 +708,10 @@ export const getSubscriptionStatus = async (req, res) => {
         await Promise.race([
           (async () => {
             // Find ALL Stripe customers for this email (user may have multiple)
-            const customers = await stripe.customers.list({ email: req.user.email, limit: 5 });
+            const customers = await stripe.customers.list({
+              email: req.user.email,
+              limit: 5,
+            });
             // No customers — nothing to reconcile. Do NOT respond here: the
             // single response is sent once by the outer flow after the race,
             // so returning early with a res.json would double-send headers.
@@ -597,8 +720,14 @@ export const getSubscriptionStatus = async (req, res) => {
             // Collect active subscriptions from all customers
             const allSubs = [];
             for (const c of customers.data) {
-              const subs = await stripe.subscriptions.list({ customer: c.id, status: "active", limit: 10 });
-              allSubs.push(...subs.data.map(s => ({ ...s, _customerId: c.id })));
+              const subs = await stripe.subscriptions.list({
+                customer: c.id,
+                status: "active",
+                limit: 10,
+              });
+              allSubs.push(
+                ...subs.data.map((s) => ({ ...s, _customerId: c.id })),
+              );
             }
             if (allSubs.length === 0) return;
 
@@ -610,7 +739,8 @@ export const getSubscriptionStatus = async (req, res) => {
             for (const sub of allSubs) {
               const priceId = sub.items?.data?.[0]?.price?.id;
               const interval = sub.items?.data?.[0]?.price?.recurring?.interval;
-              const tierId = await resolveTierFromPriceId(priceId, interval) || "free";
+              const tierId =
+                (await resolveTierFromPriceId(priceId, interval)) || "free";
               const order = TIER_ORDER[tierId.replace(/_monthly$/, "")] ?? 0;
               if (order > bestOrder) {
                 bestOrder = order;
@@ -619,9 +749,7 @@ export const getSubscriptionStatus = async (req, res) => {
             }
 
             if (bestSub) {
-              const periodEnd = bestSub.sub.current_period_end
-                ? new Date(bestSub.sub.current_period_end * 1000)
-                : null;
+              const periodEnd = getSubscriptionPeriodEnd(bestSub.sub);
 
               await prisma.systemUser.update({
                 where: { id: req.user.id },
@@ -633,33 +761,126 @@ export const getSubscriptionStatus = async (req, res) => {
                 },
               });
 
-              user = { ...user, subscriptionTier: bestSub.tierId, accessExpiresAt: periodEnd, stripeCustomerId: bestSub.sub._customerId, stripeSubscriptionId: bestSub.sub.id };
-              console.log(`[StripeReconciliation] Synced user ${req.user.id} → ${bestSub.tierId} (customer: ${bestSub.sub._customerId})`);
+              user = {
+                ...user,
+                subscriptionTier: bestSub.tierId,
+                accessExpiresAt: periodEnd,
+                stripeCustomerId: bestSub.sub._customerId,
+                stripeSubscriptionId: bestSub.sub.id,
+              };
+              console.log(
+                `[StripeReconciliation] Synced user ${req.user.id} → ${bestSub.tierId} (customer: ${bestSub.sub._customerId})`,
+              );
             }
           })(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Stripe reconciliation timed out")), 12000)),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error("Stripe reconciliation timed out")),
+              12000,
+            ),
+          ),
         ]);
       } catch (stripeErr) {
-        console.warn("[StripeReconciliation] Failed to sync from Stripe:", stripeErr.message);
+        console.warn(
+          "[StripeReconciliation] Failed to sync from Stripe:",
+          stripeErr.message,
+        );
+      }
+    }
+
+    // Verify known paid subscriptions too. Webhooks are the primary sync
+    // mechanism, but this repairs missed deliveries when the client asks for
+    // status after checkout, renewal, cancellation, or a portal change.
+    if (user.stripeSubscriptionId && user.subscriptionTier !== "free") {
+      try {
+        const retrieveSubscription = stripe.subscriptions.retrieve;
+        if (typeof retrieveSubscription !== "function") {
+          // Test doubles may omit reconciliation-only Stripe methods.
+        } else {
+          const subscription = await retrieveSubscription.call(
+            stripe.subscriptions,
+            user.stripeSubscriptionId,
+          );
+          const activeStatuses = new Set(["active", "trialing"]);
+
+          if (!activeStatuses.has(subscription.status)) {
+            await prisma.systemUser.update({
+              where: { id: req.user.id },
+              data: {
+                subscriptionTier: "free",
+                stripeSubscriptionId: null,
+                accessExpiresAt: null,
+              },
+            });
+            user = {
+              ...user,
+              subscriptionTier: "free",
+              stripeSubscriptionId: null,
+              accessExpiresAt: null,
+            };
+          } else {
+            const price = subscription.items?.data?.[0]?.price;
+            const interval = price?.recurring?.interval;
+            const resolvedTier = await resolveTierFromPriceId(
+              price?.id,
+              interval,
+            );
+            const periodEnd = getSubscriptionPeriodEnd(subscription);
+
+            if (resolvedTier || periodEnd) {
+              await prisma.systemUser.update({
+                where: { id: req.user.id },
+                data: {
+                  ...(resolvedTier && { subscriptionTier: resolvedTier }),
+                  ...(periodEnd && { accessExpiresAt: periodEnd }),
+                },
+              });
+              user = {
+                ...user,
+                ...(resolvedTier && { subscriptionTier: resolvedTier }),
+                ...(periodEnd && { accessExpiresAt: periodEnd }),
+              };
+            }
+          }
+        }
+      } catch (stripeErr) {
+        console.warn(
+          "[StripeReconciliation] Known subscription sync failed:",
+          stripeErr.message,
+        );
       }
     }
 
     let tierMeta = null;
     try {
-      tierMeta = await prisma.subscriptionTier.findUnique({ where: { id: user.subscriptionTier } });
-    } catch { /* non-fatal */ }
+      tierMeta = await prisma.subscriptionTier.findUnique({
+        where: { id: user.subscriptionTier },
+      });
+    } catch {
+      /* non-fatal */
+    }
 
-    return res.json(formatApiResponse({
-      status: 200,
-      message: "Subscription status retrieved",
-      data: { ...user, tierMeta },
-    }));
+    return res.json(
+      formatApiResponse({
+        status: 200,
+        message: "Subscription status retrieved",
+        data: { ...user, tierMeta },
+      }),
+    );
   } catch (error) {
-    console.error("[SubscriptionController] getSubscriptionStatus error:", error);
+    console.error(
+      "[SubscriptionController] getSubscriptionStatus error:",
+      error,
+    );
     // Never attempt a second response if one was already sent (e.g. by a
     // stray res.json inside the reconciliation race) — that itself throws.
     if (res.headersSent) return;
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Failed to get subscription status" }));
+    return res.status(500).json(
+      formatApiResponse({
+        status: 500,
+        message: "Failed to get subscription status",
+      }),
+    );
   }
 };
 
@@ -678,13 +899,23 @@ export const handleGetSubscribedUsers = async (req, res) => {
         legacySowerSlot: true,
       },
     });
-    return res.json(formatApiResponse({
-      status: 200,
-      message: "Subscribed users retrieved",
-      data: { subscribedUsers },
-    }));
+    return res.json(
+      formatApiResponse({
+        status: 200,
+        message: "Subscribed users retrieved",
+        data: { subscribedUsers },
+      }),
+    );
   } catch (error) {
-    console.error("[SubscriptionController] handleGetSubscribedUsers error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Failed to retrieve subscribed users" }));
+    console.error(
+      "[SubscriptionController] handleGetSubscribedUsers error:",
+      error,
+    );
+    return res.status(500).json(
+      formatApiResponse({
+        status: 500,
+        message: "Failed to retrieve subscribed users",
+      }),
+    );
   }
 };

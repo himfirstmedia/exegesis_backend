@@ -14,20 +14,20 @@ import { errorHandler } from "./middlewares/errorHandler.middleware.js";
 import { absoluteMediaUrl } from "./middlewares/absoluteMediaUrl.middleware.js";
 import { startEmailScheduler } from "./services/emailScheduler.js";
 import { startPopularSearchCleanup } from "./services/popularSearchCleanup.js";
-import translationRouter from "./modules/bible-translations/route.js"
-import ttsRouter from "./modules/tts/route.js"
-import { warmUpTTS } from "./modules/tts/service.js"
-import strongsRouter from "./modules/strongs/route.js"
-import exegesisRouter from "./modules/exegesis/route.js"
-import triviaRouter from "./modules/trivia/route.js"
-import studyToolsRouter from "./modules/study-tools/route.js"
-import bookProloguesRouter from "./modules/book-prologues/route.js"
-import verseResourcesRouter from "./modules/verse-resources/route.js"
-import subscriptionsRouter from "./modules/subscriptions/routes.js"
-import popularSearchesRouter from "./modules/popular-searches/route.js"
-import aiRouter from "./modules/ai/route.js"
-import textToTextTranslationRouter from "./modules/text-to-text-translation/route.js"
-import { handleStripeWebhook } from "./modules/subscriptions/webhook.js"
+import translationRouter from "./modules/bible-translations/route.js";
+import ttsRouter from "./modules/tts/route.js";
+import { warmUpTTS } from "./modules/tts/service.js";
+import strongsRouter from "./modules/strongs/route.js";
+import exegesisRouter from "./modules/exegesis/route.js";
+import triviaRouter from "./modules/trivia/route.js";
+import studyToolsRouter from "./modules/study-tools/route.js";
+import bookProloguesRouter from "./modules/book-prologues/route.js";
+import verseResourcesRouter from "./modules/verse-resources/route.js";
+import subscriptionsRouter from "./modules/subscriptions/routes.js";
+import popularSearchesRouter from "./modules/popular-searches/route.js";
+import aiRouter from "./modules/ai/route.js";
+import textToTextTranslationRouter from "./modules/text-to-text-translation/route.js";
+import { handleStripeWebhook } from "./modules/subscriptions/webhook.js";
 
 config();
 connectDB();
@@ -63,6 +63,15 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+
+// Stripe must receive the untouched request body for signature verification.
+// Register this before the global JSON parser consumes req.body.
+app.use(
+  "/webhooks/stripe",
+  express.raw({ type: "application/json" }),
+  handleStripeWebhook,
+);
+
 // Larger body limit so base64 cover-photo uploads are accepted
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ extended: true, limit: "15mb" }));
@@ -76,26 +85,23 @@ app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 // the route handlers so every response is transformed.
 app.use(absoluteMediaUrl);
 
-// Stripe webhook needs raw body for signature verification (must be BEFORE json parser)
-app.use("/webhooks/stripe", express.raw({ type: "application/json" }), handleStripeWebhook);
-
 app.use("/auth", authRouter);
 app.use("/admin", adminRouter);
 app.use("/bible", bibleRouter);
 app.use("/reading-plans", readingPlanRouter);
 app.use("/journal", journalRouter);
-app.use("/translations", translationRouter)
-app.use("/tts", ttsRouter)
-app.use("/strongs", strongsRouter)
-app.use("/exegesis", exegesisRouter)
-app.use("/trivia", triviaRouter)
-app.use("/study-tools", studyToolsRouter)
-app.use("/book-prologues", bookProloguesRouter)
-app.use("/verse-resources", verseResourcesRouter)
-app.use("/subscriptions", subscriptionsRouter)
-app.use("/popular-searches", popularSearchesRouter)
-app.use("/ai", aiRouter)
-app.use("/translation", textToTextTranslationRouter)
+app.use("/translations", translationRouter);
+app.use("/tts", ttsRouter);
+app.use("/strongs", strongsRouter);
+app.use("/exegesis", exegesisRouter);
+app.use("/trivia", triviaRouter);
+app.use("/study-tools", studyToolsRouter);
+app.use("/book-prologues", bookProloguesRouter);
+app.use("/verse-resources", verseResourcesRouter);
+app.use("/subscriptions", subscriptionsRouter);
+app.use("/popular-searches", popularSearchesRouter);
+app.use("/ai", aiRouter);
+app.use("/translation", textToTextTranslationRouter);
 
 app.get("/health", (req, res) => {
   res.send(
@@ -111,7 +117,7 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5001;
 
-const server = app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Exegesis server running on port ${PORT}`);
   startEmailScheduler();
   startPopularSearchCleanup();
@@ -135,8 +141,10 @@ process.on("uncaughtException", async (error) => {
   // does slip through it must not take down the whole server mid-playback.
   const isTtsStreamRace =
     error instanceof TypeError &&
-    (error.message === "Cannot read properties of undefined (reading 'metadata')" ||
-      error.message === "Cannot read properties of undefined (reading 'audio')");
+    (error.message ===
+      "Cannot read properties of undefined (reading 'metadata')" ||
+      error.message ===
+        "Cannot read properties of undefined (reading 'audio')");
   if (isTtsStreamRace) {
     console.warn("Ignored msedge-tts stream race:", error.message);
     return;
