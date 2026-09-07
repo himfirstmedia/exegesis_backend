@@ -38,7 +38,9 @@ export const fetchVerseTextWithFallback = async (
       return { text: verseData.text, translation: bibleVersion };
     }
   } catch (e) {
-    if (String(bibleVersion || "").toUpperCase() !== DEFAULT_VERSE_TRANSLATION) {
+    if (
+      String(bibleVersion || "").toUpperCase() !== DEFAULT_VERSE_TRANSLATION
+    ) {
       const key = String(bibleVersion || "");
       if (!missingTranslationWarned.has(key)) {
         missingTranslationWarned.add(key);
@@ -445,6 +447,96 @@ export const deleteFavorite = async (data, userId) => {
   return { status: 200, message: "Favorite deleted successfully" };
 };
 
+const parseTakeawaysValue = (value) => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) =>
+        typeof item === "string" ? item.trim() : String(item ?? "").trim(),
+      )
+      .filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parseTakeawaysValue(parsed);
+      }
+    } catch {
+      // Keep plain strings as a single takeaway entry.
+    }
+
+    return [trimmed];
+  }
+
+  return [];
+};
+
+const normalizeStudyMetadata = (studyMetadata) => {
+  if (!studyMetadata) return studyMetadata;
+
+  const normalized = { ...studyMetadata };
+  if (Array.isArray(normalized.takeaways)) {
+    normalized.takeaways = JSON.stringify(normalized.takeaways);
+  } else if (
+    typeof normalized.takeaways === "string" &&
+    normalized.takeaways.trim()
+  ) {
+    try {
+      const parsed = JSON.parse(normalized.takeaways);
+      if (Array.isArray(parsed)) {
+        normalized.takeaways = JSON.stringify(parsed);
+      }
+    } catch {
+      // leave the raw string as-is for backwards compatibility
+    }
+  }
+
+  return normalized;
+};
+
+const deserializeStudyMetadata = (studyMetadata) => {
+  if (!studyMetadata) return studyMetadata;
+
+  const normalized = { ...studyMetadata };
+  if (typeof normalized.takeaways === "string") {
+    const takeaways = parseTakeawaysValue(normalized.takeaways);
+    normalized.takeaways = takeaways;
+  }
+
+  return normalized;
+};
+
+const withLegacyVerseExplanationFields = (resource) => {
+  if (!resource) return resource;
+
+  const next = { ...resource };
+  const metadata = deserializeStudyMetadata(next.studyMetadata || {});
+  const takeaways = Array.isArray(metadata?.takeaways)
+    ? metadata.takeaways
+    : parseTakeawaysValue(metadata?.takeaways);
+  const learnMore = [
+    metadata?.introduction,
+    metadata?.finalThoughts,
+    Array.isArray(takeaways) ? takeaways.join(" ") : "",
+  ].find((value) => typeof value === "string" && value.trim());
+
+  next.explanation = next.exegesis?.explanationText || next.explanation || "";
+  next.application = next.exegesis?.applicationText || next.application || "";
+  next.learnMore =
+    typeof learnMore === "string"
+      ? learnMore.replace(/\s+/g, " ").trim()
+      : next.learnMore || "";
+  next.finalThoughts = metadata?.finalThoughts || next.finalThoughts || "";
+  next.takeaways = takeaways;
+  next.studyMetadata = metadata;
+
+  return next;
+};
+
 export const getVerseExplanation = async (data) => {
   const { bookName, chapter, verseNumber, lang = "en" } = data;
   const target = normalizeLanguage(lang);
@@ -482,14 +574,14 @@ export const getVerseExplanation = async (data) => {
 
   if (!record) return { status: 404, message: "Verse explanation not found" };
 
-  const serialized = serializeBigInt(record);
-  
+  const serialized = withLegacyVerseExplanationFields(serializeBigInt(record));
+
   if (target.toLowerCase() !== "en") {
     // Recursive translation for structured content
     const translateDeep = async (obj) => {
       if (typeof obj === "string") return translateLongText(obj, target);
       if (Array.isArray(obj)) {
-        return Promise.all(obj.map(item => translateDeep(item)));
+        return Promise.all(obj.map((item) => translateDeep(item)));
       }
       if (obj !== null && typeof obj === "object") {
         const newObj = {};
@@ -500,30 +592,36 @@ export const getVerseExplanation = async (data) => {
       }
       return obj;
     };
-    
+
     // We only translate the user-facing content fields
     const translatedContent = await translateDeep({
       exegesis: serialized.exegesis,
       studyMetadata: serialized.studyMetadata,
-      wordStudies: serialized.wordStudies.map(ws => ({
+      wordStudies: serialized.wordStudies.map((ws) => ({
         surfaceText: ws.surfaceText,
         customDefinition: ws.customDefinition,
       })),
-      practicalApps: serialized.practicalApps.map(pa => ({
+      practicalApps: serialized.practicalApps.map((pa) => ({
         applicationText: pa.applicationText,
       })),
-      crossReferences: serialized.crossReferences.map(cr => ({
+      crossReferences: serialized.crossReferences.map((cr) => ({
         referenceText: cr.referenceText,
         commentary: cr.commentary,
       })),
-      themes: serialized.themes.map(t => ({
+      themes: serialized.themes.map((t) => ({
         themeName: t.themeName,
       })),
     });
 
     // Merge translated parts back into serialized record
-    serialized.exegesis = { ...serialized.exegesis, ...translatedContent.exegesis };
-    serialized.studyMetadata = { ...serialized.studyMetadata, ...translatedContent.studyMetadata };
+    serialized.exegesis = {
+      ...serialized.exegesis,
+      ...translatedContent.exegesis,
+    };
+    serialized.studyMetadata = {
+      ...serialized.studyMetadata,
+      ...translatedContent.studyMetadata,
+    };
     serialized.wordStudies = serialized.wordStudies.map((ws, i) => ({
       ...ws,
       ...translatedContent.wordStudies[i],
@@ -555,14 +653,41 @@ export const addVerseExplanation = async (data, userId) => {
     chapter,
     verseNumber,
     bibleVersion,
-    exegesis,
-    studyMetadata,
+    exegesis: incomingExegesis,
+    studyMetadata: incomingStudyMetadata,
     wordStudies,
     practicalApps,
     crossReferences,
     themes,
     id,
+    explanation,
+    application,
+    learnMore,
+    finalThoughts,
+    takeaways,
   } = data;
+
+  const exegesis =
+    incomingExegesis ||
+    (explanation || application
+      ? {
+          explanationText: explanation || "",
+          applicationText: application || "",
+        }
+      : undefined);
+
+  const studyMetadata =
+    incomingStudyMetadata ||
+    (learnMore || finalThoughts || takeaways
+      ? {
+          introduction: learnMore || "",
+          backgroundAuthor: "",
+          backgroundBook: "",
+          backgroundContext: "",
+          finalThoughts: finalThoughts || "",
+          takeaways: takeaways || [],
+        }
+      : undefined);
 
   if (!bookName || !chapter || !verseNumber)
     return {
@@ -579,13 +704,33 @@ export const addVerseExplanation = async (data, userId) => {
       if (id) {
         root = await tx.verseExplanation.update({
           where: { id: BigInt(id) },
-          data: { bookName, chapter: BigInt(chapter), verseNumber: BigInt(verseNumber), bibleVersion, sortOrder, updatedBy: userId },
+          data: {
+            bookName,
+            chapter: BigInt(chapter),
+            verseNumber: BigInt(verseNumber),
+            bibleVersion,
+            sortOrder,
+            updatedBy: userId,
+          },
         });
       } else {
         root = await tx.verseExplanation.upsert({
-          where: { bookName_chapter_verseNumber: { bookName, chapter: BigInt(chapter), verseNumber: BigInt(verseNumber) } },
+          where: {
+            bookName_chapter_verseNumber: {
+              bookName,
+              chapter: BigInt(chapter),
+              verseNumber: BigInt(verseNumber),
+            },
+          },
           update: { bibleVersion, sortOrder, updatedBy: userId },
-          create: { bookName, chapter: BigInt(chapter), verseNumber: BigInt(verseNumber), bibleVersion, sortOrder, createdBy: userId },
+          create: {
+            bookName,
+            chapter: BigInt(chapter),
+            verseNumber: BigInt(verseNumber),
+            bibleVersion,
+            sortOrder,
+            createdBy: userId,
+          },
         });
       }
 
@@ -593,109 +738,159 @@ export const addVerseExplanation = async (data, userId) => {
       if (exegesis) {
         await tx.verseExegesis.upsert({
           where: { explanationId: root.id },
-          update: { explanationText: exegesis.explanationText, applicationText: exegesis.applicationText },
-          create: { explanationId: root.id, explanationText: exegesis.explanationText, applicationText: exegesis.applicationText },
+          update: {
+            explanationText: exegesis.explanationText,
+            applicationText: exegesis.applicationText,
+          },
+          create: {
+            explanationId: root.id,
+            explanationText: exegesis.explanationText,
+            applicationText: exegesis.applicationText,
+          },
         });
       }
 
       // 3. Handle Metadata (1:1)
+      let pendingStudyMetadata = null;
       if (studyMetadata) {
+        pendingStudyMetadata = normalizeStudyMetadata(studyMetadata);
         await tx.verseStudyMetadata.upsert({
           where: { explanationId: root.id },
-          update: { ...studyMetadata },
-          create: { explanationId: root.id, ...studyMetadata },
+          update: { ...pendingStudyMetadata },
+          create: { explanationId: root.id, ...pendingStudyMetadata },
         });
       }
 
       // 4. Handle Collections (1:N) - Delete and Re-insert for simplicity in Admin
-      await tx.verseWordStudyEntry.deleteMany({ where: { explanationId: root.id } });
+      let preparedWordStudies = [];
+      await tx.verseWordStudyEntry.deleteMany({
+        where: { explanationId: root.id },
+      });
       if (wordStudies) {
-        // Collect unique, non-empty strongsIds provided in the payload
-        const inputStrongIds = Array.from(new Set(wordStudies.map(ws => ws.strongsId).filter(Boolean)));
+        const inputStrongIds = Array.from(
+          new Set(wordStudies.map((ws) => ws.strongsId).filter(Boolean)),
+        );
 
-        // Find which strongsIds already exist
         let existingStrongIds = new Set();
         if (inputStrongIds.length > 0) {
-          const existing = await tx.strongsDictionary.findMany({ where: { strongsId: { in: inputStrongIds } }, select: { strongsId: true } });
+          const existing = await tx.strongsDictionary.findMany({
+            where: { strongsId: { in: inputStrongIds } },
+            select: { strongsId: true },
+          });
           existingStrongIds = new Set(existing.map((e) => e.strongsId));
         }
 
-        // Determine missing strongsIds and create minimal dictionary entries for them
-        const missing = inputStrongIds.filter(sid => !existingStrongIds.has(sid));
+        const missing = inputStrongIds.filter(
+          (sid) => !existingStrongIds.has(sid),
+        );
         if (missing.length > 0) {
-          // Create minimal entries. shortDefinition is required in schema.
-          const toCreate = missing.map((sid) => ({ strongsId: sid, shortDefinition: `Imported entry for ${sid}` }));
-          // Use createMany with skipDuplicates to avoid race errors; this runs inside tx
-          await tx.strongsDictionary.createMany({ data: toCreate, skipDuplicates: true });
-          // Add them to the existing set so subsequent inserts can reference them
+          const toCreate = missing.map((sid) => ({
+            strongsId: sid,
+            shortDefinition: `Imported entry for ${sid}`,
+          }));
+          await tx.strongsDictionary.createMany({
+            data: toCreate,
+            skipDuplicates: true,
+          });
           missing.forEach((sid) => existingStrongIds.add(sid));
         }
 
-        const preparedWordStudies = wordStudies.map((ws, i) => ({
+        preparedWordStudies = wordStudies.map((ws, i) => ({
           explanationId: root.id,
-          strongsId: ws.strongsId && existingStrongIds.has(ws.strongsId) ? ws.strongsId : null,
+          strongsId:
+            ws.strongsId && existingStrongIds.has(ws.strongsId)
+              ? ws.strongsId
+              : null,
           surfaceText: ws.surfaceText,
           customDefinition: ws.customDefinition,
           sortOrder: ws.sortOrder ?? i,
         }));
 
-        // Insert prepared rows now that missing Strong's entries exist
         await tx.verseWordStudyEntry.createMany({ data: preparedWordStudies });
       }
 
-      await tx.versePracticalApplication.deleteMany({ where: { explanationId: root.id } });
+      let preparedPracticalApps = [];
+      await tx.versePracticalApplication.deleteMany({
+        where: { explanationId: root.id },
+      });
       if (practicalApps) {
+        preparedPracticalApps = practicalApps.map((pa, i) => ({
+          explanationId: root.id,
+          applicationText: pa.applicationText,
+          sortOrder: pa.sortOrder ?? i,
+        }));
         await tx.versePracticalApplication.createMany({
-          data: practicalApps.map((pa, i) => ({
-            explanationId: root.id,
-            applicationText: pa.applicationText,
-            sortOrder: pa.sortOrder ?? i,
-          })),
+          data: preparedPracticalApps,
         });
       }
 
-      await tx.verseCrossReference.deleteMany({ where: { explanationId: root.id } });
+      let preparedCrossReferences = [];
+      await tx.verseCrossReference.deleteMany({
+        where: { explanationId: root.id },
+      });
       if (crossReferences) {
+        preparedCrossReferences = crossReferences.map((cr, i) => ({
+          explanationId: root.id,
+          bookName: cr.bookName,
+          chapter: BigInt(cr.chapter),
+          verseNumber: BigInt(cr.verseNumber),
+          referenceText: cr.referenceText,
+          commentary: cr.commentary,
+          sortOrder: cr.sortOrder ?? i,
+        }));
         await tx.verseCrossReference.createMany({
-          data: crossReferences.map((cr, i) => ({
-            explanationId: root.id,
-            bookName: cr.bookName,
-            chapter: BigInt(cr.chapter),
-            verseNumber: BigInt(cr.verseNumber),
-            referenceText: cr.referenceText,
-            commentary: cr.commentary,
-            sortOrder: cr.sortOrder ?? i,
-          })),
+          data: preparedCrossReferences,
         });
       }
 
+      let preparedThemes = [];
       await tx.verseTheme.deleteMany({ where: { explanationId: root.id } });
       if (themes) {
+        preparedThemes = themes.map((t, i) => ({
+          explanationId: root.id,
+          themeName: t.themeName,
+          sortOrder: t.sortOrder ?? i,
+        }));
         await tx.verseTheme.createMany({
-          data: themes.map((t, i) => ({
-            explanationId: root.id,
-            themeName: t.themeName,
-            sortOrder: t.sortOrder ?? i,
-          })),
+          data: preparedThemes,
         });
       }
 
-      return root;
+      return {
+        ...root,
+        exegesis: exegesis
+          ? { ...exegesis, explanationId: root.id }
+          : null,
+        studyMetadata: pendingStudyMetadata,
+        wordStudies: preparedWordStudies,
+        practicalApps: preparedPracticalApps,
+        crossReferences: preparedCrossReferences,
+        themes: preparedThemes,
+      };
     });
 
-    await cache.del("bible", `explanation-detailed:${bookName}:${chapter}:${verseNumber}`);
-    
-    return { 
-      status: 200, 
-      message: id ? "Verse explanation updated successfully" : "Verse explanation added successfully", 
-      data: serializeBigInt(await prisma.verseExplanation.findUnique({
-        where: { id: result.id },
-        include: { exegesis: true, studyMetadata: true, wordStudies: true, practicalApps: true, crossReferences: true, themes: true }
-      }))
+    await cache.del(
+      "bible",
+      `explanation-detailed:${bookName}:${chapter}:${verseNumber}`,
+    );
+
+    const serializedResult = withLegacyVerseExplanationFields(
+      serializeBigInt(result),
+    );
+
+    return {
+      status: 200,
+      message: id
+        ? "Verse explanation updated successfully"
+        : "Verse explanation added successfully",
+      data: serializedResult,
     };
   } catch (error) {
     console.error("Error in addVerseExplanation transaction:", error);
-    return { status: 500, message: "Internal server error during save: " + error.message };
+    return {
+      status: 500,
+      message: "Internal server error during save: " + error.message,
+    };
   }
 };
 
@@ -746,9 +941,17 @@ export const getAllVersesExplanation = async (data) => {
     totalPages: Math.ceil(totalCount / pageSizeNum),
   });
 
+  serialized.explanations = (serialized.explanations || []).map((item) =>
+    withLegacyVerseExplanationFields(item),
+  );
+
   if (lang !== "en" && serialized.explanations?.length > 0) {
-    const expls = serialized.explanations.map((e) => e.exegesis?.explanationText || "");
-    const apps = serialized.explanations.map((e) => e.exegesis?.applicationText || "");
+    const expls = serialized.explanations.map(
+      (e) => e.exegesis?.explanationText || "",
+    );
+    const apps = serialized.explanations.map(
+      (e) => e.exegesis?.applicationText || "",
+    );
     const [tExpls, tApps] = await Promise.all([
       translateMany(expls, lang),
       translateMany(apps, lang),
@@ -945,12 +1148,13 @@ export const getVerseByDate = async (data) => {
       learnMore,
     },
   };
-  const finalResult = lang !== "en"
-    ? {
-        ...verseByDateResult,
-        data: await translateDailyVerseContent(verseByDateResult.data, lang),
-      }
-    : verseByDateResult;
+  const finalResult =
+    lang !== "en"
+      ? {
+          ...verseByDateResult,
+          data: await translateDailyVerseContent(verseByDateResult.data, lang),
+        }
+      : verseByDateResult;
 
   return finalResult;
 };
@@ -1022,7 +1226,6 @@ export const getTodaysVerse = async (data = {}) => {
         }
       }
 
-
       return {
         dailyVerse: serializeBigInt(dailyVerse),
         bibleVersion: effectiveVersion,
@@ -1036,7 +1239,13 @@ export const getTodaysVerse = async (data = {}) => {
 
   if (!base) return { status: 200, message: "No daily verse found for today" };
 
-  const { dailyVerse: dv, bibleVersion, verseText, explanation: dvExplanation, learnMore: dvLearnMore } = base;
+  const {
+    dailyVerse: dv,
+    bibleVersion,
+    verseText,
+    explanation: dvExplanation,
+    learnMore: dvLearnMore,
+  } = base;
 
   const todaysVerseResult = {
     status: 200,
@@ -1055,7 +1264,9 @@ export const getTodaysVerse = async (data = {}) => {
   // the same language/day shares one translation instead of each request paying
   // the translation latency (which can exceed the app's HTTP timeout when the
   // translation provider is slow). English is already cached via the base key.
-  const normLang = String(lang || "en").trim().toLowerCase();
+  const normLang = String(lang || "en")
+    .trim()
+    .toLowerCase();
   if (normLang === "en") return todaysVerseResult;
 
   const translatedTodaysVerse = await cache.getOrSet(
@@ -1154,7 +1365,9 @@ export const getTodaysDevotion = async (data = {}) => {
   };
   // Cache the language-specific (translated) response so all devices sharing a
   // language/day reuse a single translation instead of each paying the latency.
-  const normLang = String(lang || "en").trim().toLowerCase();
+  const normLang = String(lang || "en")
+    .trim()
+    .toLowerCase();
   if (normLang === "en") return result;
 
   const translatedDevotion = await cache.getOrSet(
@@ -1242,7 +1455,7 @@ export const getAllDailyDevotionsPublic = async (data) => {
 
   if (smartDefault) {
     const today = utcToday();
-    
+
     const futureDate = utcToday(futureDays || 2);
 
     whereClause.OR = [
@@ -1296,7 +1509,6 @@ export const getTodaysExegesis = async (data = {}) => {
     "todays-exegesis",
     async () => {
       const today = utcToday();
-      
 
       let base = await prisma.dailyExegesis.findFirst({
         where: { displayDate: { gte: today }, isPublished: true },
@@ -1389,7 +1601,7 @@ export const getAllDailyExegesisPublic = async (data) => {
 
   if (smartDefault) {
     const today = utcToday();
-    
+
     const futureDate = utcToday(futureDays || 2);
 
     whereClause.OR = [
@@ -1767,7 +1979,9 @@ export const getChapterJournalPrompts = async (data) => {
     const usedIds = new Set(prompts.map((prompt) => Number(prompt.id)));
     prompts = [
       ...prompts,
-      ...defaults.filter((prompt) => !usedIds.has(prompt.id)).slice(0, 3 - prompts.length),
+      ...defaults
+        .filter((prompt) => !usedIds.has(prompt.id))
+        .slice(0, 3 - prompts.length),
     ];
   }
 

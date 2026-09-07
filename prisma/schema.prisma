@@ -355,6 +355,7 @@ model VerseStudyMetadata {
   backgroundBook    String? @map("background_book") @db.Text
   backgroundContext String? @map("background_context") @db.Text
   finalThoughts     String? @db.Text @map("final_thoughts")
+  takeaways         String? @db.Text @map("takeaways")
   
   explanation       VerseExplanation @relation(fields: [explanationId], references: [id], onDelete: Cascade)
 
