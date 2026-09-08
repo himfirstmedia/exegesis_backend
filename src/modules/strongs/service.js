@@ -10,7 +10,7 @@ const translateResponse = async (response, lang, translate = translateStrongsDat
 };
 
 export const getStrongsEntry = async (strongsId, lang) => {
-  const cacheKey = `${strongsId}`;
+  const cacheKey = `v3:${strongsId}`;
 
   const cached = await cache.get('strongs', cacheKey);
   if (cached) {
@@ -19,18 +19,73 @@ export const getStrongsEntry = async (strongsId, lang) => {
 
   const entry = await prisma.strongsDictionary.findUnique({
     where: { strongsId },
+    include: {
+      verseExplanationWordStudies: {
+        orderBy: { sortOrder: 'asc' },
+        select: {
+          surfaceText: true,
+          customDefinition: true,
+          sortOrder: true,
+          explanation: {
+            select: {
+              bookName: true,
+              chapter: true,
+              verseNumber: true,
+              bibleVersion: true,
+              themes: {
+                orderBy: { sortOrder: 'asc' },
+                select: { themeName: true },
+              },
+              crossReferences: {
+                orderBy: { sortOrder: 'asc' },
+                select: {
+                  bookName: true,
+                  chapter: true,
+                  verseNumber: true,
+                  referenceText: true,
+                  commentary: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   });
 
   if (!entry) {
     return { status: 404, message: 'Strongs entry not found' };
   }
 
-  await cache.set('strongs', cacheKey, entry, CACHE_TTL);
+  const enrichedEntry = {
+    ...entry,
+    contextualStudies: entry.verseExplanationWordStudies.map((study) => ({
+      surfaceText: study.surfaceText,
+      customDefinition: study.customDefinition,
+      sortOrder: study.sortOrder,
+      reference: study.explanation
+        ? {
+            bookName: study.explanation.bookName,
+            chapter: study.explanation.chapter,
+            verseNumber: study.explanation.verseNumber,
+            bibleVersion: study.explanation.bibleVersion,
+          }
+        : null,
+      themes: study.explanation?.themes?.map((theme) => theme.themeName) || [],
+      crossReferences: study.explanation?.crossReferences?.map((reference) => ({
+        ref: `${reference.bookName} ${reference.chapter}:${reference.verseNumber}`,
+        text: reference.referenceText || reference.commentary || '',
+      })) || [],
+    })),
+  };
 
-  return translateResponse({ status: 200, message: 'Strongs entry fetched successfully', data: entry }, lang);
+  delete enrichedEntry.verseExplanationWordStudies;
+  await cache.set('strongs', cacheKey, enrichedEntry, CACHE_TTL);
+
+  return translateResponse({ status: 200, message: 'Strongs entry fetched successfully', data: enrichedEntry }, lang);
 };
 
-export const searchStrongs = async (query, limit = 50, offset = 0, lang) => {
+export const searchStrongs = async (query, limit = 50, offset = 0, lang, language) => {
   const trimmedQuery = query.trim();
   const strongsQuery = trimmedQuery.toUpperCase();
   const where = {
@@ -51,8 +106,28 @@ export const searchStrongs = async (query, limit = 50, offset = 0, lang) => {
           },
         },
       },
+      {
+        verseExplanationWordStudies: {
+          some: {
+            OR: [
+              { surfaceText: { contains: trimmedQuery, mode: 'insensitive' } },
+              { customDefinition: { contains: trimmedQuery, mode: 'insensitive' } },
+              {
+                explanation: {
+                  themes: {
+                    some: {
+                      themeName: { contains: trimmedQuery, mode: 'insensitive' },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
     ],
   };
+  if (language && language !== 'all') where.language = language;
 
   const [data, total] = await Promise.all([
     prisma.strongsDictionary.findMany({
@@ -74,15 +149,53 @@ export const searchStrongs = async (query, limit = 50, offset = 0, lang) => {
         usageCount: true,
         crossReferences: true,
         adminExplanation: true,
+        verseExplanationWordStudies: {
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            surfaceText: true,
+            customDefinition: true,
+            sortOrder: true,
+            explanation: {
+              select: {
+                bookName: true,
+                chapter: true,
+                verseNumber: true,
+                bibleVersion: true,
+                themes: {
+                  orderBy: { sortOrder: 'asc' },
+                  select: { themeName: true },
+                },
+              },
+            },
+          },
+        },
       },
     }),
     prisma.strongsDictionary.count({ where }),
   ]);
 
+  const enrichedData = data.map((entry) => ({
+    ...entry,
+    contextualStudies: entry.verseExplanationWordStudies.map((study) => ({
+      surfaceText: study.surfaceText,
+      customDefinition: study.customDefinition,
+      sortOrder: study.sortOrder,
+      reference: study.explanation
+        ? {
+            bookName: study.explanation.bookName,
+            chapter: study.explanation.chapter,
+            verseNumber: study.explanation.verseNumber,
+            bibleVersion: study.explanation.bibleVersion,
+          }
+        : null,
+      themes: study.explanation?.themes?.map((theme) => theme.themeName) || [],
+    })),
+  }));
+
   return translateResponse({
     status: 200,
     message: 'Strongs search results',
-    data: { data, total },
+    data: { data: enrichedData, total },
   }, lang);
 };
 
@@ -218,15 +331,53 @@ export const getBookWords = async (bookName, limit = 200, offset = 0, lang) => {
       crossReferences: true,
       adminExplanation: true,
       verseReferences: true,
+      verseExplanationWordStudies: {
+        orderBy: { sortOrder: 'asc' },
+        select: {
+          surfaceText: true,
+          customDefinition: true,
+          sortOrder: true,
+          explanation: {
+            select: {
+              bookName: true,
+              chapter: true,
+              verseNumber: true,
+              bibleVersion: true,
+              themes: {
+                orderBy: { sortOrder: 'asc' },
+                select: { themeName: true },
+              },
+            },
+          },
+        },
+      },
     },
     orderBy: { strongsId: 'asc' },
   });
 
   // Add computed verseCount from verseReferences
-  const enriched = entries.map((entry) => ({
-    ...entry,
-    verseCount: Array.isArray(entry.verseReferences) ? entry.verseReferences.length : 0,
-  }));
+  const enriched = entries.map((entry) => {
+    const contextualStudies = entry.verseExplanationWordStudies.map((study) => ({
+      surfaceText: study.surfaceText,
+      customDefinition: study.customDefinition,
+      sortOrder: study.sortOrder,
+      reference: study.explanation
+        ? {
+            bookName: study.explanation.bookName,
+            chapter: study.explanation.chapter,
+            verseNumber: study.explanation.verseNumber,
+            bibleVersion: study.explanation.bibleVersion,
+          }
+        : null,
+      themes: study.explanation?.themes?.map((theme) => theme.themeName) || [],
+    }));
+    const { verseExplanationWordStudies, ...entryData } = entry;
+    return {
+      ...entryData,
+      contextualStudies,
+      verseCount: Array.isArray(entry.verseReferences) ? entry.verseReferences.length : 0,
+    };
+  });
 
   return translateResponse({
     status: 200,

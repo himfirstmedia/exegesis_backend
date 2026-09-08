@@ -858,9 +858,7 @@ export const addVerseExplanation = async (data, userId) => {
 
       return {
         ...root,
-        exegesis: exegesis
-          ? { ...exegesis, explanationId: root.id }
-          : null,
+        exegesis: exegesis ? { ...exegesis, explanationId: root.id } : null,
         studyMetadata: pendingStudyMetadata,
         wordStudies: preparedWordStudies,
         practicalApps: preparedPracticalApps,
@@ -1144,6 +1142,7 @@ export const getVerseByDate = async (data) => {
       translation: bibleVersion,
       bibleVersion,
       text: verseText,
+      verseText,
       explanation,
       learnMore,
     },
@@ -1256,6 +1255,7 @@ export const getTodaysVerse = async (data = {}) => {
       translation: bibleVersion,
       bibleVersion,
       text: verseText,
+      verseText,
       explanation: dvExplanation,
       learnMore: dvLearnMore,
     },

@@ -281,6 +281,18 @@ export const getUserJournalEntriesForAdmin = async (req, res) => {
   }
 };
 
+export const getJournalEntryForAdmin = async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+    if (!adminId) return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
+    const result = await journalService.getJournalEntryForAdmin(req.body, adminId);
+    return res.status(result.returnCode || 500).json(result);
+  } catch (error) {
+    console.error("Get journal entry for admin error:", error);
+    return res.status(500).json({ returnCode: 500, returnMessage: "Internal server error" });
+  }
+};
+
 export const setJournalEntryPublicationForAdmin = async (req, res) => {
   try {
     const adminId = req.user?.id;
@@ -291,6 +303,18 @@ export const setJournalEntryPublicationForAdmin = async (req, res) => {
     return res.status(result.returnCode || 500).json(result);
   } catch (error) {
     console.error("Set journal entry publication for admin error:", error);
+    return res.status(500).json({ returnCode: 500, returnMessage: "Internal server error" });
+  }
+};
+
+export const deleteJournalEntryForAdmin = async (req, res) => {
+  try {
+    const adminId = req.user?.id;
+    if (!adminId) return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
+    const result = await journalService.deleteJournalEntryForAdmin(req.body, adminId);
+    return res.status(result.returnCode || 500).json(result);
+  } catch (error) {
+    console.error("Delete journal entry for admin error:", error);
     return res.status(500).json({ returnCode: 500, returnMessage: "Internal server error" });
   }
 };

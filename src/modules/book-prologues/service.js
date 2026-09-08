@@ -149,9 +149,9 @@ export const getBookPrologue = async (body) => {
 };
 
 export const getAllBookPrologues = async (body) => {
-  const page = body?.page || 0;
-  const pageSize = body?.pageSize || 50;
-  const search = body?.search;
+  const page = Math.max(0, Number.parseInt(body?.page, 10) || 0);
+  const pageSize = Math.min(50, Math.max(1, Number.parseInt(body?.pageSize, 10) || 24));
+  const search = typeof body?.search === 'string' ? body.search.trim() : '';
   const lang = body?.lang || 'en';
   const where = search
     ? {

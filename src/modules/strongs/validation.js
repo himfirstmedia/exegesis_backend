@@ -6,6 +6,7 @@ export const searchStrongsSchema = z.object({
   q: z.string().min(1, 'Search query is required'),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+  language: z.string().optional(),
   lang,
 });
 

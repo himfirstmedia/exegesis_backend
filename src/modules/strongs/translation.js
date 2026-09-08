@@ -5,6 +5,8 @@ const STRONGS_FIELDS = new Set([
   'fullDefinition',
   'adminExplanation',
   'verseStudyNote',
+  'customDefinition',
+  'themeName',
 ]);
 
 const translateFields = async (value, fields, lang) => {

@@ -32,6 +32,8 @@ router.post("/templates/get-all", journalController.getJournalTemplates);
 router.post("/templates/delete", authenticate, requireAdmin, journalController.deleteJournalTemplate);
 
 router.post("/admin/get-all", authenticate, requireAdmin, journalController.getUserJournalEntriesForAdmin);
+router.post("/admin/get", authenticate, requireAdmin, journalController.getJournalEntryForAdmin);
 router.post("/admin/set-publication", authenticate, requireAdmin, journalController.setJournalEntryPublicationForAdmin);
+router.post("/admin/delete", authenticate, requireAdmin, journalController.deleteJournalEntryForAdmin);
 
 export default router;

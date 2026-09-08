@@ -206,7 +206,7 @@ export const getAllJournalEntries = async (data, userId) => {
 
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
-  const offset = (pageNum - 1) * pageSizeNum;
+  const offset = all ? undefined : (pageNum - 1) * pageSizeNum;
 
   const whereClause = { userId };
 
@@ -630,10 +630,10 @@ export const deleteJournalTemplate = async (data) => {
 };
 
 export const getUserJournalEntriesForAdmin = async (data, adminId) => {
-  const { userId, search, category, page = 1, pageSize = 20 } = data;
+  const { userId, search, category, page = 1, pageSize = 20, all = false } = data;
 
   const pageNum = parseInt(page) || 1;
-  const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
+  const pageSizeNum = all ? undefined : Math.min(parseInt(pageSize) || 20, 50);
   const offset = (pageNum - 1) * pageSizeNum;
 
   const whereClause = {};
@@ -649,8 +649,7 @@ export const getUserJournalEntriesForAdmin = async (data, adminId) => {
   const [entries, totalCount] = await Promise.all([
     prisma.journalEntry.findMany({
       where: whereClause,
-      skip: offset,
-      take: pageSizeNum,
+      ...(all ? {} : { skip: offset, take: pageSizeNum }),
       orderBy: { createdOn: "desc" },
       include: {
         user: {
@@ -667,7 +666,7 @@ export const getUserJournalEntriesForAdmin = async (data, adminId) => {
     prisma.journalEntry.count({ where: whereClause }),
   ]);
 
-  const totalPages = Math.ceil(totalCount / pageSizeNum);
+  const totalPages = all ? 1 : Math.ceil(totalCount / pageSizeNum);
   const hasNext = pageNum < totalPages;
   const hasPrevious = pageNum > 1;
 
@@ -678,11 +677,33 @@ export const getUserJournalEntriesForAdmin = async (data, adminId) => {
       entries,
       totalCount,
       page: pageNum,
-      pageSize: pageSizeNum,
+      pageSize: all ? totalCount : pageSizeNum,
       totalPages,
       hasNext,
       hasPrevious,
     }),
+  };
+
+};
+
+export const getJournalEntryForAdmin = async (data, adminId) => {
+  const { id } = data;
+  if (!id) return { returnCode: 400, returnMessage: "Journal entry ID is required" };
+
+  const entry = await prisma.journalEntry.findUnique({
+    where: { id: BigInt(id) },
+    include: {
+      user: {
+        select: { id: true, firstName: true, lastName: true, username: true, email: true },
+      },
+    },
+  });
+
+  if (!entry) return { returnCode: 404, returnMessage: "Journal entry not found" };
+  return {
+    returnCode: 200,
+    returnMessage: "Journal entry fetched successfully",
+    returnData: serializeBigInt(entry),
   };
 };
 
@@ -724,6 +745,18 @@ export const setJournalEntryPublicationForAdmin = async (data, adminId) => {
     returnMessage: isPublished ? "Journal entry approved" : "Journal entry unpublished",
     returnData: serializeBigInt(entry),
   };
+
+};
+
+export const deleteJournalEntryForAdmin = async (data, adminId) => {
+  const { id } = data;
+  if (!id) return { returnCode: 400, returnMessage: "Journal entry ID is required" };
+
+  const existing = await prisma.journalEntry.findUnique({ where: { id: BigInt(id) } });
+  if (!existing) return { returnCode: 404, returnMessage: "Journal entry not found" };
+
+  await prisma.journalEntry.delete({ where: { id: BigInt(id) } });
+  return { returnCode: 200, returnMessage: "Journal entry deleted successfully" };
 };
 
 // ── Verse text helper ────────────────────────────────────────────────────────
