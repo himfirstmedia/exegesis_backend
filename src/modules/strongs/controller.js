@@ -11,10 +11,7 @@ export const getStrongsEntry = asyncHandler(async (req, res) => {
 
 export const searchStrongs = asyncHandler(async (req, res) => {
   const { q, limit, offset, language, lang } = req.query;
-  if (!q || q.trim().length < 1) {
-    throw new ValidationError('Search query is required');
-  }
-  const result = await strongsService.searchStrongs(q, parseInt(limit) || 50, parseInt(offset) || 0, lang, language);
+  const result = await strongsService.searchStrongs(q || '', parseInt(limit) || 50, parseInt(offset) || 0, lang, language);
   res.json(formatApiResponse(result));
 });
 
@@ -36,8 +33,8 @@ export const getBookWords = asyncHandler(async (req, res) => {
   if (!bookName) {
     throw new ValidationError('bookName is required');
   }
-  const { limit, offset, lang } = req.query;
-  const result = await strongsService.getBookWords(bookName, parseInt(limit) || 200, parseInt(offset) || 0, lang);
+  const { limit, offset, lang, language } = req.query;
+  const result = await strongsService.getBookWords(bookName, parseInt(limit) || 200, parseInt(offset) || 0, lang, language);
   res.json(formatApiResponse(result));
 });
 

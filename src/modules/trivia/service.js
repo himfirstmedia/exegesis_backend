@@ -559,6 +559,72 @@ export const getUserStats = async (userId) => {
   };
 };
 
+export const getCurrentUserPerformance = async (userId, body = {}) => {
+  const page = Math.max(Number(body.page) || 0, 0);
+  const pageSize = Math.min(Math.max(Number(body.pageSize) || 20, 1), 100);
+  const search = typeof body.search === 'string' ? body.search.trim() : '';
+  const where = {
+    userId,
+    ...(search
+      ? { question: { question: { contains: search, mode: 'insensitive' } } }
+      : {}),
+  };
+
+  const [total, correct, answers] = await Promise.all([
+      prisma.triviaAnswer.count({ where }),
+      prisma.triviaAnswer.count({ where: { ...where, isCorrect: true } }),
+      prisma.triviaAnswer.findMany({
+        where,
+        include: {
+          question: {
+            select: {
+              id: true,
+              question: true,
+              difficulty: true,
+              category: true,
+              optionsJson: true,
+              correctAnswer: true,
+              explanation: true,
+            },
+          },
+        },
+        orderBy: { answeredOn: "desc" },
+        skip: page * pageSize,
+        take: pageSize,
+      }),
+    ]);
+
+  return {
+      status: 200,
+      message: "User trivia performance fetched",
+      data: {
+        stats: {
+          totalAnswered: total,
+          correct,
+          incorrect: total - correct,
+          percentage: total > 0 ? Math.round((correct / total) * 100) : 0,
+        },
+        answers: answers.map((answer) =>
+          serializeBigInt({
+            id: answer.id,
+            questionId: answer.questionId,
+            selectedAnswer: answer.selectedAnswer,
+            isCorrect: answer.isCorrect,
+            answeredOn: answer.answeredOn,
+            question: answer.question.question,
+            difficulty: answer.question.difficulty,
+            category: answer.question.category,
+            optionsJson: answer.question.optionsJson,
+            correctAnswer: answer.question.correctAnswer,
+            explanation: answer.question.explanation,
+          }),
+        ),
+        total,
+        hasNext: (page + 1) * pageSize < total,
+      },
+    };
+  };
+
 /**
  * Get today's featured trivia question (for the dashboard).
  * Returns a random active question with options parsed into answerA/B/C/D fields.

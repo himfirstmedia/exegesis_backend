@@ -20,6 +20,7 @@ import {
 // and only warn once per missing translation instead of on every fetch.
 const missingTranslationWarned = new Set();
 const DEFAULT_VERSE_TRANSLATION = "KJV";
+const journalPromptDatabaseWarnings = new Set();
 
 export const fetchVerseTextWithFallback = async (
   bibleVersion,
@@ -537,6 +538,174 @@ const withLegacyVerseExplanationFields = (resource) => {
   return next;
 };
 
+const addVerseTextToStrongReferences = async (resource) => {
+  const references = (resource?.wordStudies || []).flatMap((wordStudy) =>
+    Array.isArray(wordStudy?.strongs?.verseReferences)
+      ? wordStudy.strongs.verseReferences
+      : [],
+  );
+  const keys = [
+    ...new Map(
+      references
+        .filter((reference) => reference?.bookName && reference?.chapter && reference?.verse)
+        .map((reference) => {
+          const key = `${reference.translation || "BSB"}:${reference.bookName}:${reference.chapter}:${reference.verse}`;
+          return [key, {
+            key,
+            translation: reference.translation || "BSB",
+            bookName: reference.bookName,
+            chapter: Number(reference.chapter),
+            verse: Number(reference.verse),
+          }];
+        }),
+    ).values(),
+  ];
+
+  if (keys.length === 0) return resource;
+
+  const verses = await prisma.searchIndex.findMany({
+    where: {
+      OR: keys.map(({ translation, bookName, chapter, verse }) => ({
+        translation,
+        bookName,
+        chapter,
+        verse,
+      })),
+    },
+    select: { translation: true, bookName: true, chapter: true, verse: true, verseText: true },
+  });
+  const verseWords = await prisma.verseWord.findMany({
+    where: {
+      OR: keys.map(({ translation, bookName, chapter, verse }) => ({
+        translation,
+        bookName,
+        chapter: BigInt(chapter),
+        verse: BigInt(verse),
+      })),
+    },
+    select: { translation: true, bookName: true, chapter: true, verse: true, surfaceText: true },
+    orderBy: { wordOrder: "asc" },
+  });
+  const verseTextByKey = new Map(
+    verses.map((verse) => [
+      `${verse.translation}:${verse.bookName}:${verse.chapter}:${verse.verse}`,
+      verse.verseText,
+    ]),
+  );
+  const verseWordsByKey = new Map();
+  for (const word of verseWords) {
+    const key = `${word.translation}:${word.bookName}:${word.chapter}:${word.verse}`;
+    const words = verseWordsByKey.get(key) || [];
+    words.push(word.surfaceText);
+    verseWordsByKey.set(key, words);
+  }
+
+  return {
+    ...resource,
+    wordStudies: (resource.wordStudies || []).map((wordStudy) => ({
+      ...wordStudy,
+      strongs: wordStudy.strongs
+        ? {
+            ...wordStudy.strongs,
+            verseReferences: Array.isArray(wordStudy.strongs.verseReferences)
+              ? wordStudy.strongs.verseReferences.map((reference) => ({
+                  ...reference,
+                  verseText:
+                    reference.verseText ||
+                    verseTextByKey.get(
+                      `${reference.translation || "BSB"}:${reference.bookName}:${reference.chapter}:${reference.verse}`,
+                    ) ||
+                    null,
+                  verseWords:
+                    verseWordsByKey.get(
+                      `${reference.translation || "BSB"}:${reference.bookName}:${reference.chapter}:${reference.verse}`,
+                    ) || [],
+                }))
+              : wordStudy.strongs.verseReferences,
+          }
+        : wordStudy.strongs,
+    })),
+  };
+};
+
+const addCrossReferenceDetailsToExplanation = async (resource) => {
+  const entries = (resource?.wordStudies || []).map((wordStudy) => wordStudy?.strongs).filter(Boolean);
+  const parsed = entries.flatMap((strongs) => {
+    if (typeof strongs.crossReferences !== "string") return [];
+    return strongs.crossReferences.split(/[;,]/).map((part) => {
+      const match = part.trim().replace(/\.$/, "").match(/^((?:[1-3]\s)?[A-Za-z]+(?:\s+[A-Za-z]+)*)\s+(\d+):(\d+)$/);
+      return match ? {
+        reference: match[0],
+        bookName: match[1],
+        chapter: Number(match[2]),
+        verse: Number(match[3]),
+      } : null;
+    }).filter(Boolean);
+  });
+  if (parsed.length === 0) return resource;
+
+  const verses = await prisma.searchIndex.findMany({
+    where: {
+      OR: parsed.map((reference) => ({
+        translation: resource.bibleVersion || "BSB",
+        bookName: reference.bookName,
+        chapter: reference.chapter,
+        verse: reference.verse,
+      })),
+    },
+    select: { bookName: true, chapter: true, verse: true, verseText: true },
+  });
+  const verseWords = await prisma.verseWord.findMany({
+    where: {
+      OR: parsed.map((reference) => ({
+        translation: resource.bibleVersion || "BSB",
+        bookName: reference.bookName,
+        chapter: BigInt(reference.chapter),
+        verse: BigInt(reference.verse),
+      })),
+    },
+    select: { bookName: true, chapter: true, verse: true, surfaceText: true, wordOrder: true },
+    orderBy: { wordOrder: "asc" },
+  });
+  const textByKey = new Map(verses.map((verse) => [
+    `${verse.bookName}:${verse.chapter}:${verse.verse}`,
+    verse.verseText,
+  ]));
+  const wordsByKey = new Map();
+  for (const word of verseWords) {
+    const key = `${word.bookName}:${word.chapter}:${word.verse}`;
+    const words = wordsByKey.get(key) || [];
+    words.push(word.surfaceText);
+    wordsByKey.set(key, words);
+  }
+
+  return {
+    ...resource,
+    wordStudies: resource.wordStudies.map((wordStudy) => ({
+      ...wordStudy,
+      strongs: wordStudy.strongs ? {
+        ...wordStudy.strongs,
+        crossReferenceDetails: typeof wordStudy.strongs.crossReferences === "string"
+          ? wordStudy.strongs.crossReferences.split(/[;,]/).map((part) => {
+              const match = part.trim().replace(/\.$/, "").match(/^((?:[1-3]\s)?[A-Za-z]+(?:\s+[A-Za-z]+)*)\s+(\d+):(\d+)$/);
+              if (!match) return null;
+              const reference = match[0];
+              return {
+                reference,
+                bookName: match[1],
+                chapter: Number(match[2]),
+                verse: Number(match[3]),
+                translation: resource.bibleVersion || "BSB",
+                verseText: textByKey.get(`${match[1]}:${match[2]}:${match[3]}`) || null,
+                verseWords: wordsByKey.get(`${match[1]}:${match[2]}:${match[3]}`) || [],
+              };
+            }).filter(Boolean)
+          : [],
+      } : wordStudy.strongs,
+    })),
+  };
+};
+
 export const getVerseExplanation = async (data) => {
   const { bookName, chapter, verseNumber, lang = "en" } = data;
   const target = normalizeLanguage(lang);
@@ -549,7 +718,7 @@ export const getVerseExplanation = async (data) => {
 
   const record = await cache.getOrSet(
     "bible",
-    `explanation-detailed:${bookName}:${chapter}:${verseNumber}`,
+    `explanation-detailed:v4:${bookName}:${chapter}:${verseNumber}`,
     async () => {
       return prisma.verseExplanation.findUnique({
         where: {
@@ -562,7 +731,30 @@ export const getVerseExplanation = async (data) => {
         include: {
           exegesis: true,
           studyMetadata: true,
-          wordStudies: { orderBy: { sortOrder: "asc" } },
+          wordStudies: {
+            orderBy: { sortOrder: "asc" },
+            include: {
+              strongs: {
+                select: {
+                  strongsId: true,
+                  originalWord: true,
+                  transliteration: true,
+                  pronunciation: true,
+                  shortDefinition: true,
+                  fullDefinition: true,
+                  language: true,
+                  usageCount: true,
+                  partOfSpeech: true,
+                  grammaticalCase: true,
+                  gender: true,
+                  number: true,
+                  crossReferences: true,
+                  adminExplanation: true,
+                  verseReferences: true,
+                },
+              },
+            },
+          },
           practicalApps: { orderBy: { sortOrder: "asc" } },
           crossReferences: { orderBy: { sortOrder: "asc" } },
           themes: { orderBy: { sortOrder: "asc" } },
@@ -574,7 +766,11 @@ export const getVerseExplanation = async (data) => {
 
   if (!record) return { status: 404, message: "Verse explanation not found" };
 
-  const serialized = withLegacyVerseExplanationFields(serializeBigInt(record));
+  const serialized = await addCrossReferenceDetailsToExplanation(
+    await addVerseTextToStrongReferences(
+    withLegacyVerseExplanationFields(serializeBigInt(record)),
+    ),
+  );
 
   if (target.toLowerCase() !== "en") {
     // Recursive translation for structured content
@@ -1948,11 +2144,28 @@ export const getChapterJournalPrompts = async (data) => {
   const ch = BigInt(chapter);
 
   // 1) Chapter-specific prompts first (admin-curated for this exact passage)
-  const specific = await prisma.journalPrompt.findMany({
-    where: { isActive: true, bookName, chapter: ch },
-    orderBy: [{ order: "asc" }, { id: "asc" }],
-    take: 3,
-  });
+  let specific = [];
+  try {
+    specific = await prisma.journalPrompt.findMany({
+      where: { isActive: true, bookName, chapter: ch },
+      orderBy: [{ order: "asc" }, { id: "asc" }],
+      take: 3,
+    });
+  } catch (error) {
+    // A temporary Railway/Postgres outage should not prevent the reader from
+    // showing reflection prompts. Keep unexpected Prisma errors actionable.
+    const isDatabaseUnavailable =
+      error?.code === "P1001" || error?.meta?.code === "P1001";
+    if (!isDatabaseUnavailable) throw error;
+
+    const warningKey = `${bookName}:${chapter}`;
+    if (!journalPromptDatabaseWarnings.has(warningKey)) {
+      journalPromptDatabaseWarnings.add(warningKey);
+      console.warn(
+        `[bible] Journal prompts database unavailable for ${warningKey}; using defaults`,
+      );
+    }
+  }
 
   // 2) Chapter-aware defaults keep reflection relevant when an admin has not
   //    curated all three prompts for this exact passage.

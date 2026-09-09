@@ -27,6 +27,7 @@ const EXEGESIS_FIELDS = [
 ];
 
 const ARRAY_FIELDS = ["practicalApplications", "keyThemes", "takeaways"];
+const translationWarnings = new Map();
 
 const getMaxBatchCharacters = () => {
   const value = Number.parseInt(process.env.TRANSLATION_MAX_TEXT_LENGTH, 10);
@@ -163,11 +164,21 @@ const translateRecord = async (item, lang, fields, includeRichFields) => {
     addWordStudies(translated, entries);
   }
 
+  if (!entries.length) return translated;
+
   try {
     await translateEntries(entries, target);
     return translated;
   } catch (error) {
-    console.warn(`[daily-content] Translation to ${target} failed:`, error.message);
+    const warningKey = `${target}:${error.message}`;
+    const lastWarning = translationWarnings.get(warningKey) || 0;
+    if (Date.now() - lastWarning >= 30000) {
+      translationWarnings.set(warningKey, Date.now());
+      console.warn(
+        `[daily-content] Translation to ${target} failed; serving English content:`,
+        error.message,
+      );
+    }
     return item;
   }
 };

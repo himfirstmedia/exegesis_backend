@@ -26,6 +26,7 @@ import {
 import { buildPromptAnswer } from "./templates/promptAnswers.js";
 
 const memCache = new Map();
+const inFlightExplanations = new Map();
 const CACHE_TTL = 12 * 60 * 60;
 
 // Bump when template data changes so cached responses are rebuilt with the
@@ -309,6 +310,18 @@ function blendSources({ dailyExegesis, verseExplanation, verseResource, prologue
 export async function explainVerses(book, chapter, verse, depth = "standard") {
   const bookName = normalizeBook(book);
   const cacheKey = `ai:${TEMPLATE_VERSION}:${bookName}:${chapter}:${verse}:${depth}`;
+  const inFlight = inFlightExplanations.get(cacheKey);
+  if (inFlight) return inFlight;
+
+  const request = explainVersesUncached(bookName, chapter, verse, depth)
+    .finally(() => inFlightExplanations.delete(cacheKey));
+  inFlightExplanations.set(cacheKey, request);
+  return request;
+}
+
+async function explainVersesUncached(book, chapter, verse, depth = "standard") {
+  const bookName = normalizeBook(book);
+  const cacheKey = `ai:${TEMPLATE_VERSION}:${bookName}:${chapter}:${verse}:${depth}`;
 
   if (memCache.has(cacheKey)) return memCache.get(cacheKey);
   const cached = await cache.get("ai", cacheKey);
@@ -330,7 +343,21 @@ export async function explainVerses(book, chapter, verse, depth = "standard") {
     }),
     prisma.verseExplanation.findUnique({
       where: { bookName_chapter_verseNumber: { bookName, chapter, verseNumber: verse } },
-      select: { explanation: true, learnMore: true },
+      select: {
+        exegesis: {
+          select: {
+            explanationText: true,
+            applicationText: true,
+          },
+        },
+        studyMetadata: {
+          select: {
+            introduction: true,
+            finalThoughts: true,
+            takeaways: true,
+          },
+        },
+      },
     }),
     prisma.verseResource.findFirst({
       where: { bookName, chapter, verseStart: { lte: verse }, OR: [{ verseEnd: null }, { verseEnd: { gte: verse } }] },
@@ -360,9 +387,27 @@ export async function explainVerses(book, chapter, verse, depth = "standard") {
 
   const verseText = cleanVerseText(rawVerseText);
   const themes = detectThemes(verseText);
+  const storedVerseExplanation = verseExplanation
+    ? {
+        explanation: verseExplanation.exegesis?.explanationText || "",
+        learnMore: [
+          verseExplanation.studyMetadata?.introduction,
+          verseExplanation.studyMetadata?.finalThoughts,
+          Array.isArray(verseExplanation.studyMetadata?.takeaways)
+            ? verseExplanation.studyMetadata.takeaways.join(" ")
+            : verseExplanation.studyMetadata?.takeaways,
+        ]
+          .filter(value => typeof value === "string" && value.trim())
+          .join(" ")
+          .trim(),
+      }
+    : null;
 
   const result = blendSources({
-    dailyExegesis, verseExplanation, verseResource, prologue,
+    dailyExegesis,
+    verseExplanation: storedVerseExplanation,
+    verseResource,
+    prologue,
     verseText, ref, depth, themes, genre,
     contextVerses: contextVerses || [],
     chapterTools: chapterTools || [],

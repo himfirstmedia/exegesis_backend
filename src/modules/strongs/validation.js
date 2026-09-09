@@ -3,7 +3,7 @@ import { z } from 'zod/v4';
 const lang = z.string().optional();
 
 export const searchStrongsSchema = z.object({
-  q: z.string().min(1, 'Search query is required'),
+  q: z.string().optional().default(''),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).optional(),
   language: z.string().optional(),
@@ -13,6 +13,7 @@ export const searchStrongsSchema = z.object({
 export const getBookWordsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+  language: z.string().optional(),
   lang,
 });
 

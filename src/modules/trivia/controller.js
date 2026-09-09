@@ -105,6 +105,16 @@ export const getUserStats = async (req, res) => {
   }
 };
 
+export const getCurrentUserPerformance = async (req, res) => {
+  try {
+    const result = await triviaService.getCurrentUserPerformance(req.user.id, req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[TriviaController] getCurrentUserPerformance error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error fetching trivia performance: ' + error.message }));
+  }
+};
+
 // ── Admin Analytics ──────────────────────────────────────────────────────────
 
 export const getAdminOverviewStats = async (req, res) => {

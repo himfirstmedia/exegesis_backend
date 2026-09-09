@@ -206,7 +206,7 @@ export const getAllJournalEntries = async (data, userId) => {
 
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
-  const offset = all ? undefined : (pageNum - 1) * pageSizeNum;
+  const offset = (pageNum - 1) * pageSizeNum;
 
   const whereClause = { userId };
 

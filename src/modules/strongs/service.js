@@ -9,6 +9,73 @@ const translateResponse = async (response, lang, translate = translateStrongsDat
   return { ...response, data: await translate(response.data, lang) };
 };
 
+const parseCrossReferenceDetails = (value) => {
+  if (typeof value !== 'string') return [];
+  return value.split(/[;,]/).map((part) => {
+    const match = part.trim().replace(/\.$/, '').match(/^((?:[1-3]\s)?[A-Za-z]+(?:\s+[A-Za-z]+)*)\s+(\d+):(\d+)$/);
+    return match ? {
+      reference: match[0],
+      bookName: match[1],
+      chapter: Number(match[2]),
+      verse: Number(match[3]),
+    } : null;
+  }).filter(Boolean);
+};
+
+const addCrossReferenceTexts = async (entries, translation) => {
+  const references = entries.flatMap((entry) => parseCrossReferenceDetails(entry.crossReferences));
+  if (references.length === 0) {
+    return entries.map((entry) => ({ ...entry, crossReferenceDetails: [] }));
+  }
+
+  const verses = await prisma.searchIndex.findMany({
+    where: {
+      OR: references.map((reference) => ({
+        translation,
+        bookName: reference.bookName,
+        chapter: reference.chapter,
+        verse: reference.verse,
+      })),
+    },
+    select: { bookName: true, chapter: true, verse: true, verseText: true },
+  });
+  const verseWords = await prisma.verseWord.findMany({
+    where: {
+      OR: references.map((reference) => ({
+        translation,
+        bookName: reference.bookName,
+        chapter: BigInt(reference.chapter),
+        verse: BigInt(reference.verse),
+      })),
+    },
+    select: { bookName: true, chapter: true, verse: true, surfaceText: true, wordOrder: true },
+    orderBy: { wordOrder: "asc" },
+  });
+  const textByKey = new Map(
+    verses.map((verse) => [
+      `${verse.bookName}:${verse.chapter}:${verse.verse}`,
+      verse.verseText,
+    ]),
+  );
+  const wordsByKey = new Map();
+  for (const word of verseWords) {
+    const key = `${word.bookName}:${word.chapter}:${word.verse}`;
+    const words = wordsByKey.get(key) || [];
+    words.push(word.surfaceText);
+    wordsByKey.set(key, words);
+  }
+
+  return entries.map((entry) => ({
+    ...entry,
+    crossReferenceDetails: parseCrossReferenceDetails(entry.crossReferences).map((reference) => ({
+      ...reference,
+      translation,
+      verseText: textByKey.get(`${reference.bookName}:${reference.chapter}:${reference.verse}`) || null,
+      verseWords: wordsByKey.get(`${reference.bookName}:${reference.chapter}:${reference.verse}`) || [],
+    })),
+  }));
+};
+
 export const getStrongsEntry = async (strongsId, lang) => {
   const cacheKey = `v3:${strongsId}`;
 
@@ -88,8 +155,8 @@ export const getStrongsEntry = async (strongsId, lang) => {
 export const searchStrongs = async (query, limit = 50, offset = 0, lang, language) => {
   const trimmedQuery = query.trim();
   const strongsQuery = trimmedQuery.toUpperCase();
-  const where = {
-    OR: [
+  const where = {};
+  if (trimmedQuery) where.OR = [
       { strongsId: { contains: strongsQuery, mode: 'insensitive' } },
       { originalWord: { contains: trimmedQuery, mode: 'insensitive' } },
       { transliteration: { contains: trimmedQuery, mode: 'insensitive' } },
@@ -125,9 +192,10 @@ export const searchStrongs = async (query, limit = 50, offset = 0, lang, languag
           },
         },
       },
-    ],
-  };
-  if (language && language !== 'all') where.language = language;
+    ];
+  if (language && language.toLowerCase() !== 'all') {
+    where.language = { equals: language, mode: 'insensitive' };
+  }
 
   const [data, total] = await Promise.all([
     prisma.strongsDictionary.findMany({
@@ -139,6 +207,7 @@ export const searchStrongs = async (query, limit = 50, offset = 0, lang, languag
         strongsId: true,
         originalWord: true,
         transliteration: true,
+        pronunciation: true,
         shortDefinition: true,
         fullDefinition: true,
         language: true,
@@ -149,6 +218,7 @@ export const searchStrongs = async (query, limit = 50, offset = 0, lang, languag
         usageCount: true,
         crossReferences: true,
         adminExplanation: true,
+        verseReferences: true,
         verseExplanationWordStudies: {
           orderBy: { sortOrder: 'asc' },
           select: {
@@ -164,6 +234,16 @@ export const searchStrongs = async (query, limit = 50, offset = 0, lang, languag
                 themes: {
                   orderBy: { sortOrder: 'asc' },
                   select: { themeName: true },
+                },
+                crossReferences: {
+                  orderBy: { sortOrder: 'asc' },
+                  select: {
+                    bookName: true,
+                    chapter: true,
+                    verseNumber: true,
+                    referenceText: true,
+                    commentary: true,
+                  },
                 },
               },
             },
@@ -189,6 +269,10 @@ export const searchStrongs = async (query, limit = 50, offset = 0, lang, languag
           }
         : null,
       themes: study.explanation?.themes?.map((theme) => theme.themeName) || [],
+      crossReferences: study.explanation?.crossReferences?.map((reference) => ({
+        ref: `${reference.bookName} ${reference.chapter}:${reference.verseNumber}`,
+        text: reference.referenceText || reference.commentary || '',
+      })) || [],
     })),
   }));
 
@@ -287,31 +371,47 @@ export const getVersesByStrongs = async (strongsId, translation = 'Berean', limi
   return translateResponse({ status: 200, message: 'Verses fetched successfully', data: result }, lang);
 };
 
-export const getBookWords = async (bookName, limit = 200, offset = 0, lang) => {
-  // Find all unique Strong's IDs used in this book via verse_words
-  const verseWordIds = await prisma.$queryRaw`
-    SELECT DISTINCT vw.strongs_id
-    FROM verse_words vw
-    WHERE vw.book_name = ${bookName}
-      AND vw.strongs_id IS NOT NULL
-    ORDER BY vw.strongs_id
-    LIMIT ${limit}
-    OFFSET ${offset}
-  `;
-
-  const strongsIds = verseWordIds.map(r => r.strongs_id).filter(Boolean);
+export const getBookWords = async (bookName, limit = 200, offset = 0, lang, language = 'all') => {
+  const languageFilter = language && language.toLowerCase() !== 'all'
+    ? language.toLowerCase()
+    : null;
+  const languageEntries = languageFilter
+    ? await prisma.strongsDictionary.findMany({
+        where: { language: { equals: languageFilter, mode: 'insensitive' } },
+        select: { strongsId: true },
+      })
+    : null;
+  const allowedIds = languageEntries?.map((entry) => entry.strongsId) || null;
+  const wordWhere = {
+    bookName,
+    strongsId: {
+      not: null,
+      ...(allowedIds ? { in: allowedIds } : {}),
+    },
+  };
+  const verseWordIds = await prisma.verseWord.findMany({
+    where: wordWhere,
+    distinct: ['strongsId'],
+    orderBy: { strongsId: 'asc' },
+    skip: offset,
+    take: limit,
+    select: { strongsId: true },
+  });
+  const strongsIds = verseWordIds.map((row) => row.strongsId).filter(Boolean);
   if (strongsIds.length === 0) {
-    return translateResponse({ status: 200, message: 'No Strongs words found for this book', data: [] }, lang);
+    return translateResponse({
+      status: 200,
+      message: 'No Strongs words found for this book',
+      data: { data: [], total: 0, hasNext: false },
+    }, lang);
   }
 
-  // Get total count
-  const countResult = await prisma.$queryRaw`
-    SELECT COUNT(DISTINCT vw.strongs_id) as total
-    FROM verse_words vw
-    WHERE vw.book_name = ${bookName}
-      AND vw.strongs_id IS NOT NULL
-  `;
-  const total = Number(countResult[0]?.total || 0);
+  const totalRows = await prisma.verseWord.findMany({
+    where: wordWhere,
+    distinct: ['strongsId'],
+    select: { strongsId: true },
+  });
+  const total = totalRows.length;
 
   // Fetch the Strong's entries with verseReferences for attachment info
   const entries = await prisma.strongsDictionary.findMany({
@@ -530,7 +630,7 @@ export const adminUpdateEntry = async (strongsId, data) => {
 };
 
 export const getVerseUniqueWords = async (bookName, chapter, verse, translation = 'BSB', page = 0, pageSize = 50, lang) => {
-  const cacheKey = `unique:${translation}:${bookName}:${chapter}:${verse ?? 'all'}:p${page}:s${pageSize}`;
+  const cacheKey = `unique:v3:${translation}:${bookName}:${chapter}:${verse ?? 'all'}:p${page}:s${pageSize}`;
 
   const cached = await cache.get('verse-words', cacheKey);
   if (cached) {
@@ -627,11 +727,12 @@ export const getVerseUniqueWords = async (bookName, chapter, verse, translation 
     }
   }
 
-  const total = uniqueEntries.length;
+  const enrichedEntries = await addCrossReferenceTexts(uniqueEntries, translation);
+  const total = enrichedEntries.length;
 
   // Apply pagination
   const start = page * pageSize;
-  const paginated = uniqueEntries.slice(start, start + pageSize);
+  const paginated = enrichedEntries.slice(start, start + pageSize);
   const hasNext = start + pageSize < total;
 
   const result = { data: paginated, total, hasNext };
@@ -663,12 +764,41 @@ export const syncVerseReferences = async (strongsId) => {
     orderBy: [{ bookName: 'asc' }, { chapter: 'asc' }, { verse: 'asc' }],
   });
 
+  const verseKeys = [
+    ...new Map(
+      studies.map((study) => [
+        `${study.translation || "BSB"}:${study.bookName}:${study.chapter}:${study.verse}`,
+        study,
+      ]),
+    ).values(),
+  ];
+  const verseTexts = await prisma.searchIndex.findMany({
+    where: {
+      OR: verseKeys.map((study) => ({
+        translation: study.translation || "BSB",
+        bookName: study.bookName,
+        chapter: Number(study.chapter),
+        verse: Number(study.verse),
+      })),
+    },
+    select: { translation: true, bookName: true, chapter: true, verse: true, verseText: true },
+  });
+  const verseTextByKey = new Map(
+    verseTexts.map((verse) => [
+      `${verse.translation}:${verse.bookName}:${verse.chapter}:${verse.verse}`,
+      verse.verseText,
+    ]),
+  );
   const references = studies.map((s) => ({
     bookName: s.bookName,
     chapter: s.chapter,
     verse: s.verse,
     translation: s.translation,
     surfaceText: s.surfaceText || null,
+    verseText:
+      verseTextByKey.get(
+        `${s.translation || "BSB"}:${s.bookName}:${s.chapter}:${s.verse}`,
+      ) || null,
     adminExplanation: s.adminExplanation || null,
   }));
 
