@@ -1985,7 +1985,7 @@ function formatActivityTime(time, lang = "en") {
 
 export const getRecentActivity = async (userId, limit = 10, lang = "en") => {
   lang = normalizeLanguage(lang);
-  const limitNum = Math.min(parseInt(limit) || 10, 20);
+  const limitNum = Math.max(1, Math.min(parseInt(limit, 10) || 10, 20));
 
   const [
     recentReads,
@@ -2018,7 +2018,7 @@ export const getRecentActivity = async (userId, limit = 10, lang = "en") => {
       where: { userId },
       include: { readingPlan: true },
       orderBy: { lastCompletedDate: "desc" },
-      take: 3,
+      take: limitNum,
     }),
   ]);
 
@@ -2091,7 +2091,7 @@ export const getRecentActivity = async (userId, limit = 10, lang = "en") => {
   const activities = [];
 
   for (const act of allActivities) {
-    if (activities.length >= 3) break;
+    if (activities.length >= limitNum) break;
 
     if (act.type === "plan") {
       activities.push(act);
