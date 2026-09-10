@@ -19,6 +19,44 @@ const getCacheKey = (text, voiceId, speed) => {
   return `${hash}:${voiceId || "default"}:${speed || 1.0}`;
 };
 
+// ── Sentence-pause compression (Edge TTS) ─────────────────────────────────
+// Edge TTS inserts ~1.2s of silence at every sentence boundary ("full stop
+// pause"), which makes verse playback drag. The free endpoint rejects
+// <break> and mstts:silence (silently returns empty audio), so the only
+// reliable lever is text-level: converting sentence-ending periods into
+// commas cuts the pause to ~250ms while ? and ! keep their natural
+// question/exclamation intonation. Applied ONLY to Edge synthesis
+// (SSML-based); ElevenLabs handles pacing on its own.
+const ABBREVIATIONS =
+  /\b(mr|mrs|ms|dr|prof|sr|jr|st|mt|cf|vs|vol|ch|pp|no|approx|etc|e\.g|i\.e)\./gi;
+const DOT_PLACEHOLDER = "\u0001";
+
+const transformTextForEdge = (text) => {
+  // Protect known abbreviations so their periods are never mistaken for
+  // sentence boundaries ("Mr. Smith", "cf. John 3:16")
+  const masked = text.replace(
+    ABBREVIATIONS,
+    (m) => m.replace(/\./g, DOT_PLACEHOLDER),
+  );
+  return (
+    masked
+      // 1) Periods ending a sentence — or sitting before a closing
+      //    quote/paren ("...light." / "...so.)") — become commas
+      //    (~1.2s pause -> ~250ms). Requires 2+ preceding letters so single
+      //    initials ("v. 2", "U.S.") survive. ? and ! keep their natural
+      //    question/exclamation intonation.
+      .replace(/([a-z\u00C0-\u024F]{2,}|["”')\]])\.(?=[\s"”')\]])/gi, "$1,")
+      // 2) Prefer the comma after a closing quote/paren for cleaner phrasing:
+      //    'light," next' -> 'light", next'
+      .replace(/,(["”')\]])/g, "$1,")
+      // 3) Collapse any doubled spaces left behind
+      .replace(/\s{2,}/g, " ")
+      .trim()
+      // Restore abbreviation periods
+      .replace(/\u0001/g, ".")
+  );
+};
+
 const getFromCache = (key) => {
   const entry = TTS_CACHE.get(key);
   if (!entry) return null;
@@ -380,10 +418,12 @@ const synthesizeEdge = async (text, voiceId = DEFAULT_EDGE_VOICE, speed = 1.0) =
   // Edge TTS rate: "+0%" = normal, "+20%" = 1.2x, "-20%" = 0.8x
   const ratePercent = Math.round((speed - 1) * 100);
   const rate = ratePercent === 0 ? "+0%" : `${ratePercent > 0 ? "+" : ""}${ratePercent}%`;
+  // Compress sentence-boundary pauses before synthesis (see helper comment)
+  const transformedText = transformTextForEdge(text);
 
   try {
     const buffer = await acquireTimedClient(voiceId, false, async (tts) => {
-      const { audioStream, metadataStream } = tts.toStream(text, { rate });
+      const { audioStream, metadataStream } = tts.toStream(transformedText, { rate });
       // Pool sockets have word-boundary metadata enabled; consume the metadata
       // stream so it doesn't buffer data nobody reads.
       metadataStream?.on("data", () => {});
@@ -464,9 +504,11 @@ const synthesizeWithTimingsOnce = async (
 
   const ratePercent = Math.round((speed - 1) * 100);
   const rate = ratePercent === 0 ? "+0%" : `${ratePercent > 0 ? "+" : ""}${ratePercent}%`;
+  // Compress sentence-boundary pauses before synthesis (see helper comment)
+  const transformedText = transformTextForEdge(text);
 
   const result = await acquireTimedClient(edgeVoice, priority === "high", async (tts) => {
-    const { audioStream, metadataStream } = tts.toStream(text, { rate });
+    const { audioStream, metadataStream } = tts.toStream(transformedText, { rate });
     const audioChunks = [];
     const wordOffsetsMs = [];
     let audioEnded = false;

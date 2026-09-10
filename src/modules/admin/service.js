@@ -1,8 +1,12 @@
-import { serializeBigInt } from "../../utils/helpers.js";
+import {
+  generateRandomPassword,
+  serializeBigInt,
+} from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { cache } from "../../services/cacheService.js";
 import { parseLocalDate, utcToday } from "../../utils/dates.js";
 import bcrypt from "bcryptjs";
+import emailTemplates from "../../utils/emailTemplates.js";
 
 export const getUsersByAdmin = async (data, adminId) => {
   const { search, userId, page = 1, pageSize = 10 } = data;
@@ -219,24 +223,37 @@ export const toggleUserVerification = async (data, adminId) => {
 };
 
 export const createUser = async (data, adminId) => {
-  const { username, email, password, firstName, lastName, phoneNumber, gender, dateOfBirth, userRole } = data;
+  const {
+    username,
+    email,
+    firstName,
+    lastName,
+    phoneNumber,
+    gender,
+    dateOfBirth,
+    userRole,
+  } = data;
 
-  if (!username || !email || !password) {
-    return { status: 400, message: "Username, email, and password are required" };
+  if (!username || !email) {
+    return { status: 400, message: "Username and email are required" };
   }
 
-  if (password.length < 6) {
-    return { status: 400, message: "Password must be at least 6 characters" };
-  }
+  //auto-generate a user password of 8 characters both Big and small letters, numbers and special characters if not provided
+
+  const password = generateRandomPassword(8);
 
   // Check for existing username
-  const existingUsername = await prisma.systemUser.findFirst({ where: { username } });
+  const existingUsername = await prisma.systemUser.findFirst({
+    where: { username },
+  });
   if (existingUsername) {
     return { status: 409, message: "Username already exists" };
   }
 
   // Check for existing email
-  const existingEmail = await prisma.systemUser.findFirst({ where: { email: email.toLowerCase() } });
+  const existingEmail = await prisma.systemUser.findFirst({
+    where: { email: email.toLowerCase() },
+  });
   if (existingEmail) {
     return { status: 409, message: "Email already exists" };
   }
@@ -254,13 +271,35 @@ export const createUser = async (data, adminId) => {
       gender: gender || "Not specified",
       dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
       userRole: userRole === 1 ? 1n : 2n,
-      emailVerified: true,   // Admin-created users are auto-verified
-      status: true,          // Admin-created users are active by default
+      emailVerified: true, // Admin-created users are auto-verified
+      status: true, // Admin-created users are active by default
       loginCount: 0,
       subscriptionTier: "free",
       createdBy: adminId,
     },
   });
+
+  if (user) {
+    // Send email to the new user with their credentials
+
+    const emailTemplate = emailTemplates.accountCreated({
+      firstName: firstName || username,
+      username,
+      password,
+    });
+
+    await prisma.message.create({
+      data: {
+        message: emailTemplate.html,
+        recipient: user.email,
+        subject: emailTemplate.subject,
+        status: "PENDING",
+        sendCount: 0n,
+        createdBy: user.id,
+      },
+    });
+
+  }
 
   const { password: _, ...userWithoutPassword } = user;
   return {
