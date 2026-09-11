@@ -1276,3 +1276,78 @@ export const refundUserSubscription = async (req, res) => {
     return res.status(500).json(formatApiResponse({ status: 500, message: error.message }));
   }
 };
+
+/**
+ * GET a user's subscription event history (timeline for admin detail view).
+ * Body: { userId, limit? } — events newest-first.
+ */
+export const getSubscriptionHistory = async (req, res) => {
+  try {
+    const { userId } = req.body || {};
+    const limit = Math.min(Math.max(parseInt(req.body?.limit, 10) || 50, 1), 200);
+
+    if (!userId) {
+      return res.status(400).json(formatApiResponse({
+        status: 400,
+        message: "userId is required",
+      }));
+    }
+
+    const user = await prisma.systemUser.findUnique({
+      where: { id: String(userId) },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        subscriptionTier: true,
+        accessExpiresAt: true,
+        createdOn: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json(formatApiResponse({
+        status: 404,
+        message: "User not found",
+      }));
+    }
+
+    const events = await prisma.subscriptionEvent.findMany({
+      where: { userId: String(userId) },
+      orderBy: { createdOn: "desc" },
+      take: limit,
+      select: {
+        id: true,
+        eventType: true,
+        tier: true,
+        stripeEventId: true,
+        metadata: true,
+        createdOn: true,
+      },
+    });
+
+    return res.json(formatApiResponse({
+      status: 200,
+      message: `Retrieved ${events.length} subscription event(s)`,
+      data: {
+        user: {
+          ...user,
+          accessExpiresAt: user.accessExpiresAt?.toISOString?.() ?? user.accessExpiresAt,
+          createdOn: user.createdOn?.toISOString?.() ?? user.createdOn,
+        },
+        events: events.map((e) => ({
+          ...e,
+          id: e.id.toString(),
+          createdOn: e.createdOn.toISOString(),
+        })),
+      },
+    }));
+  } catch (error) {
+    console.error("[AdminController] getSubscriptionHistory error:", error);
+    return res.status(500).json(formatApiResponse({
+      status: 500,
+      message: "Failed to retrieve subscription history",
+    }));
+  }
+};

@@ -126,6 +126,12 @@ router.post(
   adminController.refundUserSubscription,
 );
 router.post(
+  "/subscriptions/history",
+  authenticate,
+  requireAdmin,
+  adminController.getSubscriptionHistory,
+);
+router.post(
   "/get-all-activity",
   authenticate,
   requireAdmin,
