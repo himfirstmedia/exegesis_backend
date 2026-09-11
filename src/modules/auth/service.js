@@ -533,6 +533,8 @@ export const login = async (data, deviceInfo = null) => {
       // condition where gated screens see tier='free' before the fetch resolves.
       subscriptionTier: user.subscriptionTier,
       accessExpiresAt: user.accessExpiresAt ? user.accessExpiresAt.toISOString() : null,
+      // Client must route to the forced password-change screen when true
+      mustChangePassword: !!user.mustChangePassword,
     },
   };
 };
@@ -980,6 +982,57 @@ export const updatePassword = async (userId, data) => {
     where: { id: user.id },
     data: {
       password: hashedPassword,
+      updatedOn: new Date(),
+      updatedBy: user.id,
+    },
+  });
+
+  return { status: 200, message: "Password updated successfully" };
+};
+
+/**
+ * Forced password change for users still signing in with the admin-issued
+ * temporary password. Verifies the temporary password, enforces the same
+ * password policy as updatePassword, blocks reuse of the temporary password,
+ * and clears the mustChangePassword flag.
+ */
+export const forceChangePassword = async (userId, data) => {
+  const { currentPassword, newPassword } = data;
+
+  if (!currentPassword || !newPassword) {
+    return { status: 400, message: "Current password and new password are required" };
+  }
+
+  const user = await prisma.systemUser.findUnique({ where: { id: userId } });
+  if (!user) {
+    return { status: 404, message: "User not found" };
+  }
+
+  if (!user.mustChangePassword) {
+    return { status: 400, message: "No password change is required for this account" };
+  }
+
+  const isValidPassword = await bcrypt.compare(currentPassword, user.password);
+  if (!isValidPassword) {
+    return { status: 422, message: "Temporary password is incorrect" };
+  }
+
+  if (typeof newPassword !== "string" || newPassword.length < 8) {
+    return { status: 400, message: "Password must be at least 8 characters with uppercase, lowercase, number, and special character" };
+  }
+  if (!/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^A-Za-z0-9]/.test(newPassword)) {
+    return { status: 400, message: "Password must include uppercase, lowercase, number, and special character" };
+  }
+  if (newPassword === currentPassword) {
+    return { status: 400, message: "New password must be different from the temporary password" };
+  }
+
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  await prisma.systemUser.update({
+    where: { id: user.id },
+    data: {
+      password: hashedPassword,
+      mustChangePassword: false,
       updatedOn: new Date(),
       updatedBy: user.id,
     },

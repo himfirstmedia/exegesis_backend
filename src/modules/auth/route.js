@@ -18,6 +18,7 @@ router.post("/update-current-user", authenticate, authController.updateCurrentUs
 router.post("/upload-cover", authenticate, authController.uploadCover);
 router.post("/upload-profile-photo", authenticate, authController.uploadProfilePhoto);
 router.post("/update-password", authenticate, authController.updatePassword);
+router.post("/force-change-password", authenticate, authController.forceChangePassword);
 router.post("/resend-verification", authController.resendVerification);
 router.post("/set-password", authController.setPassword);
 router.post("/forgot-password", authController.forgotPassword);

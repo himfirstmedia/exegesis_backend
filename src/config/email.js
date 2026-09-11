@@ -50,26 +50,28 @@ export const buildMailOptions = ({
   html,
   listUnsubscribe,
 }) => {
-  const fromName = process.env.MAIL_FROM_NAME || "Exegesis App";
+  const fromName = process.env.MAIL_FROM_NAME || "Exegesis Project";
   const fromEmail = process.env.MAIL_USERNAME;
   const supportEmail = process.env.MAIL_SUPPORT_EMAIL || fromEmail;
 
-  const headers = {
-    "List-Unsubscribe": listUnsubscribe
-      ? `<${listUnsubscribe}>`
-      : `<mailto:${supportEmail}?subject=unsubscribe>`,
-    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-    "List-Id": `${fromName.replace(/\s+/g, '-').toLowerCase()} <${fromName.replace(/\s+/g, '-').toLowerCase()}.list-id.mail>`,
-    "Precedence": "bulk",
-    "X-Mailer": "ExegesisApp/1.0",
-    "X-Auto-Response-Suppress": "All",
-    "Auto-Submitted": "auto-generated",
-  };
+  // Transactional-appropriate headers. NOTE: "Precedence: bulk",
+  // "List-Id", "Auto-Submitted", and List-Unsubscribe on transactional
+  // mail (verification codes, receipts, credentials) are strong spam
+  // signals — Gmail files them as Promotions/spam. Real marketing mail
+  // should pass a listUnsubscribe URL instead.
+  const headers = {};
+  if (listUnsubscribe) {
+    headers["List-Unsubscribe"] = `<${listUnsubscribe}>`;
+    headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  }
 
   return {
     from: `"${fromName}" <${fromEmail}>`,
     to,
     subject,
+    // Plain-text fallback improves deliverability and accessibility.
+    // Derived from the subject so it never leaks credentials.
+    text: subject,
     html,
     headers,
     // Reply-To so users can respond to support

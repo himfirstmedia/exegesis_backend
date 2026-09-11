@@ -1,8 +1,48 @@
 import { createTransporter, buildMailOptions } from "../config/email.js";
 import { prisma } from "../config/db.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { EMAIL_LOGO_URL, EMAIL_LOGO_CID } from "../utils/emailTemplates.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOGO_PATH = path.join(__dirname, "../assets/logo.png");
 const MAX_RETRIES = 3;
 const BATCH_SIZE = 5;
+
+// Cache the logo buffer — read once per process
+let logoBase64 = null;
+const getLogoAttachment = () => {
+  if (logoBase64 === null) {
+    try {
+      logoBase64 = fs.readFileSync(LOGO_PATH).toString("base64");
+    } catch {
+      logoBase64 = false; // logo missing — fall back to remote URL
+    }
+  }
+  return logoBase64
+    ? {
+        filename: "logo.png",
+        content: Buffer.from(logoBase64, "base64"),
+        cid: EMAIL_LOGO_CID,
+      }
+    : null;
+};
+
+/**
+ * Embed the brand logo as a CID attachment so it renders even when the
+ * client blocks remote images (Gmail's default for unknown senders — the
+ * exact cause of the "Exegesis Project" alt-text showing instead).
+ */
+export const embedLogo = (html) => {
+  const attachment = getLogoAttachment();
+  if (!attachment) return html;
+  const escaped = EMAIL_LOGO_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.replace(
+    new RegExp(`src="${escaped}"`, "g"),
+    `src="cid:${EMAIL_LOGO_CID}"`,
+  );
+};
 
 export const sendEmail = async (to, subject, htmlContent) => {
   const transporter = createTransporter();
@@ -10,8 +50,14 @@ export const sendEmail = async (to, subject, htmlContent) => {
   const mailOptions = buildMailOptions({
     to,
     subject,
-    html: htmlContent,
+    html: embedLogo(htmlContent),
   });
+
+  // Attach the logo file so the cid: reference in the HTML resolves
+  const attachment = getLogoAttachment();
+  if (attachment) {
+    mailOptions.attachments = [attachment];
+  }
 
   return transporter.sendMail(mailOptions);
 };
@@ -41,7 +87,7 @@ export const processPendingMessages = async () => {
 
   for (const msg of pendingMessages) {
     try {
-      await sendEmail(msg.recipient, msg.subject || "Exegesis App Notification", msg.message);
+      await sendEmail(msg.recipient, msg.subject || "Exegesis Project Notification", msg.message);
 
       await prisma.message.update({
         where: { id: msg.id },
@@ -72,7 +118,7 @@ export const processPendingMessages = async () => {
           },
         });
       } catch (updateError) {
-        console.error(`[EmailScheduler] Failed to update message status:`, updateError.message);
+        console.error("[EmailScheduler] Failed to update message status:", updateError.message);
       }
 
       if (shouldStop) {

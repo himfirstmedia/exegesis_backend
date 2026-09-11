@@ -80,6 +80,15 @@ app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
+// Serve static assets (e.g. /assets/logo.png used in email templates)
+app.use(
+  "/assets",
+  express.static(path.join(__dirname, "assets"), {
+    immutable: true,
+    maxAge: "30d",
+  }),
+);
+
 // Rewrite relative /uploads/ media paths to absolute URLs in JSON responses so
 // clients can render profilePhotoUrl / coverPhotoUrl directly. Must run before
 // the route handlers so every response is transformed.

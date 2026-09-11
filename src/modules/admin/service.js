@@ -272,6 +272,7 @@ export const createUser = async (data, adminId) => {
       dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
       userRole: userRole === 1 ? 1n : 2n,
       emailVerified: true, // Admin-created users are auto-verified
+      mustChangePassword: true, // Force password change on first login
       status: true, // Admin-created users are active by default
       loginCount: 0,
       subscriptionTier: "free",
@@ -280,12 +281,23 @@ export const createUser = async (data, adminId) => {
   });
 
   if (user) {
-    // Send email to the new user with their credentials
+    // Resolve the assigned role's display name for the welcome email.
+    // Best-effort lookup from the Role table with a safe fallback.
+    const roleId = user.userRole || (userRole === 1 ? 1n : 2n);
+    let roleName = roleId === 1n ? "Administrator" : "Member";
+    try {
+      const role = await prisma.role.findUnique({ where: { id: roleId } });
+      if (role?.roleName) roleName = role.roleName;
+    } catch {
+      // Role table unavailable — fallback name already set
+    }
 
+    // Queue the credentials email — the scheduler picks up PENDING messages
     const emailTemplate = emailTemplates.accountCreated({
       firstName: firstName || username,
       username,
       password,
+      role: roleName,
     });
 
     await prisma.message.create({
