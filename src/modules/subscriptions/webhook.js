@@ -324,9 +324,43 @@ export const handleStripeWebhook = async (req, res) => {
         const subscriptionId = data.subscription;
         if (!subscriptionId) break;
 
-        const user = await prisma.systemUser.findUnique({
+        let user = await prisma.systemUser.findUnique({
           where: { stripeSubscriptionId: subscriptionId },
         });
+
+        // Re-subscription: the user renewed by creating a NEW subscription
+        // while the DB still points at the old one. Fall back to the customer
+        // so the renewal is recorded and the DB adopts the new sub ID.
+        if (!user) {
+          try {
+            const sub = await stripe.subscriptions.retrieve(subscriptionId);
+            const customerId =
+              typeof sub.customer === "object" ? sub.customer?.id : sub.customer;
+            if (customerId) {
+              user = await prisma.systemUser.findFirst({
+                where: { stripeCustomerId: customerId },
+              });
+              if (user && user.stripeSubscriptionId !== subscriptionId) {
+                await prisma.systemUser.update({
+                  where: { id: user.id },
+                  data: {
+                    stripeCustomerId: customerId,
+                    stripeSubscriptionId: subscriptionId,
+                  },
+                });
+                user = { ...user, stripeCustomerId: customerId, stripeSubscriptionId: subscriptionId };
+                console.log(
+                  `[StripeWebhook] adopted new subscription ${subscriptionId} for user ${user.id}`,
+                );
+              }
+            }
+          } catch (e) {
+            console.warn(
+              "[StripeWebhook] invoice.payment_succeeded: customer fallback failed:",
+              e.message,
+            );
+          }
+        }
 
         if (user) {
           // Get accurate period_end from the subscription itself

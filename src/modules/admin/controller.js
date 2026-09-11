@@ -431,24 +431,18 @@ const resolveTierFromPriceId = async (priceId, interval) => {
 /**
  * Resolve the access-expiry Date for a Stripe subscription.
  *
- * `subscription.current_period_end` is the preferred source, but some test/
- * legacy subscriptions omit it. In that case fall back to the latest invoice's
- * `period_end` (or its creation time) so expiry is never silently empty.
+ * Reads `current_period_end` from the subscription root first, then from its
+ * first item — the location on newer Stripe API versions (basil+) where the
+ * root field was removed. Returns null when Stripe provides neither, so the
+ * caller can leave any stored expiry untouched instead of poisoning the DB
+ * with a past-dated value derived from an invoice's *billed* period.
  */
-const resolveSubExpiry = async (sub) => {
-  if (sub.current_period_end) return new Date(sub.current_period_end * 1000);
-
-  try {
-    const invoiceId =
-      typeof sub.latest_invoice === "object" ? sub.latest_invoice?.id : sub.latest_invoice;
-    if (invoiceId) {
-      const invoice = await stripe.invoices.retrieve(invoiceId);
-      const ts = invoice.period_end || invoice.created;
-      if (ts) return new Date(ts * 1000);
-    }
-  } catch { /* fall through */ }
-
-  return null;
+const resolveSubExpiry = (sub) => {
+  const periodEnd =
+    sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end;
+  return periodEnd != null && isFinite(periodEnd)
+    ? new Date(periodEnd * 1000)
+    : null;
 };
 
 const fetchAllStripeSubscriptions = async () => {
@@ -478,6 +472,9 @@ export const getSubscribedUsers = async (req, res) => {
     const stripeSubscriptions = await fetchAllStripeSubscriptions();
 
     // ── 2. Build a map: stripeCustomerId → enriched info ─────────────────
+    // Multiple active subs per customer (re-subscription after expiry) are
+    // deduped by keeping the most recently created one — Stripe does not
+    // auto-cancel the previous sub in this flow.
     const stripeByCustomer = new Map();
     for (const sub of stripeSubscriptions) {
       const customer = sub.customer;
@@ -486,9 +483,12 @@ export const getSubscribedUsers = async (req, res) => {
       const priceId = sub.items?.data?.[0]?.price?.id;
       const interval = sub.items?.data?.[0]?.price?.recurring?.interval;
       const tierId = await resolveTierFromPriceId(priceId, interval);
-      const expiry = await resolveSubExpiry(sub);
+      const expiry = resolveSubExpiry(sub);
 
+      const existing = stripeByCustomer.get(customerId);
+      if (existing && sub.created <= (existing.created ?? 0)) continue;
       stripeByCustomer.set(customerId, {
+        created: sub.created,
         stripeSubscriptionId: sub.id,
         stripeCustomerId: customerId,
         stripeEmail: email,
@@ -759,6 +759,11 @@ export const syncStripeSubscribers = async (req, res) => {
           ...(needsSubIdUpdate && { stripeSubscriptionId: sub.id }),
           ...(needsTierUpdate && tierId && {
             subscriptionTier: tierId,
+            accessExpiresAt: periodEnd,
+          }),
+          // New sub adopted (re-subscription) without a tier change: still
+          // refresh the expiry so the DB reflects the new billing period.
+          ...(needsSubIdUpdate && !needsTierUpdate && periodEnd && {
             accessExpiresAt: periodEnd,
           }),
         },

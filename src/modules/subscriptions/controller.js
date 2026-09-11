@@ -804,20 +804,71 @@ export const getSubscriptionStatus = async (req, res) => {
           const activeStatuses = new Set(["active", "trialing"]);
 
           if (!activeStatuses.has(subscription.status)) {
-            await prisma.systemUser.update({
-              where: { id: req.user.id },
-              data: {
+            // Re-subscription guard: the user may have renewed by creating a
+            // NEW subscription while the DB still points at this old/cancelled
+            // one. Adopt the newer active sub instead of dropping to free.
+            let adopted = false;
+            try {
+              const customerId = user.stripeCustomerId;
+              if (customerId && typeof stripe.subscriptions.list === "function") {
+                const active = await stripe.subscriptions.list({
+                  customer: customerId,
+                  status: "active",
+                  limit: 10,
+                });
+                const newer = active.data
+                  .filter((s) => s.id !== user.stripeSubscriptionId)
+                  .sort((a, b) => b.created - a.created)[0];
+                if (newer) {
+                  const price = newer.items?.data?.[0]?.price;
+                  const newTier = await resolveTierFromPriceId(
+                    price?.id,
+                    price?.recurring?.interval,
+                  );
+                  const periodEnd = getSubscriptionPeriodEnd(newer);
+                  await prisma.systemUser.update({
+                    where: { id: req.user.id },
+                    data: {
+                      ...(newTier && { subscriptionTier: newTier }),
+                      stripeSubscriptionId: newer.id,
+                      ...(periodEnd && { accessExpiresAt: periodEnd }),
+                    },
+                  });
+                  user = {
+                    ...user,
+                    ...(newTier && { subscriptionTier: newTier }),
+                    stripeSubscriptionId: newer.id,
+                    ...(periodEnd && { accessExpiresAt: periodEnd }),
+                  };
+                  adopted = true;
+                  console.log(
+                    `[StripeReconciliation] adopted newer subscription ${newer.id} for user ${req.user.id}`,
+                  );
+                }
+              }
+            } catch (adoptErr) {
+              console.warn(
+                "[StripeReconciliation] re-subscription adoption failed:",
+                adoptErr.message,
+              );
+            }
+
+            if (!adopted) {
+              await prisma.systemUser.update({
+                where: { id: req.user.id },
+                data: {
+                  subscriptionTier: "free",
+                  stripeSubscriptionId: null,
+                  accessExpiresAt: null,
+                },
+              });
+              user = {
+                ...user,
                 subscriptionTier: "free",
                 stripeSubscriptionId: null,
                 accessExpiresAt: null,
-              },
-            });
-            user = {
-              ...user,
-              subscriptionTier: "free",
-              stripeSubscriptionId: null,
-              accessExpiresAt: null,
-            };
+              };
+            }
           } else {
             const price = subscription.items?.data?.[0]?.price;
             const interval = price?.recurring?.interval;
