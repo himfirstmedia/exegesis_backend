@@ -135,8 +135,6 @@ export const emailTemplates = {
             </td>
           </tr>
           
-        
-          
           ${emailFooter}
         </table>
       </td>
