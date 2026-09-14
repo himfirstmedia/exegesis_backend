@@ -88,32 +88,59 @@ export const addHighlight = async (data, userId) => {
     return { status: 400, message: "verseNumber or verseNumbers is required" };
 
   const added = [];
+
+  // Retry transient connection blips (managed Postgres proxies like Railway
+  // occasionally drop connections mid-request; without a retry this surfaced
+  // to users as "Failed to highlight"). Non-transient errors still throw.
+  const withRetries = async (fn) => {
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        const transient =
+          err?.code === "P1001" || // can't reach database
+          err?.code === "P1008" || // operations timed out (pool)
+          err?.code === "P2024" || // timed out fetching a connection
+          err?.code === "P1017" || // server closed the connection
+          /reach database|connection|ECONNRESET|ETIMEDOUT/i.test(
+            err?.message || "",
+          );
+        if (!transient) throw err;
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+      }
+    }
+    throw lastErr;
+  };
+
   for (const v of verses) {
     try {
-      // First check if this highlight already exists
-      const existing = await prisma.highlight.findFirst({
-        where: {
-          createdBy: userId,
-          bookName,
-          chapter: BigInt(chapter),
-          verseNumber: BigInt(v),
-        },
-      });
-
-      let highlight;
-      if (existing) {
-        // Update existing highlight
-        highlight = await prisma.highlight.update({
-          where: { id: existing.id },
-          data: {
-            colorId: BigInt(colorId),
-            note: note || null,
-            createdOn: new Date(),
+      // Atomic write per verse: find the existing highlight (if any) and
+      // upsert — re-highlighting with the same or a new colour is an
+      // idempotent update, never an error and never a duplicate row (the
+      // table has no unique constraint, so find→create could also race).
+      const highlight = await withRetries(async () => {
+        const existing = await prisma.highlight.findFirst({
+          where: {
+            createdBy: userId,
+            bookName,
+            chapter: BigInt(chapter),
+            verseNumber: BigInt(v),
           },
+          select: { id: true },
         });
-      } else {
-        // Create new highlight
-        highlight = await prisma.highlight.create({
+        if (existing) {
+          return prisma.highlight.update({
+            where: { id: existing.id },
+            data: {
+              colorId: BigInt(colorId),
+              note: note || null,
+              updatedOn: new Date(),
+            },
+          });
+        }
+        return prisma.highlight.create({
           data: {
             bookName,
             chapter: BigInt(chapter),
@@ -124,7 +151,7 @@ export const addHighlight = async (data, userId) => {
             createdOn: new Date(),
           },
         });
-      }
+      });
       added.push({
         id: Number(highlight.id),
         bookName: highlight.bookName,
@@ -370,13 +397,28 @@ export const addFavorite = async (data, userId) => {
   const added = [];
   for (const v of verses) {
     try {
-      const favorite = await prisma.favorite.create({
-        data: {
+      // Upsert semantics: the (createdBy, bookName, chapter, verseNumber)
+      // unique row is the source of truth, so a duplicate tap must be a no-op
+      // success — never a thrown P2002 (which surfaced as an error toast on
+      // the app when the same verse was favourited twice or double-tapped).
+      const favorite = await prisma.favorite.upsert({
+        where: {
+          createdBy_bookName_chapter_verseNumber: {
+            createdBy: userId,
+            bookName,
+            chapter: BigInt(chapter),
+            verseNumber: BigInt(v),
+          },
+        },
+        create: {
           bookName,
           chapter: BigInt(chapter),
           verseNumber: BigInt(v),
           createdBy: userId,
           createdOn: new Date(),
+        },
+        update: {
+          updatedOn: new Date(),
         },
       });
       added.push({
