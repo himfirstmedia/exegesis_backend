@@ -1,4 +1,5 @@
 import { prisma } from "../../config/db.js";
+import { withDbRetry } from "../../utils/dbRetry.js";
 import bcrypt from "bcryptjs";
 import Stripe from "stripe";
 import fs from "fs";
@@ -604,7 +605,11 @@ export const logFailedLogin = async (data) => {
 };
 
 export const refreshToken = async (userId) => {
-  const user = await prisma.systemUser.findUnique({ where: { id: userId } });
+  // Retry transient DB blips — a failed refresh must not be mistaken for a
+  // logged-out user (the app only ends the session on explicit 401/403).
+  const user = await withDbRetry(() =>
+    prisma.systemUser.findUnique({ where: { id: userId } }),
+  );
 
   if (!user || !user.isLoggedIn) {
     return { status: 401, message: "Cannot refresh token: User is logged out" };

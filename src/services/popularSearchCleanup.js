@@ -9,6 +9,7 @@
 
 import cron from "node-cron";
 import { prisma } from "../config/db.js";
+import { withDbRetry } from "../utils/dbRetry.js";
 
 const CRON_SCHEDULE = "0 0 * * *"; // Every day at midnight
 const RETENTION_DAYS = 30;
@@ -23,11 +24,13 @@ export const startPopularSearchCleanup = () => {
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - RETENTION_DAYS);
 
-      const result = await prisma.popularSearchLog.deleteMany({
-        where: {
-          createdOn: { lt: cutoff },
-        },
-      });
+      const result = await withDbRetry(() =>
+        prisma.popularSearchLog.deleteMany({
+          where: {
+            createdOn: { lt: cutoff },
+          },
+        }),
+      );
 
       console.log(
         `[popularSearchCleanup] Deleted ${result.count} search log entries older than ${RETENTION_DAYS} days`,
