@@ -1,5 +1,6 @@
 import { createTransporter, buildMailOptions } from "../config/email.js";
 import { prisma } from "../config/db.js";
+import { isTransientDbError } from "../utils/dbRetry.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -76,6 +77,9 @@ export const processPendingMessages = async () => {
     });
   } catch (dbError) {
     console.error("[EmailScheduler] DB query failed:", dbError.message);
+    // Let the scheduler apply backoff when the database itself is down,
+    // instead of silently retrying every tick against a dead pool.
+    if (isTransientDbError(dbError)) throw dbError;
     return;
   }
 
