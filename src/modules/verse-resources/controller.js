@@ -11,6 +11,16 @@ export const getVerseResources = async (req, res) => {
   }
 };
 
+export const getVerseResourceCounts = async (req, res) => {
+  try {
+    const result = await verseResourceService.getVerseResourceCounts(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('getVerseResourceCounts controller error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error: ' + error.message }));
+  }
+};
+
 export const getMultipleVerseResources = async (req, res) => {
   try {
     const result = await verseResourceService.getMultipleVerseResources(req.body);

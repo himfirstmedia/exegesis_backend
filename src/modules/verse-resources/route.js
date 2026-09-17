@@ -11,6 +11,8 @@ const authAndTier = [authenticate, requireTier('legacy_sower')];
 router.post('/compare-translations', verseResourceController.compareTranslations);
 
 router.post('/get', verseResourceController.getVerseResources);
+// Lightweight: section entry counts only, used by the reader's verse menu.
+router.post('/section-counts', verseResourceController.getVerseResourceCounts);
 router.post('/get-multiple', verseResourceController.getMultipleVerseResources);
 
 // Authenticated endpoints (content management)
