@@ -15,6 +15,7 @@ import { prisma } from "../config/db.js";
 import { getUsersDueForReminder, getTodaysVerseForPush, sendToUsers } from "../modules/push/service.js";
 
 const CRON_INTERVAL = "* * * * *"; // every minute
+let isRunning = false;
 
 /** UTC-midnight timestamp for the day containing `date`. */
 const utcDayStart = (date = new Date()) => {
