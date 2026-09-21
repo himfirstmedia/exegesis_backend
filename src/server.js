@@ -14,6 +14,7 @@ import { errorHandler } from "./middlewares/errorHandler.middleware.js";
 import { absoluteMediaUrl } from "./middlewares/absoluteMediaUrl.middleware.js";
 import { startEmailScheduler } from "./services/emailScheduler.js";
 import { startPopularSearchCleanup } from "./services/popularSearchCleanup.js";
+import { startPushScheduler } from "./services/pushNotificationScheduler.js";
 import translationRouter from "./modules/bible-translations/route.js";
 import ttsRouter from "./modules/tts/route.js";
 import { warmUpTTS } from "./modules/tts/service.js";
@@ -27,6 +28,7 @@ import subscriptionsRouter from "./modules/subscriptions/routes.js";
 import popularSearchesRouter from "./modules/popular-searches/route.js";
 import aiRouter from "./modules/ai/route.js";
 import textToTextTranslationRouter from "./modules/text-to-text-translation/route.js";
+import pushRouter from "./modules/push/route.js";
 import { handleStripeWebhook } from "./modules/subscriptions/webhook.js";
 
 config();
@@ -111,6 +113,7 @@ app.use("/subscriptions", subscriptionsRouter);
 app.use("/popular-searches", popularSearchesRouter);
 app.use("/ai", aiRouter);
 app.use("/translation", textToTextTranslationRouter);
+app.use("/push", pushRouter);
 
 app.get("/health", (req, res) => {
   res.send(
@@ -130,6 +133,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Exegesis server running on port ${PORT}`);
   startEmailScheduler();
   startPopularSearchCleanup();
+  startPushScheduler();
   // Pre-connect the Edge TTS sockets so the first voice request after boot
   // doesn't pay the ~2s WebSocket handshake.
   warmUpTTS();

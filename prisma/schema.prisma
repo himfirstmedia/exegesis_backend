@@ -58,6 +58,8 @@ model SystemUser {
   highlights                   Highlight[]
   exegesisSessions             ExegesisSession[]
   journalEntries               JournalEntry[]
+  pushTokens                   PushToken[]
+  pushSetting                  PushSetting?
   journalLikes                 JournalLike[]
   messages                     Message[]
   notes                        Note[]
@@ -878,6 +880,31 @@ model VerseWordStudy {
   @@index([strongsId])
   @@index([bookName, chapter])
   @@map("verse_word_studies")
+}
+
+model PushToken {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  token       String   @unique
+  platform    String   @default("web") // web | android | ios
+  createdAt   DateTime @default(now()) @map("created_at")
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at")
+  user        SystemUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_tokens")
+}
+
+model PushSetting {
+  userId             String    @id @map("user_id")
+  dailyVerseReminder Boolean   @default(true) @map("daily_verse_reminder")
+  reminderTime       String    @default("09:00") @map("reminder_time") // "HH:MM" 24h, user's timezone
+  timezone           String    @default("UTC")
+  lastPushedOn       DateTime? @map("last_pushed_on") // UTC day of last successful daily-verse send (de-dup)
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  user               SystemUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("push_settings")
 }
 
 model BookPrologue {
