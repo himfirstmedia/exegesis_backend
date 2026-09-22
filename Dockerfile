@@ -2,6 +2,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Lordsbook returns WAV; preserve the existing app/web MP3 contract.
+RUN apk add --no-cache ffmpeg
+
 # Copy Prisma schema + config BEFORE installing deps so the
 # `postinstall` script (`prisma generate`) can find the schema.
 COPY package*.json ./

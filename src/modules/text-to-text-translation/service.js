@@ -1,4 +1,5 @@
 import { AppError, ValidationError } from "../../utils/AppError.js";
+import { translateLordsbookText } from "../../services/lordsbookGateway.js";
 import {
   mapWithConcurrency,
   normalizeTranslationText,
@@ -131,6 +132,27 @@ const translateChunk = async (chunk, options) => {
   if (!value) return { translatedText: chunk };
 
   const config = getConfig();
+  
+  // Try Lordsbook first ONLY if explicitly enabled
+  if (process.env.LORDSBOOK_TEXT_ENABLE === "true") {
+    try {
+      const lbResult = await translateLordsbookText({
+        q: value,
+        source: options.source,
+        target: options.target,
+        format: options.format,
+      });
+      if (lbResult && lbResult.translatedText) {
+        return {
+          ...lbResult,
+          translatedText: `${leading}${lbResult.translatedText}${trailing}`,
+        };
+      }
+    } catch (e) {
+      console.warn(`[Translation] Lordsbook failed, falling back to LibreTranslate: ${e.message}`);
+    }
+  }
+
   const payload = {
     q: value,
     source: toLibreLanguageCode(options.source),
@@ -226,6 +248,47 @@ export const translateBatch = async ({ q, ...options }) => {
       : normalizeTranslationText(text);
     return { original: text, ...preserveOuterWhitespace(normalized) };
   });
+
+  // Try Lordsbook first ONLY if explicitly enabled. Batch succeeds only when
+  // every item translates; otherwise fall back to LibreTranslate's array input.
+  if (process.env.LORDSBOOK_TEXT_ENABLE === "true") {
+    const lbResults = await mapWithConcurrency(
+      prepared,
+      config.maxConcurrency,
+      async (item) => {
+        try {
+          return await translateLordsbookText({
+            q: item.value,
+            source: options.source || "auto",
+            target: options.target,
+            format: options.format || "text",
+          });
+        } catch (error) {
+          console.warn(`[Translation] Lordsbook batch item failed: ${error.message}`);
+          return null;
+        }
+      },
+    );
+    if (lbResults.every((result) => result?.translatedText)) {
+      const translations = prepared.map((item, index) => ({
+        translatedText: `${item.leading}${lbResults[index].translatedText}${item.trailing}`,
+        ...(lbResults[index].detectedLanguage
+          ? { detectedLanguage: lbResults[index].detectedLanguage }
+          : {}),
+        source: options.source || "auto",
+        target: options.target,
+        characterCount: item.original.length,
+        chunkCount: 1,
+      }));
+      return {
+        translations,
+        itemCount: translations.length,
+        characterCount: totalCharacters,
+        provider: "lordsbook",
+      };
+    }
+  }
+
   const payload = {
     q: prepared.map(({ value }) => value),
     source: toLibreLanguageCode(options.source || "auto"),

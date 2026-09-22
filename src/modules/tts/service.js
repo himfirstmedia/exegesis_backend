@@ -1,22 +1,39 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import { cache as redisCache } from "../../services/cacheService.js";
+import {
+  getLordsbookVoices,
+  synthesizeLordsbookSpeech,
+} from "../../services/lordsbookGateway.js";
 
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const ELEVENLABS_ENABLED = process.env.ELEVENLABS_ENABLED === "true";
-const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
+const ELEVENLABS_API_KEY = "";
+const ELEVENLABS_ENABLED = false;
+const ELEVENLABS_BASE = "";
 
 const REDIS_CACHE_TTL = parseInt(process.env.REDIS_CACHE_TTL, 10) || 86400; // 24h
 const REDIS_NAMESPACE = "tts";
+const LORDSBOOK_VOICE_CACHE_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_LORDSBOOK_VOICE = "bm_george";
+
+const getTtsProvider = () => {
+  const lordsbookEnabled =
+    (process.env.LORDSBOOK_TTS_ENABLE ?? "true").trim().toLowerCase() !== "false";
+  if (!lordsbookEnabled) return "edge";
+  return (process.env.TTS_PROVIDER || "edge").trim().toLowerCase();
+};
+
+const getDefaultLordsbookVoice = () =>
+  process.env.LORDSBOOK_DEFAULT_VOICE || DEFAULT_LORDSBOOK_VOICE;
 
 // ── In-memory TTS cache ────────────────────────────────────────────────────
 const TTS_CACHE = new Map();
 const CACHE_MAX = 50;
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-const getCacheKey = (text, voiceId, speed) => {
+const getCacheKey = (text, voiceId, speed, provider = "edge") => {
   const hash = crypto.createHash("md5").update(text).digest("hex");
-  return `${hash}:${voiceId || "default"}:${speed || 1.0}`;
+  return `v2:${provider}:${hash}:${voiceId || "default"}:${speed || 1.0}`;
 };
 
 // ── Sentence-pause compression (Edge TTS) ─────────────────────────────────
@@ -157,6 +174,151 @@ const EDGE_VOICES = [
   { name: "Brian (Male)",    voiceId: "en-US-BrianNeural",   source: "edge", category: "Neural" },
   { name: "Sonia (Female)",  voiceId: "en-GB-SoniaNeural",   source: "edge", category: "Neural" },
 ];
+
+const LORDSBOOK_VOICE_PREFIXES = {
+  af: { locale: "American English", gender: "Female" },
+  am: { locale: "American English", gender: "Male" },
+  bf: { locale: "British English", gender: "Female" },
+  bm: { locale: "British English", gender: "Male" },
+  ef: { locale: "Spanish", gender: "Female" },
+  em: { locale: "Spanish", gender: "Male" },
+  ff: { locale: "French", gender: "Female" },
+  fm: { locale: "French", gender: "Male" },
+  hf: { locale: "Hindi", gender: "Female" },
+  hm: { locale: "Hindi", gender: "Male" },
+  if: { locale: "Italian", gender: "Female" },
+  im: { locale: "Italian", gender: "Male" },
+  jf: { locale: "Japanese", gender: "Female" },
+  jm: { locale: "Japanese", gender: "Male" },
+  pf: { locale: "Portuguese", gender: "Female" },
+  pm: { locale: "Portuguese", gender: "Male" },
+  zf: { locale: "Mandarin Chinese", gender: "Female" },
+  zm: { locale: "Mandarin Chinese", gender: "Male" },
+};
+
+const LEGACY_LORDSBOOK_VOICE_ALIASES = {
+  "en-GB-RyanNeural": "bm_george",
+  "en-US-JennyNeural": "af_heart",
+  "en-US-AriaNeural": "af_nova",
+  "en-US-GuyNeural": "am_adam",
+  "en-US-ChristopherNeural": "am_michael",
+  "en-US-EmmaNeural": "bf_emma",
+  "en-US-BrianNeural": "bm_daniel",
+  "en-GB-SoniaNeural": "bf_alice",
+  "en-US-DavisNeural": "am_eric",
+  "21m00Tcm4TlvDq8ikWAM": "af_heart",
+  "pNInz6obpgDQGcFmaJgB": "am_adam",
+  "EXAVITQu4vr2J3Ql38jY": "af_bella",
+  "piTKgcLEGmPE4e6mEKli": "af_nicole",
+};
+
+let lordsbookVoiceCache = null;
+let lordsbookVoiceRequest = null;
+const lordsbookSynthesisInFlight = new Map();
+
+// ── Lordsbook TTS load guard ────────────────────────────────────────────────
+// Kokoro synthesis is ~real-time (a verse costs seconds of CPU/GPU). Firing
+// every prefetch window at the upstream simultaneously overflows its queue and
+// triggers 502s, so network calls are concurrency-capped. A circuit breaker
+// turns Lordsbook off (dropping to Edge) after repeated failures so a slow or
+// half-open upstream can't stall the reader for minutes.
+const LORDSBOOK_MAX_CONCURRENCY =
+  Number.parseInt(process.env.LORDSBOOK_MAX_CONCURRENCY, 10) || 3;
+const BREAKER_WINDOW_MS = 60_000;
+const BREAKER_THRESHOLD = 5;
+const BREAKER_COOLDOWN_MS = 30_000;
+
+let lordsbookActive = 0;
+const lordsbookQueue = [];
+let lordsbookBreaker = { failures: [], cooldownUntil: 0 };
+
+const pollLordsbookQueue = () => {
+  while (lordsbookActive < LORDSBOOK_MAX_CONCURRENCY && lordsbookQueue.length) {
+    const { job, resolve, reject } = lordsbookQueue.shift();
+    lordsbookActive += 1;
+    job()
+      .then(resolve, reject)
+      .finally(() => {
+        lordsbookActive -= 1;
+        pollLordsbookQueue();
+      });
+  }
+};
+
+const runLordsbookConstrained = (job) =>
+  new Promise((resolve, reject) => {
+    lordsbookQueue.push({ job, resolve, reject });
+    pollLordsbookQueue();
+  });
+
+const lordsbookBreakerOpen = () =>
+  Date.now() < lordsbookBreaker.cooldownUntil;
+
+const recordLordsbookSuccess = () => {
+  lordsbookBreaker.failures = [];
+};
+
+const recordLordsbookFailure = () => {
+  const now = Date.now();
+  lordsbookBreaker.failures = [
+    ...lordsbookBreaker.failures.filter((t) => now - t < BREAKER_WINDOW_MS),
+    now,
+  ];
+  if (lordsbookBreaker.failures.length >= BREAKER_THRESHOLD) {
+    lordsbookBreaker.cooldownUntil = now + BREAKER_COOLDOWN_MS;
+    console.warn(
+      `[TTS] Lordsbook breaker tripped after ${BREAKER_THRESHOLD} failures; using Edge for ${BREAKER_COOLDOWN_MS / 1000}s`,
+    );
+  }
+};
+
+const formatVoiceName = (voiceId) => {
+  const [prefix, ...nameParts] = voiceId.split("_");
+  const metadata = LORDSBOOK_VOICE_PREFIXES[prefix];
+  const displayName = nameParts
+    .join(" ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return metadata
+    ? `${displayName} (${metadata.locale}, ${metadata.gender})`
+    : displayName || voiceId;
+};
+
+const formatLordsbookVoice = (voiceId) => {
+  const metadata = LORDSBOOK_VOICE_PREFIXES[voiceId.slice(0, 2)];
+  return {
+    name: formatVoiceName(voiceId),
+    voiceId,
+    source: "api",
+    category: metadata ? `Kokoro · ${metadata.locale}` : "Kokoro",
+  };
+};
+
+const loadLordsbookVoiceIds = async () => {
+  if (
+    lordsbookVoiceCache &&
+    Date.now() - lordsbookVoiceCache.loadedAt < LORDSBOOK_VOICE_CACHE_TTL_MS
+  ) {
+    return lordsbookVoiceCache.voices;
+  }
+  if (lordsbookVoiceRequest) return lordsbookVoiceRequest;
+
+  lordsbookVoiceRequest = getLordsbookVoices()
+    .then((voices) => {
+      lordsbookVoiceCache = { voices, loadedAt: Date.now() };
+      return voices;
+    })
+    .finally(() => {
+      lordsbookVoiceRequest = null;
+    });
+  return lordsbookVoiceRequest;
+};
+
+const resolveLordsbookVoice = (voiceId) => {
+  if (/^[a-z]{2}_[a-z0-9_]+$/i.test(voiceId || "")) return voiceId;
+  return (
+    LEGACY_LORDSBOOK_VOICE_ALIASES[voiceId] || getDefaultLordsbookVoice()
+  );
+};
 
 // ── ElevenLabs voices (paid) ───────────────────────────────────────────────
 const ELEVENLABS_VOICE_IDS = {
@@ -352,10 +514,14 @@ const acquireTimedClient = async (voice, high, job) => {
  *  connection+handshake cost (~2s). Call once at server startup. */
 export const warmUpTTS = async () => {
   try {
+    if (getTtsProvider() === "lordsbook") {
+      await loadLordsbookVoiceIds();
+      return;
+    }
     await ensureExpress();
     await ensureWorkPool();
   } catch {
-    // best-effort; the pool reconnects lazily on first real request
+    // Best-effort; provider discovery/connections retry on the first request.
   }
 };
 
@@ -363,49 +529,151 @@ export const warmUpTTS = async () => {
 
 const isEdgeVoice = (voiceId) => EDGE_VOICES.some((v) => v.voiceId === voiceId);
 
-const isElevenLabsVoice = (voiceId) => {
-  const knownIds = Object.values(ELEVENLABS_VOICE_IDS);
-  const isUuid = /^[0-9a-f]{20,}$/i.test(voiceId);
-  return knownIds.includes(voiceId) || isUuid;
-};
+const isElevenLabsVoice = (voiceId) => false;
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
+// ── Public API ─────────────────────────────────────────────────────────────
+ 
 export const getStatus = () => ({
   enabled: true,
-  hasApiKey: !!ELEVENLABS_API_KEY,
-  elevenLabsEnabled: ELEVENLABS_ENABLED && !!ELEVENLABS_API_KEY,
+  provider: getTtsProvider(),
+  elevenLabsEnabled: false,
 });
-
+ 
 export const getVoices = async () => {
-  const edgeVoices = EDGE_VOICES;
-
-  if (!ELEVENLABS_ENABLED || !ELEVENLABS_API_KEY) {
-    return edgeVoices;
+  if (getTtsProvider() === "lordsbook") {
+    try {
+      const voiceIds = await loadLordsbookVoiceIds();
+      return voiceIds.map(formatLordsbookVoice);
+    } catch (error) {
+      console.warn("[TTS] Lordsbook voice discovery failed:", error.message);
+      return EDGE_VOICES;
+    }
   }
+ 
+  return EDGE_VOICES;
+};
 
-  try {
-    const response = await fetch(`${ELEVENLABS_BASE}/voices`, {
-      headers: { "xi-api-key": ELEVENLABS_API_KEY },
+
+const transcodeWavToMp3 = (wavBuffer) =>
+  new Promise((resolve, reject) => {
+    const ffmpeg = spawn(
+      "ffmpeg",
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "wav",
+        "-i",
+        "pipe:0",
+        "-ac",
+        "1",
+        "-ar",
+        "24000",
+        "-b:a",
+        "48k",
+        "-f",
+        "mp3",
+        "pipe:1",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    const output = [];
+    const errors = [];
+    let settled = false;
+    const timeout = setTimeout(() => {
+      ffmpeg.kill("SIGKILL");
+      if (!settled) {
+        settled = true;
+        reject(new Error("TTS audio conversion timed out"));
+      }
+    }, 30000);
+
+    ffmpeg.stdout.on("data", (chunk) => output.push(chunk));
+    ffmpeg.stderr.on("data", (chunk) => errors.push(chunk));
+    ffmpeg.on("error", (error) => {
+      clearTimeout(timeout);
+      if (!settled) {
+        settled = true;
+        reject(new Error(`Unable to start FFmpeg: ${error.message}`));
+      }
     });
-    if (!response.ok) throw new Error(`ElevenLabs API error: ${response.status}`);
-    const data = await response.json();
-    const elVoices = data.voices.map((v) => ({
-      name: v.name,
-      voiceId: v.voice_id,
-      category: v.category,
-      source: "elevenlabs",
-    }));
-    return [...edgeVoices, ...elVoices];
-  } catch {
-    return edgeVoices;
+    ffmpeg.on("close", (code) => {
+      clearTimeout(timeout);
+      if (settled) return;
+      settled = true;
+      const mp3Buffer = Buffer.concat(output);
+      if (code !== 0 || mp3Buffer.length < 1_000) {
+        const detail = Buffer.concat(errors).toString("utf8").trim();
+        reject(
+          new Error(
+            detail
+              ? `TTS audio conversion failed: ${detail}`
+              : "TTS audio conversion returned empty audio",
+          ),
+        );
+        return;
+      }
+      resolve(mp3Buffer);
+    });
+
+    ffmpeg.stdin.on("error", () => {});
+    ffmpeg.stdin.end(wavBuffer);
+  });
+
+const synthesizeLordsbook = async (text, voiceId, speed = 1.0) => {
+  const voice = resolveLordsbookVoice(voiceId);
+  const cacheKey = getCacheKey(text, voice, speed, "lordsbook-mp3");
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
+  const pending = lordsbookSynthesisInFlight.get(cacheKey);
+  if (pending) return pending;
+  if (lordsbookBreakerOpen()) {
+    throw new Error("Lordsbook TTS breaker is open");
   }
+
+  const request = (async () => {
+    try {
+      return await runLordsbookConstrained(async () => {
+        const redisAudio = await getRedisAudio(cacheKey);
+        if (redisAudio) {
+          setInCache(cacheKey, redisAudio);
+          recordLordsbookSuccess();
+          return redisAudio;
+        }
+
+        const { audioBuffer: wavBuffer } = await synthesizeLordsbookSpeech({
+          text,
+          voice,
+          speed,
+        });
+        const mp3Buffer = await transcodeWavToMp3(wavBuffer);
+        setInCache(cacheKey, mp3Buffer);
+        void setRedisAudio(cacheKey, mp3Buffer);
+        recordLordsbookSuccess();
+        return mp3Buffer;
+      });
+    } catch (error) {
+      recordLordsbookFailure();
+      throw error;
+    } finally {
+      if (lordsbookSynthesisInFlight.get(cacheKey) === request) {
+        lordsbookSynthesisInFlight.delete(cacheKey);
+      }
+    }
+  })();
+
+  lordsbookSynthesisInFlight.set(cacheKey, request);
+  return request;
 };
 
 // ── Edge TTS synthesis (serialized client pool) ───────────────────────────
 
 const synthesizeEdge = async (text, voiceId = DEFAULT_EDGE_VOICE, speed = 1.0) => {
-  const cacheKey = getCacheKey(text, voiceId, speed);
+  const cacheKey = getCacheKey(text, voiceId, speed, "edge-mp3");
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
 
@@ -467,6 +735,19 @@ export const synthesizeWithTimings = async (
   speed = 1.0,
   priority = "low",
 ) => {
+  if (getTtsProvider() === "lordsbook") {
+    try {
+      return {
+        audioBuffer: await synthesizeLordsbook(text, voiceId, speed),
+        wordOffsetsMs: [],
+      };
+    } catch (error) {
+      console.warn(
+        `[TTS] Lordsbook timed synthesis failed; using Edge fallback: ${error.message}`,
+      );
+    }
+  }
+
   const candidates = [voiceId, DEFAULT_EDGE_VOICE];
   for (const candidate of candidates) {
     const edgeVoice =
@@ -491,7 +772,7 @@ const synthesizeWithTimingsOnce = async (
   speed,
   priority = "low",
 ) => {
-  const cacheKey = getCacheKey(text, edgeVoice, speed);
+  const cacheKey = getCacheKey(text, edgeVoice, speed, "edge-timings-mp3");
 
   const mem = getTimingsFromCache(cacheKey);
   if (mem) return { audioBuffer: mem.audioBuffer, wordOffsetsMs: mem.wordOffsetsMs };
@@ -553,57 +834,25 @@ const synthesizeWithTimingsOnce = async (
 
 // ── ElevenLabs synthesis ───────────────────────────────────────────────────
 
-const synthesizeElevenLabs = async (text, voiceId, speed = 1.0) => {
-  const cacheKey = getCacheKey(text, voiceId, speed);
-  const cached = getFromCache(cacheKey);
-  if (cached) return cached;
-
-  const redisAudio = await getRedisAudio(cacheKey);
-  if (redisAudio) {
-    setInCache(cacheKey, redisAudio);
-    return redisAudio;
-  }
-
-  const body = {
-    text,
-    model_id: ELEVENLABS_MODEL,
-    voice_settings: {
-      stability: 0.60,
-      similarity_boost: 0.85,
-      style: 0.40,
-      use_speaker_boost: true,
-    },
-  };
-  if (speed !== 1.0) body.voice_settings.speed = speed;
-
-  const response = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${voiceId}/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "audio/mpeg",
-      "xi-api-key": ELEVENLABS_API_KEY,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`ElevenLabs API error (${response.status}): ${err}`);
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
-  setInCache(cacheKey, buffer);
-  setRedisAudio(cacheKey, buffer);
-  return buffer;
+const synthesizeElevenLabs = async () => {
+  throw new Error("ElevenLabs is disabled");
 };
 
+
 // ── Main synthesize ────────────────────────────────────────────────────────
-
+ 
 export const synthesize = async (text, voiceId, speed = 1.0) => {
-  if (ELEVENLABS_ENABLED && ELEVENLABS_API_KEY && voiceId && isElevenLabsVoice(voiceId)) {
-    return synthesizeElevenLabs(text, voiceId, speed);
+  if (getTtsProvider() === "lordsbook") {
+    try {
+      return await synthesizeLordsbook(text, voiceId, speed);
+    } catch (error) {
+      console.warn(
+        `[TTS] Lordsbook synthesis failed; using Edge fallback: ${error.message}`,
+      );
+    }
   }
-
+ 
   const edgeVoice = (voiceId && isEdgeVoice(voiceId)) ? voiceId : DEFAULT_EDGE_VOICE;
   return synthesizeEdge(text, edgeVoice, speed);
 };
+
