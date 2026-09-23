@@ -14,6 +14,8 @@ const getConfig = () => ({
   timeoutMs: readPositiveInt("LORDSBOOK_TIMEOUT_MS", 30000),
   retryAttempts: readPositiveInt("LORDSBOOK_RETRY_ATTEMPTS", 3),
   retryDelayMs: readPositiveInt("LORDSBOOK_RETRY_DELAY_MS", 500),
+  ttsTimeoutMs: readPositiveInt("LORDSBOOK_TTS_TIMEOUT_MS", 25000),
+  ttsRetryAttempts: readPositiveInt("LORDSBOOK_TTS_RETRY_ATTEMPTS", 1),
 });
 
 const buildHeaders = (accept, hasBody = false) => {
@@ -30,12 +32,18 @@ const buildHeaders = (accept, hasBody = false) => {
 const delay = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-const request = async (path, options = {}, timeoutMsOverride = null) => {
+const request = async (
+  path,
+  options = {},
+  timeoutMsOverride = null,
+  retryAttemptsOverride = null,
+) => {
   const config = getConfig();
   const timeoutMs = timeoutMsOverride ?? config.timeoutMs;
+  const retryAttempts = retryAttemptsOverride ?? config.retryAttempts;
   let lastError;
 
-  for (let attempt = 1; attempt <= config.retryAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= retryAttempts; attempt += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -67,7 +75,7 @@ const request = async (path, options = {}, timeoutMsOverride = null) => {
       clearTimeout(timeout);
     }
 
-    if (!lastError.retryable || attempt === config.retryAttempts) break;
+    if (!lastError.retryable || attempt === retryAttempts) break;
     await delay(config.retryDelayMs * attempt);
   }
 
@@ -112,17 +120,23 @@ export const getLordsbookVoices = async () => {
 };
 
 export const synthesizeLordsbookSpeech = async ({ text, voice, lang, speed }) => {
+  const config = getConfig();
   const body = {
     text,
     ...(voice ? { voice } : {}),
     ...(lang ? { lang } : {}),
     ...(speed !== undefined ? { speed } : {}),
   };
-  const response = await request("/tts", {
-    method: "POST",
-    headers: buildHeaders("audio/wav", true),
-    body: JSON.stringify(body),
-  });
+  const response = await request(
+    "/tts",
+    {
+      method: "POST",
+      headers: buildHeaders("audio/wav", true),
+      body: JSON.stringify(body),
+    },
+    config.ttsTimeoutMs,
+    config.ttsRetryAttempts,
+  );
   const audioBuffer = Buffer.from(await response.arrayBuffer());
   const isWav =
     audioBuffer.length >= 12 &&

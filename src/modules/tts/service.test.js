@@ -215,4 +215,32 @@ describe("Lordsbook TTS breaker", () => {
     expect(voices.every((voice) => voice.source === "edge")).toBe(true);
     expect(voices[0].voiceId).toBe("en-GB-RyanNeural");
   }, 30000);
+
+  test("a voice refresh closes the breaker after the recovery probe interval", async () => {
+    const now = jest.spyOn(Date, "now");
+    now.mockReturnValue(1_000_000);
+    for (let i = 0; i < 3; i += 1) {
+      await synthesize(`recovery probe ${i}`, "bm_george", 1.0);
+    }
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: jest.fn().mockResolvedValue({
+        data: { voices: ["af_alloy", "bm_george"] },
+        statusCode: 200,
+        message: "Voices retrieved",
+        success: true,
+      }),
+    });
+    now.mockReturnValue(1_016_000);
+
+    const voices = await getVoices();
+    expect(voices.every((voice) => voice.source === "api")).toBe(true);
+    expect(voices.map((voice) => voice.voiceId)).toEqual([
+      "af_alloy",
+      "bm_george",
+    ]);
+    now.mockRestore();
+  }, 30000);
 });

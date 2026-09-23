@@ -297,10 +297,15 @@ const BREAKER_COOLDOWN_MS = readPositiveInt(
   "LORDSBOOK_BREAKER_COOLDOWN_MS",
   5 * 60_000,
 );
+const BREAKER_PROBE_INTERVAL_MS = readPositiveInt(
+  "LORDSBOOK_BREAKER_PROBE_INTERVAL_MS",
+  15_000,
+);
 
 let lordsbookActive = 0;
 const lordsbookQueue = [];
 let lordsbookBreaker = { failures: [], cooldownUntil: 0 };
+let lordsbookLastProbeAt = 0;
 
 const pollLordsbookQueue = () => {
   while (lordsbookActive < LORDSBOOK_MAX_CONCURRENCY && lordsbookQueue.length) {
@@ -347,6 +352,7 @@ const recordLordsbookFailure = () => {
   ];
   if (lordsbookBreaker.failures.length >= BREAKER_THRESHOLD) {
     lordsbookBreaker.cooldownUntil = now + BREAKER_COOLDOWN_MS;
+    lordsbookLastProbeAt = now;
     console.warn(
       `[TTS] Lordsbook breaker tripped after ${BREAKER_THRESHOLD} failures; using Edge for ${BREAKER_COOLDOWN_MS / 1000}s`,
     );
@@ -365,6 +371,7 @@ const getEffectiveTtsProvider = () => {
 export const resetLordsbookBreaker = () => {
   lordsbookBreaker.failures = [];
   lordsbookBreaker.cooldownUntil = 0;
+  lordsbookLastProbeAt = 0;
 };
 
 const formatVoiceName = (voiceId) => {
@@ -654,6 +661,27 @@ export const getStatus = () => ({
 });
 
 export const getVoices = async () => {
+  if (getTtsProvider() === "lordsbook" && lordsbookBreakerOpen()) {
+    const now = Date.now();
+    if (now - lordsbookLastProbeAt < BREAKER_PROBE_INTERVAL_MS) {
+      return EDGE_VOICES;
+    }
+    lordsbookLastProbeAt = now;
+    try {
+      // Voice selection is an explicit provider refresh from the app. Bypass
+      // the cached list so a recovered upstream can close the breaker early.
+      const voiceIds = await getLordsbookVoices();
+      lordsbookVoiceCache = { voices: voiceIds, loadedAt: now };
+      recordLordsbookSuccess();
+      lordsbookBreaker.cooldownUntil = 0;
+      console.info("[TTS] Lordsbook recovered; circuit breaker closed");
+      return voiceIds.map(formatLordsbookVoice);
+    } catch (error) {
+      console.warn("[TTS] Lordsbook recovery probe failed:", error.message);
+      return EDGE_VOICES;
+    }
+  }
+
   if (getEffectiveTtsProvider() === "lordsbook") {
     try {
       const voiceIds = await loadLordsbookVoiceIds();

@@ -244,7 +244,7 @@ export const addReadHistory = async (data, userId) => {
       message: "bookName, chapter, and verseNumber are required",
     };
 
-  const existing = await prisma.readHistory.findUnique({
+  const readHistory = await prisma.readHistory.upsert({
     where: {
       createdBy_bookName_chapter_verseNumber: {
         createdBy: userId,
@@ -253,32 +253,8 @@ export const addReadHistory = async (data, userId) => {
         verseNumber: BigInt(verseNumber),
       },
     },
-  });
-
-  if (existing) {
-    const updated = await prisma.readHistory.update({
-      where: { id: existing.id },
-      data: { createdOn: new Date() },
-    });
-    // A verse was read — make sure Home's cached Continue Reading stats are
-    // recomputed on next fetch instead of serving a stale percentage.
-    cache.del("bible", `home-stats:${userId}`).catch(() => {});
-    return {
-      status: 200,
-      message: "Read history updated successfully",
-      data: {
-        id: Number(updated.id),
-        bookName: updated.bookName,
-        chapter: Number(updated.chapter),
-        verseNumber: Number(updated.verseNumber),
-        createdBy: updated.createdBy,
-        createdOn: updated.createdOn ? updated.createdOn.toISOString() : null,
-      },
-    };
-  }
-
-  const readHistory = await prisma.readHistory.create({
-    data: {
+    update: { createdOn: new Date() },
+    create: {
       bookName,
       chapter: BigInt(chapter),
       verseNumber: BigInt(verseNumber),
@@ -286,11 +262,11 @@ export const addReadHistory = async (data, userId) => {
       createdOn: new Date(),
     },
   });
-  // Fresh verse recorded — ensure Home recomputes the chapter percentage now.
+  // Fresh verse recorded or timestamp updated — ensure Home recomputes the chapter percentage now.
   cache.del("bible", `home-stats:${userId}`).catch(() => {});
   return {
     status: 200,
-    message: "Read history added successfully",
+    message: "Read history updated successfully",
     data: {
       id: Number(readHistory.id),
       bookName: readHistory.bookName,
