@@ -1509,7 +1509,7 @@ export const getTodaysVerse = async (data = {}) => {
 
   const translatedTodaysVerse = await cache.getOrSet(
     "bible",
-    `todays-verse:v2:translated:${normLang}`,
+    `todays-verse:v3:translated:${normLang}`,
     async () => ({
       ...todaysVerseResult,
       data: await translateDailyVerseContent(todaysVerseResult.data, normLang),
@@ -1610,7 +1610,7 @@ export const getTodaysDevotion = async (data = {}) => {
 
   const translatedDevotion = await cache.getOrSet(
     "bible",
-    `todays-devotion:translated:${normLang}`,
+    `todays-devotion:v2:translated:${normLang}`,
     async () => ({
       ...result,
       data: await translateDailyDevotionContent(result.data, normLang),

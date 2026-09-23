@@ -11,11 +11,24 @@ jest.mock("../../utils/translator.js", () => ({
 }));
 
 describe("daily content translation", () => {
+  const originalBudget = process.env.TRANSLATION_TIME_BUDGET_MS;
+  const originalMaxText = process.env.TRANSLATION_MAX_TEXT_LENGTH;
+
   beforeEach(() => {
     translateMany.mockReset();
     translateMany.mockImplementation(async (texts) =>
       texts.map((text) => `AR:${text}`),
     );
+  });
+
+  afterEach(() => {
+    if (originalBudget === undefined)
+      delete process.env.TRANSLATION_TIME_BUDGET_MS;
+    else process.env.TRANSLATION_TIME_BUDGET_MS = originalBudget;
+    if (originalMaxText === undefined)
+      delete process.env.TRANSLATION_MAX_TEXT_LENGTH;
+    else process.env.TRANSLATION_MAX_TEXT_LENGTH = originalMaxText;
+    jest.useRealTimers();
   });
 
   test("translates daily verse prose while preserving metadata", async () => {
@@ -55,6 +68,7 @@ describe("daily content translation", () => {
     expect(result.reference).toBe("John 3:16");
     expect(result.bibleVersion).toBe("KJV");
     expect(result.crossReferences).toBe(item.crossReferences);
+    expect(result.contentLanguage).toBe("ar");
   });
 
   test("translates devotion title, content, and rich prose", async () => {
@@ -72,6 +86,7 @@ describe("daily content translation", () => {
     expect(result.content).toBe("AR:Trust God today.");
     expect(result.finalThoughts).toBe("AR:Remain faithful.");
     expect(result.displayDate).toBe("2026-08-24T00:00:00.000Z");
+    expect(result.contentLanguage).toBe("ar");
   });
 
   test("translates exegesis prose but preserves references and tags", async () => {
@@ -112,8 +127,29 @@ describe("daily content translation", () => {
     warning.mockRestore();
   });
 
+  test("fully translates large records across multiple bounded batches", async () => {
+    process.env.TRANSLATION_MAX_TEXT_LENGTH = "20";
+    process.env.TRANSLATION_TIME_BUDGET_MS = "1000";
+    const item = {
+      title: "A sufficiently long title",
+      content: "A devotional body that is also longer than one small batch",
+      reflection: "A final reflection that must not remain English",
+    };
+
+    const result = await translateDailyDevotionContent(item, "fr");
+
+    expect(result).toEqual({
+      title: `AR:${item.title}`,
+      content: `AR:${item.content}`,
+      reflection: `AR:${item.reflection}`,
+      contentLanguage: "fr",
+    });
+    expect(translateMany).toHaveBeenCalledTimes(3);
+  });
+
   test("falls back to the original record when translation exceeds the time budget", async () => {
     jest.useFakeTimers();
+    process.env.TRANSLATION_TIME_BUDGET_MS = "50";
     const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
     // Simulate a slow / hanging translation provider by never resolving.
     translateMany.mockImplementation(
@@ -122,11 +158,9 @@ describe("daily content translation", () => {
     const item = { title: "Slow title", content: "Slow content" };
 
     const promise = translateDailyDevotionContent(item, "ar");
-    // Budget is 12s by default; advance the fake timers past it to abort.
-    jest.advanceTimersByTime(13000);
+    jest.advanceTimersByTime(51);
     await expect(promise).resolves.toBe(item);
     expect(translateMany).toHaveBeenCalled();
     warning.mockRestore();
-    jest.useRealTimers();
   });
 });

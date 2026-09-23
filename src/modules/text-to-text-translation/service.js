@@ -136,12 +136,14 @@ const translateChunk = async (chunk, options) => {
   // Try Lordsbook first ONLY if explicitly enabled
   if (process.env.LORDSBOOK_TEXT_ENABLE === "true") {
     try {
-      const lbResult = await translateLordsbookText({
-        q: value,
-        source: options.source,
-        target: options.target,
-        format: options.format,
-      });
+      const lbResult = await withProviderLimit(() =>
+        translateLordsbookText({
+          q: value,
+          source: options.source,
+          target: options.target,
+          format: options.format,
+        }),
+      );
       if (lbResult && lbResult.translatedText) {
         return {
           ...lbResult,
@@ -257,12 +259,14 @@ export const translateBatch = async ({ q, ...options }) => {
       config.maxConcurrency,
       async (item) => {
         try {
-          return await translateLordsbookText({
-            q: item.value,
-            source: options.source || "auto",
-            target: options.target,
-            format: options.format || "text",
-          });
+          return await withProviderLimit(() =>
+            translateLordsbookText({
+              q: item.value,
+              source: options.source || "auto",
+              target: options.target,
+              format: options.format || "text",
+            }),
+          );
         } catch (error) {
           console.warn(`[Translation] Lordsbook batch item failed: ${error.message}`);
           return null;

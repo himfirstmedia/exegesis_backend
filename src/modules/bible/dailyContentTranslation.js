@@ -39,13 +39,12 @@ const getMaxBatchItems = () => {
   return Number.isInteger(value) && value > 0 ? value : 100;
 };
 
-// Hard cap on how long a daily-content translation may take before the API
-// returns the original (English) text. The mobile client's HTTP timeout is 15s,
-// so letting a slow translation provider run for longer would surface as a
-// Network Error / failed request on the device. Tight just under that budget.
+// Daily content includes several long prose fields. Its endpoints use a longer
+// client timeout than ordinary API calls, so allow enough time for bounded
+// chunk translation while still preventing a permanently hung request.
 const getTranslationTimeBudget = () => {
   const value = Number.parseInt(process.env.TRANSLATION_TIME_BUDGET_MS, 10);
-  return Number.isInteger(value) && value > 0 ? value : 12000;
+  return Number.isInteger(value) && value > 0 ? value : 45000;
 };
 
 const addText = (entries, value, setValue) => {
@@ -164,11 +163,11 @@ const translateRecord = async (item, lang, fields, includeRichFields) => {
     addWordStudies(translated, entries);
   }
 
-  if (!entries.length) return translated;
+  if (!entries.length) return { ...translated, contentLanguage: target };
 
   try {
     await translateEntries(entries, target);
-    return translated;
+    return { ...translated, contentLanguage: target };
   } catch (error) {
     const warningKey = `${target}:${error.message}`;
     const lastWarning = translationWarnings.get(warningKey) || 0;
