@@ -38,6 +38,45 @@ const assertTextLimit = (text, maxTextLength, field = "q") => {
   }
 };
 
+// ── Lordsbook text-provider circuit breaker ────────────────────────────────
+// Lordsbook text translation and TTS share the same upstream. When it is down,
+// trying it first for every chunk adds ~10s+ of connect timeouts before the
+// LibreTranslate fallback runs. Repeated failures open a breaker so the text
+// path goes straight to LibreTranslate until the upstream recovers.
+const LB_TEXT_WINDOW_MS = 60_000;
+const LB_TEXT_THRESHOLD = readPositiveInt(
+  "LORDSBOOK_TEXT_BREAKER_THRESHOLD",
+  3,
+);
+const LB_TEXT_COOLDOWN_MS = readPositiveInt(
+  "LORDSBOOK_TEXT_BREAKER_COOLDOWN_MS",
+  5 * 60_000,
+);
+let lordsbookTextBreaker = { failures: [], cooldownUntil: 0 };
+
+const lordsbookTextBreakerOpen = () =>
+  Date.now() < lordsbookTextBreaker.cooldownUntil;
+
+const recordLordsbookTextSuccess = () => {
+  lordsbookTextBreaker.failures = [];
+};
+
+const recordLordsbookTextFailure = () => {
+  const now = Date.now();
+  lordsbookTextBreaker.failures = [
+    ...lordsbookTextBreaker.failures.filter(
+      (t) => now - t < LB_TEXT_WINDOW_MS,
+    ),
+    now,
+  ];
+  if (lordsbookTextBreaker.failures.length >= LB_TEXT_THRESHOLD) {
+    lordsbookTextBreaker.cooldownUntil = now + LB_TEXT_COOLDOWN_MS;
+    console.warn(
+      `[Translation] Lordsbook text provider unhealthy after ${LB_TEXT_THRESHOLD} failures; skipping it for ${LB_TEXT_COOLDOWN_MS / 1000}s`,
+    );
+  }
+};
+
 let activeProviderRequests = 0;
 const providerQueue = [];
 let providerStartGate = Promise.resolve();
@@ -111,8 +150,16 @@ const libreRequest = async (path, options = {}) => {
       } else if (error instanceof AppError) {
         lastError = error;
       } else {
-        lastError = new AppError(502, "Translation provider is unavailable");
+        // Node's fetch wraps network failures (DNS, connect, TLS) generically
+        // as "fetch failed" with the real reason in `error.cause`. Surface it.
+        const cause = error.cause || error;
+        const code = cause.code || cause.name || "NETWORK_ERROR";
+        lastError = new AppError(
+          502,
+          `Translation provider is unavailable (${code}): ${cause.message || error.message}`,
+        );
         lastError.retryable = true;
+        lastError.cause = cause;
       }
     } finally {
       clearTimeout(timeout);
@@ -133,8 +180,9 @@ const translateChunk = async (chunk, options) => {
 
   const config = getConfig();
   
-  // Try Lordsbook first ONLY if explicitly enabled
-  if (process.env.LORDSBOOK_TEXT_ENABLE === "true") {
+  // Try Lordsbook first ONLY if explicitly enabled (and the upstream is
+  // believed healthy — see circuit breaker above).
+  if (process.env.LORDSBOOK_TEXT_ENABLE === "true" && !lordsbookTextBreakerOpen()) {
     try {
       const lbResult = await withProviderLimit(() =>
         translateLordsbookText({
@@ -145,12 +193,14 @@ const translateChunk = async (chunk, options) => {
         }),
       );
       if (lbResult && lbResult.translatedText) {
+        recordLordsbookTextSuccess();
         return {
           ...lbResult,
           translatedText: `${leading}${lbResult.translatedText}${trailing}`,
         };
       }
     } catch (e) {
+      recordLordsbookTextFailure();
       console.warn(`[Translation] Lordsbook failed, falling back to LibreTranslate: ${e.message}`);
     }
   }
@@ -251,9 +301,12 @@ export const translateBatch = async ({ q, ...options }) => {
     return { original: text, ...preserveOuterWhitespace(normalized) };
   });
 
-  // Try Lordsbook first ONLY if explicitly enabled. Batch succeeds only when
+// Try Lordsbook first ONLY if explicitly enabled. Batch succeeds only when
   // every item translates; otherwise fall back to LibreTranslate's array input.
-  if (process.env.LORDSBOOK_TEXT_ENABLE === "true") {
+  if (
+    process.env.LORDSBOOK_TEXT_ENABLE === "true" &&
+    !lordsbookTextBreakerOpen()
+  ) {
     const lbResults = await mapWithConcurrency(
       prepared,
       config.maxConcurrency,
@@ -274,6 +327,7 @@ export const translateBatch = async ({ q, ...options }) => {
       },
     );
     if (lbResults.every((result) => result?.translatedText)) {
+      recordLordsbookTextSuccess();
       const translations = prepared.map((item, index) => ({
         translatedText: `${item.leading}${lbResults[index].translatedText}${item.trailing}`,
         ...(lbResults[index].detectedLanguage
@@ -291,6 +345,7 @@ export const translateBatch = async ({ q, ...options }) => {
         provider: "lordsbook",
       };
     }
+    recordLordsbookTextFailure();
   }
 
   const payload = {
