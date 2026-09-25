@@ -7,10 +7,6 @@ import {
   synthesizeLordsbookSpeech,
 } from "../../services/lordsbookGateway.js";
 
-const ELEVENLABS_API_KEY = "";
-const ELEVENLABS_ENABLED = false;
-const ELEVENLABS_BASE = "";
-
 const REDIS_CACHE_TTL = parseInt(process.env.REDIS_CACHE_TTL, 10) || 86400; // 24h
 const REDIS_NAMESPACE = "tts";
 const LORDSBOOK_VOICE_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -337,6 +333,14 @@ const runLordsbookConstrained = (job, priority = "low") =>
     }
     pollLordsbookQueue();
   });
+
+const cancelQueuedLordsbookPrefetch = (reason) => {
+  for (let index = lordsbookQueue.length - 1; index >= 0; index -= 1) {
+    if (lordsbookQueue[index].priority === "high") continue;
+    const [queued] = lordsbookQueue.splice(index, 1);
+    queued.reject(reason);
+  }
+};
 
 const lordsbookBreakerOpen = () => Date.now() < lordsbookBreaker.cooldownUntil;
 
@@ -805,7 +809,13 @@ const synthesizeLordsbook = async (
       }, priority);
     } catch (error) {
       if (error.message !== "Lordsbook TTS breaker is open") {
-        recordLordsbookFailure();
+        console.warn(
+          `[TTS] Lordsbook synthesis error priority=${priority}: ${error.message}`,
+        );
+        if (priority === "high") {
+          recordLordsbookFailure();
+          cancelQueuedLordsbookPrefetch(error);
+        }
       }
       throw error;
     } finally {
@@ -894,12 +904,7 @@ export const synthesizeWithTimings = async (
   if (getEffectiveTtsProvider() === "lordsbook") {
     try {
       return {
-        audioBuffer: await synthesizeLordsbook(
-          text,
-          voiceId,
-          speed,
-          priority,
-        ),
+        audioBuffer: await synthesizeLordsbook(text, voiceId, speed, priority),
         wordOffsetsMs: [],
       };
     } catch (error) {
@@ -1011,11 +1016,28 @@ const synthesizeElevenLabs = async () => {
 
 // ── Main synthesize ────────────────────────────────────────────────────────
 
-export const synthesize = async (text, voiceId, speed = DEFAULT_TTS_SPEED) => {
-  if (getEffectiveTtsProvider() === "lordsbook") {
+export const synthesize = async (
+  text,
+  voiceId,
+  speed = DEFAULT_TTS_SPEED,
+  providerLock = null,
+) => {
+  const requestedProvider =
+    providerLock === "lordsbook" || providerLock === "edge"
+      ? providerLock
+      : null;
+  const provider = requestedProvider || getEffectiveTtsProvider();
+  if (provider === "lordsbook") {
+    if (getTtsProvider() !== "lordsbook") {
+      throw new Error("Lordsbook is disabled on this server");
+    }
     try {
-      return await synthesizeLordsbook(text, voiceId, speed, "high");
+      return {
+        audioBuffer: await synthesizeLordsbook(text, voiceId, speed, "high"),
+        provider: "lordsbook",
+      };
     } catch (error) {
+      if (requestedProvider) throw error;
       console.warn(
         `[TTS] Lordsbook synthesis failed; using Edge fallback: ${error.message}`,
       );
@@ -1023,5 +1045,8 @@ export const synthesize = async (text, voiceId, speed = DEFAULT_TTS_SPEED) => {
   }
 
   const edgeVoice = edgeVoiceFromRequest(voiceId);
-  return synthesizeEdge(text, edgeVoice, speed);
+  return {
+    audioBuffer: await synthesizeEdge(text, edgeVoice, speed),
+    provider: "edge",
+  };
 };

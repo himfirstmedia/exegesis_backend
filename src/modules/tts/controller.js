@@ -3,14 +3,21 @@ import { formatApiResponse } from "../../utils/helpers.js";
 
 export const speak = async (req, res) => {
   try {
-    const { text, voiceId, speed } = req.body;
+    const { text, voiceId, speed, provider } = req.body;
     if (!text || !text.trim()) {
       return res.status(400).json(formatApiResponse({ status: 400, message: "Text is required" }));
     }
-    const audioBuffer = await ttsService.synthesize(text, voiceId, speed);
+    const result = await ttsService.synthesize(
+      text,
+      voiceId,
+      speed,
+      provider,
+    );
+    const audioBuffer = Buffer.isBuffer(result) ? result : result.audioBuffer;
     res.set({
       "Content-Type": "audio/mpeg",
       "Content-Length": audioBuffer.length,
+      "X-TTS-Provider": result.provider || provider || "unknown",
     });
     res.send(audioBuffer);
   } catch (error) {
@@ -30,14 +37,17 @@ export const speakWithTimings = async (req, res) => {
       voiceId,
       speed,
       req.body.priority === "high" ? "high" : "low",
+      req.body.provider,
     );
     return res.status(200).json({
       audioBase64: result.audioBuffer.toString("base64"),
       wordOffsetsMs: result.wordOffsetsMs,
+      provider: result.provider,
     });
   } catch (error) {
     console.error("Timed TTS speak error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "Timed TTS synthesis failed: " + error.message }));
+    const status = req.body.provider ? 503 : 500;
+    return res.status(status).json(formatApiResponse({ status, message: "Timed TTS synthesis failed: " + error.message }));
   }
 };
 
