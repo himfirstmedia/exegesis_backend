@@ -745,10 +745,10 @@ export const searchFTS = async (req, res) => {
 
 export const listCatalog = async (req, res) => {
   try {
-    const { language='en', search } = req.query;
+    const { language, search } = req.query;
     console.log(`[listCatalog] language=${language}, search=${search}`);
     let catalog = getCatalog();
-    if (language) {
+    if (language && language !== 'all') {
       catalog = catalog.filter((c) => c.language === language);
     }
     if (search && typeof search === 'string') {
