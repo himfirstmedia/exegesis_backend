@@ -3,7 +3,7 @@
 ## Overview
 This is the Node.js/Express version of the bible-pab-backend (Java Spring Boot). All tables from the original backend have been migrated to Prisma schema with PostgreSQL.
 
-## Base URL
+## Base URL for now
 ```
 http://localhost:5001
 ```
