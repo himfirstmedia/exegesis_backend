@@ -1,4 +1,5 @@
 import {
+  __resetTranslationProviderCache,
   detectLanguage,
   getLanguages,
   translateBatch,
@@ -27,6 +28,7 @@ describe("text-to-text translation service", () => {
       TRANSLATION_MAX_TEXT_LENGTH: "200",
       TRANSLATION_CHUNK_SIZE: "35",
       TRANSLATION_MAX_BATCH_ITEMS: "3",
+      TRANSLATION_ENFORCE_SUPPORTED_LANGS: "false",
     };
     global.fetch = jest.fn();
   });
@@ -156,5 +158,63 @@ describe("text-to-text translation service", () => {
       translateText({ q: "Legacy Sower", source: "en", target: "fr" }),
     ).resolves.toMatchObject({ translatedText: "Legacy Sower" });
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("capability enforcement (TRANSLATION_ENFORCE_SUPPORTED_LANGS)", () => {
+  const supported = [
+    { code: "en", name: "English" },
+    { code: "es", name: "Spanish" },
+    { code: "tl", name: "Tagalog" },
+    { code: "ar", name: "Arabic" },
+    { code: "fr", name: "French" },
+  ];
+
+  beforeEach(() => {
+    process.env.TRANSLATION_ENFORCE_SUPPORTED_LANGS = "true";
+    __resetTranslationProviderCache();
+    global.fetch = jest.fn();
+  });
+
+  const mockProvider = (translateImpl) => {
+    global.fetch.mockImplementation(async (url, options) => {
+      if (url.endsWith("/languages")) return jsonResponse(supported);
+      return translateImpl(url, options);
+    });
+  };
+
+  const translateCalls = () =>
+    global.fetch.mock.calls.filter(([url]) => url.endsWith("/translate"));
+
+  test("rejects an unsupported target up front with 400 and no provider call", async () => {
+    mockProvider(() => {
+      throw new Error("provider must not be reached");
+    });
+
+    await expect(
+      translateText({ q: "Hello", source: "en", target: "ta" }),
+    ).rejects.toMatchObject({ status: 400, message: expect.stringContaining("not supported") });
+    expect(translateCalls()).toHaveLength(0);
+  });
+
+  test("maps fil to tl before checking capability", async () => {
+    mockProvider(async (_url, options) =>
+      jsonResponse({
+        translatedText: JSON.parse(options.body).q.map((text) => `X:${text}`),
+      }),
+    );
+
+    const result = await translateBatch({ q: ["Hello"], source: "en", target: "fil" });
+    expect(result.translations[0].translatedText).toBe("X:Hello");
+    expect(JSON.parse(translateCalls()[0][1].body).target).toBe("tl");
+  });
+
+  test("proceeds to the provider when the capability probe fails", async () => {
+    global.fetch.mockRejectedValue(new Error("network down"));
+
+    await expect(
+      translateText({ q: "Hello", target: "es" }),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(translateCalls().length).toBeGreaterThan(0);
   });
 });

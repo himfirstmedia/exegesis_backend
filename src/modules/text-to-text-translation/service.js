@@ -38,6 +38,73 @@ const assertTextLimit = (text, maxTextLength, field = "q") => {
   }
 };
 
+// ── Provider capability awareness ───────────────────────────────────────────
+// A LibreTranslate deployment does not always ship every Argos model (e.g. some
+// Indian languages are missing). Instead of letting every chunk/batch hit the
+// provider and spam logs with repeated "not supported" failures, cache the
+// provider's `/languages` list and reject unsupported targets up front with a
+// clear, non-retryable 400. Controlled by TRANSLATION_ENFORCE_SUPPORTED_LANGS
+// (defaults to on).
+const SUPPORTED_LANG_TTL_MS = 10 * 60 * 1000;
+const SUPPORTED_LANG_NEGATIVE_TTL_MS = 60 * 1000;
+const supportedLanguagesCache = { at: 0, codes: null, errorUntil: 0 };
+
+const enforceSupportedLanguages = () =>
+  (process.env.TRANSLATION_ENFORCE_SUPPORTED_LANGS ?? "true")
+    .trim()
+    .toLowerCase() !== "false";
+
+const getSupportedLanguageCodes = async () => {
+  const now = Date.now();
+  if (
+    supportedLanguagesCache.codes &&
+    now - supportedLanguagesCache.at < SUPPORTED_LANG_TTL_MS
+  ) {
+    return supportedLanguagesCache.codes;
+  }
+  const languages = await getLanguages();
+  const codes = new Set(
+    languages
+      .map((language) =>
+        typeof language === "string"
+          ? language.toLowerCase()
+          : String(language?.code || "").toLowerCase(),
+      )
+      .filter(Boolean),
+  );
+  supportedLanguagesCache.codes = codes;
+  supportedLanguagesCache.at = now;
+  return codes;
+};
+
+const assertSupportedTarget = async (target) => {
+  const language = toLibreLanguageCode(String(target || "").toLowerCase());
+  if (!language || language === "en" || !enforceSupportedLanguages()) return;
+
+  const now = Date.now();
+  if (now < supportedLanguagesCache.errorUntil) return;
+
+  try {
+    const codes = await getSupportedLanguageCodes();
+    if (!codes.has(language)) {
+      throw new ValidationError(
+        `Translation to '${target}' is not supported by the configured translation provider (libretranslate); install the missing model or choose a supported language`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof ValidationError) throw error;
+    // Provider unreachable — never block on the capability probe. Skip the
+    // pre-check for a short window so a down provider isn't probed per call.
+    supportedLanguagesCache.errorUntil = now + SUPPORTED_LANG_NEGATIVE_TTL_MS;
+  }
+};
+
+export const __resetTranslationProviderCache = () => {
+  supportedLanguagesCache.at = 0;
+  supportedLanguagesCache.codes = null;
+  supportedLanguagesCache.errorUntil = 0;
+};
+
 // ── Lordsbook text-provider circuit breaker ────────────────────────────────
 // Lordsbook text translation and TTS share the same upstream. When it is down,
 // trying it first for every chunk adds ~10s+ of connect timeouts before the
@@ -242,6 +309,7 @@ const translateChunk = async (chunk, options) => {
 export const translateText = async ({ q, source = "auto", target, format = "text", alternatives }) => {
   const config = getConfig();
   assertTextLimit(q, config.maxTextLength);
+  await assertSupportedTarget(target);
 
   // LibreTranslate's sentence tokenizer can leave `sentence.[123]` untouched.
   const normalized = format === "text" ? normalizeTranslationText(q) : q;
@@ -278,6 +346,7 @@ export const translateBatch = async ({ q, ...options }) => {
   }
   const totalCharacters = q.reduce((total, text) => total + text.length, 0);
   assertTextLimit(totalCharacters, config.maxTextLength, "Batch text");
+  await assertSupportedTarget(options.target);
 
   // Preserve chunking for unusually large batch items. Verse-sized items use
   // LibreTranslate's native array input and complete in one provider request.
