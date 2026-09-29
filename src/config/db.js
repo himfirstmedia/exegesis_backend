@@ -1,18 +1,7 @@
 // src/config/db.js
 import { PrismaClient } from "@prisma/client";
 
-/**
- * The managed Postgres proxy (Railway) drops connections under load, so the
- * pool must be tuned to recover quickly instead of starving requests
- * (symptom: P2024 "Timed out fetching a new connection from the connection
- * pool. Current connection pool timeout: 10, connection limit: 9").
- *
- * Prisma reads pool settings from DATABASE_URL query params only — they are
- * enforced here when missing so dev/prod behave identically:
- *   connection_limit=15  more headroom for API + scheduler concurrency
- *   pool_timeout=30      wait longer for a free connection before failing
- *   connect_timeout=15   tolerate slow proxy handshakes
- */
+
 const ensurePoolParams = (url) => {
   if (!url || !/^postgres(ql)?:\/\//i.test(url)) return url;
   try {

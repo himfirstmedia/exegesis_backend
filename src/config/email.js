@@ -54,11 +54,7 @@ export const buildMailOptions = ({
   const fromEmail = process.env.MAIL_USERNAME;
   const supportEmail = process.env.MAIL_SUPPORT_EMAIL || fromEmail;
 
-  // Transactional-appropriate headers. NOTE: "Precedence: bulk",
-  // "List-Id", "Auto-Submitted", and List-Unsubscribe on transactional
-  // mail (verification codes, receipts, credentials) are strong spam
-  // signals — Gmail files them as Promotions/spam. Real marketing mail
-  // should pass a listUnsubscribe URL instead.
+  
   const headers = {};
   if (listUnsubscribe) {
     headers["List-Unsubscribe"] = `<${listUnsubscribe}>`;
@@ -69,8 +65,7 @@ export const buildMailOptions = ({
     from: `"${fromName}" <${fromEmail}>`,
     to,
     subject,
-    // Plain-text fallback improves deliverability and accessibility.
-    // Derived from the subject so it never leaks credentials.
+   
     text: subject,
     html,
     headers,
