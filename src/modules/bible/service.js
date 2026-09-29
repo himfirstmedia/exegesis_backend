@@ -88,6 +88,7 @@ export const addHighlight = async (data, userId) => {
     return { status: 400, message: "verseNumber or verseNumbers is required" };
 
   const added = [];
+  const failedVerses = [];
 
   // Retry transient connection blips (managed Postgres proxies like Railway
   // occasionally drop connections mid-request; without a retry this surfaced
@@ -166,7 +167,19 @@ export const addHighlight = async (data, userId) => {
       });
     } catch (error) {
       console.error("Error adding highlight:", error.message);
+      failedVerses.push(v);
     }
+  }
+
+  // Replaying the whole request is safe because writes are upserts. Returning
+  // a retryable status ensures the app queues partial/transient failures
+  // instead of incorrectly marking every local highlight as synchronized.
+  if (failedVerses.length > 0) {
+    return {
+      status: 503,
+      message: "Some highlights could not be saved; retry is required",
+      data: added,
+    };
   }
 
   return { status: 200, message: "Highlight added successfully", data: added };
@@ -227,12 +240,27 @@ export const getHighlights = async (data, userId) => {
 };
 
 export const deleteHighlight = async (data, userId) => {
-  const { highlightId } = data;
-  if (!highlightId) return { status: 400, message: "Highlight ID is required" };
+  const { highlightId, bookName, chapter, verseNumber } = data;
+  if (!highlightId && (!bookName || !chapter || !verseNumber)) {
+    return {
+      status: 400,
+      message:
+        "highlightId or bookName, chapter, and verseNumber are required",
+    };
+  }
 
-  await prisma.highlight.delete({
-    where: { id: BigInt(highlightId), createdBy: userId },
-  });
+  // Reference-based deletion lets the app queue a removal before an offline
+  // highlight has a server-generated ID. deleteMany is intentionally
+  // idempotent so replaying a queued removal is safe.
+  const where = highlightId
+    ? { id: BigInt(highlightId), createdBy: userId }
+    : {
+        createdBy: userId,
+        bookName,
+        chapter: BigInt(chapter),
+        verseNumber: BigInt(verseNumber),
+      };
+  await prisma.highlight.deleteMany({ where });
   return { status: 200, message: "Highlight deleted successfully" };
 };
 
@@ -263,7 +291,7 @@ export const addReadHistory = async (data, userId) => {
     },
   });
   // Fresh verse recorded or timestamp updated — ensure Home recomputes the chapter percentage now.
-  cache.del("bible", `home-stats:${userId}`).catch(() => {});
+  await cache.del("bible", `home-stats:${userId}`).catch(() => {});
   return {
     status: 200,
     message: "Read history updated successfully",
@@ -358,6 +386,7 @@ export const deleteReadHistory = async (data, userId) => {
   await prisma.readHistory.deleteMany({
     where: { id: { in: readHistoryIds.map(BigInt) }, createdBy: userId },
   });
+  await cache.del("bible", `home-stats:${userId}`).catch(() => {});
   return { status: 200, message: "Read history deleted successfully" };
 };
 
@@ -1946,6 +1975,9 @@ export const getHomeStats = async (userId) => {
                 chapter: Number(lastRead.chapter),
                 verseNumber: Number(lastRead.verseNumber),
                 versesRead: lastReadChapterVersesRead,
+                updatedAt: lastRead.createdOn
+                  ? lastRead.createdOn.toISOString()
+                  : null,
               }
             : null,
         },
