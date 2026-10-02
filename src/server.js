@@ -33,9 +33,21 @@ import landingRouter from "./modules/landing/route.js";
 import { handleStripeWebhook } from "./modules/subscriptions/webhook.js";
 
 config();
+
+// Fail fast on missing secrets rather than silently falling back to an
+// insecure default. Tokens signed with a known default are forgeable.
+if (!process.env.JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET is not set. Refusing to start.");
+  process.exit(1);
+}
+
 connectDB();
 
 const app = express();
+
+// Behind Railway's reverse proxy req.ip is the proxy unless we trust the
+// first hop — required for rate limiting to key on the real client.
+app.set("trust proxy", 1);
 
 app.options("/{*path}", cors());
 

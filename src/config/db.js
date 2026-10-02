@@ -35,7 +35,8 @@ const connectDB = async () => {
     console.log("database connected successfully via prisma");
   } catch (error) {
     console.error("database connection failed:", error.message);
-    process.exit(1);
+    // Don't exit on DB failure — let the app start so health checks
+    // and static routes still work while the DB recovers.
   }
 };
 

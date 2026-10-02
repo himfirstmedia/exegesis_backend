@@ -7,6 +7,8 @@ import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { generateToken, verifyToken, generateSixDigitCode, serializeBigInt } from "../../utils/helpers.js";
+import { hashCode, codeMatches } from "../../utils/codes.js";
+import { validatePassword, PASSWORD_REQUIREMENTS_MESSAGE } from "../../utils/passwordPolicy.js";
 import { emailTemplates } from "../../utils/emailTemplates.js";
 import { OAuth2Client } from "google-auth-library";
 import { decodeImageUpload } from "./imageUpload.js";
@@ -100,6 +102,11 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
   }
   if (!password) {
     return { status: 400, message: "Password is required" };
+  }
+
+  const googlePasswordError = validatePassword(password);
+  if (googlePasswordError) {
+    return { status: 400, message: googlePasswordError };
   }
 
   const existingUsername = await prisma.systemUser.findFirst({ where: { username: username.toLowerCase() } });
@@ -232,6 +239,11 @@ export const register = async (data) => {
     return { status: 400, message: "Password is required" };
   }
 
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    return { status: 400, message: passwordError };
+  }
+
   const existingUser = await prisma.systemUser.findFirst({ where: { username } });
   if (existingUser) {
     return { status: 401, message: "Username already exists, try another one" };
@@ -281,7 +293,7 @@ export const register = async (data) => {
 
   await prisma.verification.create({
     data: {
-      code,
+      code: hashCode(code),
       verificationType: "Email Verification",
       emailAddress: user.email,
       createdBy: user.id,
@@ -321,13 +333,13 @@ export const verifyAccount = async (data) => {
   const verification = await prisma.verification.findFirst({
     where: {
       emailAddress: user.email,
-      code,
       verificationType: "Email Verification",
       status: false,
+      OR: [{ code: hashCode(code) }, { code }],
     },
   });
 
-  if (!verification) {
+  if (!verification || !codeMatches(code, verification.code)) {
     return { status: 400, message: "Invalid verification code" };
   }
 
@@ -384,13 +396,13 @@ export const verifyCode = async (data) => {
   const verification = await prisma.verification.findFirst({
     where: {
       emailAddress: user.email,
-      code,
       verificationType: "Email Verification",
       status: false,
+      OR: [{ code: hashCode(code) }, { code }],
     },
   });
 
-  if (!verification) {
+  if (!verification || !codeMatches(code, verification.code)) {
     return { status: 400, message: "Invalid verification code" };
   }
 
@@ -471,7 +483,7 @@ export const login = async (data, deviceInfo = null) => {
 
       await prisma.verification.create({
         data: {
-          code,
+          code: hashCode(code),
           verificationType: "Email Verification",
           emailAddress: user.email,
           createdBy: user.id,
@@ -812,7 +824,7 @@ export const resendVerification = async (data) => {
 
   await prisma.verification.create({
     data: {
-      code,
+      code: hashCode(code),
       verificationType: "Email Verification",
       emailAddress: user.email,
       createdBy: user.id,
@@ -828,6 +840,11 @@ export const setPassword = async (data) => {
   const { email, password } = data;
   if (!email || !password) {
     return { status: 400, message: "Email and password are required" };
+  }
+
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    return { status: 400, message: passwordError };
   }
 
   const user = await prisma.systemUser.findFirst({ where: { email: email.toLowerCase() } });
@@ -889,7 +906,7 @@ export const forgotPassword = async (data) => {
 
   await prisma.verification.create({
     data: {
-      code,
+      code: hashCode(code),
       verificationType: "Password Reset",
       emailAddress: user.email,
       createdBy: user.id,
@@ -907,6 +924,11 @@ export const resetPassword = async (data) => {
     return { status: 400, message: "Email, code, and new password are required" };
   }
 
+  const passwordError = validatePassword(newPassword);
+  if (passwordError) {
+    return { status: 400, message: passwordError };
+  }
+
   const user = await prisma.systemUser.findFirst({ where: { email: email.toLowerCase() } });
   if (!user) {
     return { status: 404, message: "User with the provided email does not exist" };
@@ -915,13 +937,13 @@ export const resetPassword = async (data) => {
   const verification = await prisma.verification.findFirst({
     where: {
       emailAddress: user.email,
-      code,
       verificationType: "Password Reset",
       status: false,
+      OR: [{ code: hashCode(code) }, { code }],
     },
   });
 
-  if (!verification) {
+  if (!verification || !codeMatches(code, verification.code)) {
     return { status: 400, message: "Invalid reset code" };
   }
 
@@ -979,7 +1001,7 @@ export const updatePassword = async (userId, data) => {
   }
 
   if (newPassword.length < 8) {
-    return { status: 400, message: "Password must be at least 8 characters with uppercase, lowercase, number, and special character" };
+    return { status: 400, message: PASSWORD_REQUIREMENTS_MESSAGE };
   }
 
   const hashedPassword = await bcrypt.hash(newPassword, 10);
@@ -1022,11 +1044,9 @@ export const forceChangePassword = async (userId, data) => {
     return { status: 422, message: "Temporary password is incorrect" };
   }
 
-  if (typeof newPassword !== "string" || newPassword.length < 8) {
-    return { status: 400, message: "Password must be at least 8 characters with uppercase, lowercase, number, and special character" };
-  }
-  if (!/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^A-Za-z0-9]/.test(newPassword)) {
-    return { status: 400, message: "Password must include uppercase, lowercase, number, and special character" };
+  const passwordError = validatePassword(newPassword);
+  if (passwordError) {
+    return { status: 400, message: passwordError };
   }
   if (newPassword === currentPassword) {
     return { status: 400, message: "New password must be different from the temporary password" };
