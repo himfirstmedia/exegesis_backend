@@ -781,6 +781,121 @@ Remove user's progress from a plan.
 
 ---
 
+## LANDING ENDPOINTS
+
+Public marketing endpoints used by the landing page and the public plans page.
+No authentication and no tier gating. Every response is served from Redis when
+available (falls back to Postgres) and every route accepts an optional `lang`
+that is passed through the translation layer.
+
+### POST /landing
+Everything the landing page needs in one round trip: daily verse, featured
+reading plans, subscription tiers and stats.
+
+**Body:**
+```json
+{
+  "lang": "en",
+  "limit": 6
+}
+```
+**Response data:**
+```json
+{
+  "dailyVerse": {
+    "bookName": "John",
+    "chapter": 3,
+    "verseNumber": 16,
+    "reference": "John 3:16",
+    "bibleVersion": "KJV",
+    "reflection": "string",
+    "explanation": "string",
+    "learnMore": "string",
+    "application": "string",
+    "displayDate": "2026-01-01T00:00:00.000Z"
+  },
+  "readingPlans": [
+    {
+      "planId": "PLAN-...",
+      "title": "string",
+      "description": "string",
+      "totalDays": 30,
+      "category": "string",
+      "difficulty": "string",
+      "questionsEnabled": true,
+      "participants": 12
+    }
+  ],
+  "tiers": [
+    {
+      "id": "free",
+      "name": "string",
+      "description": "string",
+      "price": 0,
+      "currency": "usd",
+      "interval": "none",
+      "maxSlots": null,
+      "features": ["string"],
+      "sortOrder": 1
+    }
+  ],
+  "stats": {
+    "activeReadingPlans": 4,
+    "publishedVerses": 120,
+    "publishedDevotions": 90,
+    "verseExplanations": 12000,
+    "strongsWords": 8600,
+    "bibleTopics": 300,
+    "bookPrologues": 66
+  }
+}
+```
+
+### POST /landing/daily-verse
+Today's published verse, falling back to the most recent earlier published
+verse so the hero never renders empty while the next verse awaits review.
+
+**Body:**
+```json
+{
+  "lang": "en"
+}
+```
+**Response data:** `{ "dailyVerse": { ... } }` (same shape as above)
+
+### POST /landing/reading-plans
+Active reading plans ordered by how many readers started them.
+
+**Body:**
+```json
+{
+  "lang": "en",
+  "limit": 6
+}
+```
+`limit` defaults to 6 and is clamped to 12.
+
+**Response data:** `{ "plans": [ { ...reading plan } ] }`
+
+### POST /landing/tiers
+Active subscription tiers ordered by `sortOrder`, then price.
+
+**Body:**
+```json
+{
+  "lang": "en"
+}
+```
+**Response data:** `{ "tiers": [ { ...tier } ] }`
+
+### POST /landing/stats
+Content counts for the landing stats strip.
+
+**Body:** `{}`
+**Response data:** `{ "stats": { ... } }`
+
+---
+
 ## Database Models
 
 ### SystemUser

@@ -29,6 +29,7 @@ import popularSearchesRouter from "./modules/popular-searches/route.js";
 import aiRouter from "./modules/ai/route.js";
 import textToTextTranslationRouter from "./modules/text-to-text-translation/route.js";
 import pushRouter from "./modules/push/route.js";
+import landingRouter from "./modules/landing/route.js";
 import { handleStripeWebhook } from "./modules/subscriptions/webhook.js";
 
 config();
@@ -114,6 +115,8 @@ app.use("/popular-searches", popularSearchesRouter);
 app.use("/ai", aiRouter);
 app.use("/translation", textToTextTranslationRouter);
 app.use("/push", pushRouter);
+// Public landing-page data (daily verse, featured plans, tiers, stats).
+app.use("/landing", landingRouter);
 
 app.get("/health", (req, res) => {
   res.send(
