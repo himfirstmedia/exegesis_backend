@@ -788,7 +788,7 @@ No authentication and no tier gating. Every response is served from Redis when
 available (falls back to Postgres) and every route accepts an optional `lang`
 that is passed through the translation layer.
 
-### POST /landing
+### POST /landing/get-landing
 Everything the landing page needs in one round trip: daily verse, featured
 reading plans, subscription tiers and stats.
 
@@ -851,7 +851,7 @@ reading plans, subscription tiers and stats.
 }
 ```
 
-### POST /landing/daily-verse
+### POST /landing/get-daily-verse
 Today's published verse, falling back to the most recent earlier published
 verse so the hero never renders empty while the next verse awaits review.
 
@@ -863,7 +863,7 @@ verse so the hero never renders empty while the next verse awaits review.
 ```
 **Response data:** `{ "dailyVerse": { ... } }` (same shape as above)
 
-### POST /landing/reading-plans
+### POST /landing/get-reading-plans
 Active reading plans ordered by how many readers started them.
 
 **Body:**
@@ -877,7 +877,7 @@ Active reading plans ordered by how many readers started them.
 
 **Response data:** `{ "plans": [ { ...reading plan } ] }`
 
-### POST /landing/tiers
+### POST /landing/get-tiers
 Active subscription tiers ordered by `sortOrder`, then price.
 
 **Body:**
@@ -888,7 +888,7 @@ Active subscription tiers ordered by `sortOrder`, then price.
 ```
 **Response data:** `{ "tiers": [ { ...tier } ] }`
 
-### POST /landing/stats
+### POST /landing/get-stats
 Content counts for the landing stats strip.
 
 **Body:** `{}`

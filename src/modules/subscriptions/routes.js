@@ -1,6 +1,9 @@
 import express from "express";
 import * as subscriptionController from "./controller.js";
-import { authenticate } from "../../middlewares/auth.middleware.js";
+import {
+  authenticate,
+  requireAdmin,
+} from "../../middlewares/auth.middleware.js";
 
 const router = express.Router();
 
@@ -29,6 +32,8 @@ router.post(
 
 router.post(
   "/get-subscriptions-users",
+  authenticate,
+  requireAdmin,
   subscriptionController.handleGetSubscribedUsers,
 );
 
