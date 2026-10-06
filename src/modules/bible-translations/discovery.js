@@ -153,9 +153,8 @@ const DERIVED_LANGUAGE_NAMES = Object.entries(PREFIX_TO_LANG).reduce(
   {},
 );
 
-// Backwards-compatible canonical short IDs for English translations that
-// existed in the pre-discovery hardcoded `SHORT_IDS` map. New languages
-// derive their shortId from the file name itself.
+// Stable IDs for translations whose filename suffix would otherwise lose the
+// language name (for example Tamil2017 becoming just "2017").
 export const LEGACY_SHORT_IDS = {
   EnglishASVBible: 'ASV',
   EnglishAmplifiedBible: 'Amplified',
@@ -185,6 +184,15 @@ export const LEGACY_SHORT_IDS = {
   EnglishTLBible: 'TL',
   EnglishTyndale1537Bible: 'Tyndale',
   EnglishYLTBible: 'YLT',
+  GreekModern1904Bible: 'GreekModern1904',
+  Gujarati2017Bible: 'Gujarati2017',
+  KannadaIRVBible: 'KannadaIRV',
+  MalayalamBCSBible: 'MalayalamBCS',
+  MarathiIRVMARBible: 'MarathiIRVMAR',
+  Nepali2012Bible: 'Nepali2012',
+  PunjabiIRVBible: 'PunjabiIRV',
+  Tamil2017Bible: 'Tamil2017',
+  UrduIRVURDBible: 'Urdu',
 };
 
 /**
@@ -306,6 +314,15 @@ export const CURATED_TRANSLATION_SHORT_IDS = new Set([
   'Turkish',
   'Ukrainian',
   'Vietnamese',
+  'GreekModern1904',
+  'Gujarati2017',
+  'KannadaIRV',
+  'MalayalamBCS',
+  'MarathiIRVMAR',
+  'Nepali2012',
+  'PunjabiIRV',
+  'Tamil2017',
+  'Telugu',
 ]);
 
 const shouldIncludeCatalogEntry = (entry) => {

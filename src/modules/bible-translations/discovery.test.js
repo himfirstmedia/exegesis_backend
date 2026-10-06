@@ -12,7 +12,24 @@ describe('discoverBibles', () => {
     expect(entries.length).toBeLessThan(40);
     expect(entries.length).toBeGreaterThan(10);
     expect(entries.map((entry) => entry.shortId)).toEqual(
-      expect.arrayContaining(['Berean', 'KJV', 'ASV', 'French', 'Arabic', 'Spanish']),
+      expect.arrayContaining([
+        'Berean',
+        'KJV',
+        'ASV',
+        'French',
+        'Arabic',
+        'Spanish',
+        'Urdu',
+        'GreekModern1904',
+        'Tamil2017',
+        'Telugu',
+        'MarathiIRVMAR',
+        'Gujarati2017',
+        'KannadaIRV',
+        'MalayalamBCS',
+        'PunjabiIRV',
+        'Nepali2012',
+      ]),
     );
   });
 
@@ -104,5 +121,22 @@ describe('discoverBibles', () => {
     expect(chinese).toBeDefined();
     expect(chinese.language).toBe('zh');
     expect(chinese.shortId).toBe('ChineseSimplified');
+  });
+
+  test.each([
+    ['UrduIRVURDBible.xml', 'Urdu', 'ur'],
+    ['GreekModern1904Bible.xml', 'GreekModern1904', 'el'],
+    ['Tamil2017Bible.xml', 'Tamil2017', 'ta'],
+    ['TeluguBible.xml', 'Telugu', 'te'],
+    ['MarathiIRVMARBible.xml', 'MarathiIRVMAR', 'mr'],
+    ['Gujarati2017Bible.xml', 'Gujarati2017', 'gu'],
+    ['KannadaIRVBible.xml', 'KannadaIRV', 'kn'],
+    ['MalayalamBCSBible.xml', 'MalayalamBCS', 'ml'],
+    ['PunjabiIRVBible.xml', 'PunjabiIRV', 'pa'],
+    ['Nepali2012Bible.xml', 'Nepali2012', 'ne'],
+  ])('%s is available with stable ID %s', (fileName, shortId, language) => {
+    const entries = discoverBibles(XML_DIR);
+    const entry = entries.find((candidate) => candidate.fileName === fileName);
+    expect(entry).toMatchObject({ shortId, language });
   });
 });

@@ -93,6 +93,27 @@ describe('getVerse (real XML files)', () => {
     expect(verse.text.length).toBeGreaterThan(0);
   });
 
+  test.each([
+    'Urdu',
+    'GreekModern1904',
+    'Tamil2017',
+    'Telugu',
+    'MarathiIRVMAR',
+    'Gujarati2017',
+    'KannadaIRV',
+    'MalayalamBCS',
+    'PunjabiIRV',
+    'Nepali2012',
+  ])('fetches Genesis 1:1 from the %s XML', async (translationId) => {
+    const verse = await getVerse(translationId, 'Genesis', 1, 1);
+    expect(verse).toMatchObject({
+      bookName: 'Genesis',
+      chapterNumber: 1,
+      verseNumber: 1,
+    });
+    expect(verse.text.length).toBeGreaterThan(0);
+  });
+
   test('throws Translation not found for a translation with no XML file', async () => {
     await expect(getVerse('WEB', 'Genesis', 1, 1)).rejects.toThrow(
       'Translation not found',
