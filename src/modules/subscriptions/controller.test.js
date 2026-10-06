@@ -16,7 +16,7 @@ import {
 // (jest hoists these above the static import).
 jest.mock("stripe", () =>
   jest.fn().mockImplementation(() => ({
-    customers: { list: jest.fn() },
+    customers: { list: jest.fn(), retrieve: jest.fn() },
     subscriptions: {
       list: jest.fn(),
       retrieve: jest.fn(),
@@ -32,6 +32,7 @@ jest.mock("../../config/db.js", () => ({
     systemUser: {
       findUnique: jest.fn(),
       update: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     subscriptionTier: {
       findUnique: jest.fn(),
@@ -70,11 +71,20 @@ const getPrisma = () => {
   return require("../../config/db.js").prisma;
 };
 
-const getStripeInstance = () => {
-  // The instance the controller created at module load (first constructor call).
-  const StripeMock = require("stripe");
-  return StripeMock.mock.results[0].value;
-};
+// The controller constructs the Stripe client once at module load. Capture
+// that instance eagerly so clearAllMocks() (which wipes mock.results) cannot
+// throw away the only reference to it.
+const stripeInstance = require("stripe").mock.results[0].value;
+
+const getStripeInstance = () => stripeInstance;
+
+// The Stripe/Prisma mocks are module-level singletons, so call history would
+// otherwise leak between tests (e.g. checkout.sessions.create from one test
+// making the "not called" assertions in another fail). clearAllMocks resets
+// calls but keeps the per-test resolved implementations.
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 describe("getSubscriptionStatus — single-response guarantee", () => {
   test("free user with NO Stripe customers gets exactly one response (no double send)", async () => {
@@ -193,6 +203,82 @@ describe("getSubscriptionStatus — single-response guarantee", () => {
     expect(stripeInstance.customers.list).not.toHaveBeenCalled();
     expect(res.body.returnCode).toBe(200);
     expect(res.body.returnData.subscriptionTier).toBe("covenant_sower");
+  });
+});
+
+describe("createCheckoutSession — redirect URLs", () => {
+  const setupUser = () => {
+    const prisma = getPrisma();
+    prisma.systemUser.findUnique.mockResolvedValue({
+      id: "u1",
+      email: "reader@example.com",
+      firstName: "Reader",
+      lastName: "Example",
+      subscriptionTier: "free",
+      stripeCustomerId: "cus_1",
+      stripeSubscriptionId: null,
+    });
+    prisma.subscriptionTier.findUnique.mockResolvedValue({
+      id: "legacy_sower_monthly",
+      stripePriceId: "price_legacy_monthly",
+    });
+  };
+
+  test("builds a single-slash deep link for app requests (no url_invalid)", async () => {
+    setupUser();
+    const stripeInstance = getStripeInstance();
+    stripeInstance.customers.retrieve.mockResolvedValue({ id: "cus_1" });
+    stripeInstance.subscriptions.retrieve.mockResolvedValue(null);
+    stripeInstance.subscriptions.list.mockResolvedValue({ data: [] });
+    stripeInstance.checkout.sessions.create.mockResolvedValue({
+      id: "cs_1",
+      url: "https://checkout.stripe.com/cs_1",
+    });
+
+    const res = makeRes();
+    await createCheckoutSession(
+      {
+        headers: { "user-agent": "okhttp" }, // no origin → treated as app
+        body: { tier: "legacy_sower", interval: "month" },
+        user: { id: "u1" },
+      },
+      res,
+    );
+
+    const args = stripeInstance.checkout.sessions.create.mock.calls[0][0];
+    expect(args.success_url).toBe("exegesis://sower?subscription=success");
+    expect(args.cancel_url).toBe("exegesis://sower?subscription=cancelled");
+    expect(args.success_url).not.toContain(":///");
+  });
+
+  test("builds a https URL for web requests", async () => {
+    setupUser();
+    const stripeInstance = getStripeInstance();
+    stripeInstance.customers.retrieve.mockResolvedValue({ id: "cus_1" });
+    stripeInstance.subscriptions.retrieve.mockResolvedValue(null);
+    stripeInstance.subscriptions.list.mockResolvedValue({ data: [] });
+    stripeInstance.checkout.sessions.create.mockResolvedValue({
+      id: "cs_1",
+      url: "https://checkout.stripe.com/cs_1",
+    });
+
+    const res = makeRes();
+    await createCheckoutSession(
+      {
+        headers: { origin: "https://app.exegesisproject.org" },
+        body: { tier: "legacy_sower", interval: "month" },
+        user: { id: "u1" },
+      },
+      res,
+    );
+
+    const args = stripeInstance.checkout.sessions.create.mock.calls[0][0];
+    expect(args.success_url).toBe(
+      "https://app.exegesisproject.org/sower?subscription=success",
+    );
+    expect(args.cancel_url).toBe(
+      "https://app.exegesisproject.org/sower?subscription=cancelled",
+    );
   });
 });
 

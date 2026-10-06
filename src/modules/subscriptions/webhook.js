@@ -139,6 +139,14 @@ export const handleStripeWebhook = async (req, res) => {
           );
           break;
         }
+        // A soft-deleted account must never be re-activated by a late event;
+        // its subscription was cancelled and its customer anonymized.
+        if (user.accountStatus === "deleted") {
+          console.warn(
+            `[StripeWebhook] checkout.session.completed: ignoring deleted user ${userId}`,
+          );
+          break;
+        }
 
         const newTierId =
           billingInterval === "month" ? `${tier}_monthly` : tier;
@@ -260,13 +268,22 @@ export const handleStripeWebhook = async (req, res) => {
         });
         if (!user && data.customer) {
           user = await prisma.systemUser.findFirst({
-            where: { stripeCustomerId: String(data.customer) },
+            where: {
+              stripeCustomerId: String(data.customer),
+              accountStatus: { not: "deleted" },
+            },
           });
         }
 
         if (!user) {
           console.warn(
             `[StripeWebhook] customer.subscription.updated: no user found for sub ${subId}`,
+          );
+          break;
+        }
+        if (user.accountStatus === "deleted") {
+          console.warn(
+            `[StripeWebhook] customer.subscription.updated: ignoring deleted user ${user.id}`,
           );
           break;
         }
@@ -338,7 +355,10 @@ export const handleStripeWebhook = async (req, res) => {
               typeof sub.customer === "object" ? sub.customer?.id : sub.customer;
             if (customerId) {
               user = await prisma.systemUser.findFirst({
-                where: { stripeCustomerId: customerId },
+                where: {
+                  stripeCustomerId: customerId,
+                  accountStatus: { not: "deleted" },
+                },
               });
               if (user && user.stripeSubscriptionId !== subscriptionId) {
                 await prisma.systemUser.update({
@@ -360,6 +380,13 @@ export const handleStripeWebhook = async (req, res) => {
               e.message,
             );
           }
+        }
+
+        if (user && user.accountStatus === "deleted") {
+          console.warn(
+            `[StripeWebhook] invoice.payment_succeeded: ignoring deleted user ${user.id}`,
+          );
+          user = null;
         }
 
         if (user) {
@@ -405,6 +432,11 @@ export const handleStripeWebhook = async (req, res) => {
           user = await prisma.systemUser.findFirst({
             where: { stripeCustomerId: String(data.customer) },
           });
+        }
+
+        if (user && user.accountStatus === "deleted") {
+          // Already cancelled during account deletion — avoid re-touching.
+          break;
         }
 
         if (user) {

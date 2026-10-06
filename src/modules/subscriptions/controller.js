@@ -16,16 +16,24 @@ const isWebRequest = (req) => {
   return origin.startsWith("http://") || origin.startsWith("https://");
 };
 
+// Join a base with a path without duplicating slashes. Stripe rejects URLs
+// such as "exegesis:///sower" (triple slash) with a url_invalid error, so the
+// path's leading slashes must be stripped before appending to the base. A base
+// that already ends in "/" (e.g. the "exegesis://" scheme) must not get an
+// extra slash, otherwise the deep link becomes invalid.
+const joinUrl = (base, path) => {
+  const cleanPath = String(path || "").replace(/^\/+/, "");
+  return base.endsWith("/") ? `${base}${cleanPath}` : `${base}/${cleanPath}`;
+};
+
 const redirectUrl = (req, path, status) => {
-  if (isWebRequest(req)) {
-    const separator = path.includes("?") ? "&" : "?";
-    return `${FRONTEND_URL}${path}${separator}subscription=${status}`;
-  }
-  return `${APP_SCHEME}${path}?subscription=${status}`;
+  const separator = path.includes("?") ? "&" : "?";
+  const base = isWebRequest(req) ? joinUrl(FRONTEND_URL, path) : joinUrl(APP_SCHEME, path);
+  return `${base}${separator}subscription=${status}`;
 };
 
 const returnUrl = (req, path) =>
-  isWebRequest(req) ? `${FRONTEND_URL}${path}` : `${APP_SCHEME}${path}`;
+  isWebRequest(req) ? joinUrl(FRONTEND_URL, path) : joinUrl(APP_SCHEME, path);
 
 // ─── Tier ordering ────────────────────────────────────────────────────────────
 
@@ -686,6 +694,7 @@ export const getSubscriptionStatus = async (req, res) => {
         stripeCustomerId: true,
         stripeSubscriptionId: true,
         legacySowerSlot: true,
+        accountStatus: true,
       },
     });
 
@@ -701,7 +710,14 @@ export const getSubscriptionStatus = async (req, res) => {
     //   1. Normal flow: user has stripeCustomerId but webhook missed.
     //   2. Missing customer: search by email, may find multiple customers.
     //   3. Multiple subs: pick the highest tier (e.g. covenant_sower > legacy_sower).
-    if (user.subscriptionTier === "free" && req.user?.email) {
+    // Deleted accounts must never be reconciled: their Stripe customer was
+    // anonymized and their email tombstoned, so a fresh signup must not adopt
+    // a subscription from a previous, deleted account.
+    if (
+      user.accountStatus !== "deleted" &&
+      user.subscriptionTier === "free" &&
+      req.user?.email
+    ) {
       try {
         // Race the Stripe reconciliation against a 12s timeout so a slow
         // Stripe API never blocks the entire status response.

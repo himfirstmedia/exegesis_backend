@@ -38,7 +38,9 @@ model SystemUser {
   isLoggedIn                   Boolean            @default(false) @map("is_logged_in")
   sessionId                    String?            @map("session_id")
   userRole                     BigInt?            @map("user_role")
-  accountStatus                String             @default("active") @map("account_status") // active | disabled | suspended
+  accountStatus                String             @default("active") @map("account_status") // active | disabled | suspended | deleted
+  deletedAt                    DateTime?          @map("deleted_at")
+  deletedEmail                 String?            @map("deleted_email") // original email retained for billing/audit
   subscriptionTier             String             @default("free") @map("subscription_tier") // free | legacy_sower | covenant_sower
   accessExpiresAt              DateTime?          @map("access_expires_at")
   stripeCustomerId             String?            @unique @map("stripe_customer_id")

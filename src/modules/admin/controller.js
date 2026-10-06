@@ -502,6 +502,9 @@ export const getSubscribedUsers = async (req, res) => {
     // ── 3. Fetch all relevant DB users ────────────────────────────────────
     const dbUsers = await prisma.systemUser.findMany({
       where: {
+        // Deleted accounts retain their row/stripeCustomerId for billing audit
+        // but must never appear as active subscribers or be re-linked.
+        accountStatus: { not: "deleted" },
         OR: [
           { subscriptionTier: { not: "free" } },
           { stripeCustomerId: { not: null } },
@@ -618,9 +621,14 @@ export const getSubscribedUsers = async (req, res) => {
     for (const [customerId, stripeData] of stripeByCustomer.entries()) {
       if (dbCustomerIds.has(customerId)) continue;
 
-      // Try email match
+      // Try email match — never match a soft-deleted account.
       const dbMatch = stripeData.stripeEmail
-        ? await prisma.systemUser.findUnique({ where: { email: stripeData.stripeEmail } })
+        ? await prisma.systemUser.findFirst({
+            where: {
+              email: stripeData.stripeEmail,
+              accountStatus: { not: "deleted" },
+            },
+          })
         : null;
 
       // Auto-link if email matched but customer ID wasn't stored
@@ -733,9 +741,16 @@ export const syncStripeSubscribers = async (req, res) => {
 
       if (!email) continue;
 
-      // Find user by stripeCustomerId first, then by email
-      let user = await prisma.systemUser.findFirst({ where: { stripeCustomerId: customerId } });
-      if (!user) user = await prisma.systemUser.findUnique({ where: { email } });
+      // Find user by stripeCustomerId first, then by email. Soft-deleted accounts
+      // are excluded so a cancelled subscription cannot be re-adopted.
+      let user = await prisma.systemUser.findFirst({
+        where: { stripeCustomerId: customerId, accountStatus: { not: "deleted" } },
+      });
+      if (!user) {
+        user = await prisma.systemUser.findFirst({
+          where: { email, accountStatus: { not: "deleted" } },
+        });
+      }
 
       if (!user) {
         results.notFound.push({ email, customerId, tierId });

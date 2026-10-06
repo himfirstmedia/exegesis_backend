@@ -7,6 +7,9 @@ import { cache } from "../../services/cacheService.js";
 import { parseLocalDate, utcToday } from "../../utils/dates.js";
 import bcrypt from "bcryptjs";
 import emailTemplates from "../../utils/emailTemplates.js";
+import Stripe from "stripe";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 export const getUsersByAdmin = async (data, adminId) => {
   const { search, userId, page = 1, pageSize = 10 } = data;
@@ -145,6 +148,42 @@ export const deleteUser = async (data, adminId) => {
     return { status: 403, message: "You cannot delete your own account" };
   }
 
+  // ── End the billing relationship before removing access ───────────────────
+  // A deleted account must not leave a live subscription behind that a later
+  // signup (matched by the same email) could silently adopt. Cancel first.
+  if (user.stripeSubscriptionId) {
+    try {
+      await stripe.subscriptions.cancel(user.stripeSubscriptionId);
+    } catch (stripeErr) {
+      // Already cancelled or missing on Stripe — safe to continue.
+      console.warn(
+        `[Admin] Could not cancel subscription ${user.stripeSubscriptionId} for ${user.email}:`,
+        stripeErr.message,
+      );
+    }
+  }
+
+  // ── Anonymize the Stripe customer, but keep it ────────────────────────────
+  // Invoices/payment history must be retained for tax and accounting, so the
+  // customer record stays. We only scrub PII (GDPR erasure) and detach the
+  // user id so reconciliation can never re-link this subscription to a new
+  // account created with the same email.
+  if (user.stripeCustomerId) {
+    try {
+      await stripe.customers.update(user.stripeCustomerId, {
+        email: `deleted+${user.id}@exegesis.invalid`,
+        name: "Deleted user",
+        metadata: { userId: "", deleted: "true" },
+      });
+    } catch (stripeErr) {
+      console.warn(
+        `[Admin] Could not anonymize Stripe customer ${user.stripeCustomerId} for ${user.email}:`,
+        stripeErr.message,
+      );
+    }
+  }
+
+  // Clean up personal activity records (no billing value).
   await prisma.activity.deleteMany({ where: { userId: user.id } });
   await prisma.highlight.deleteMany({ where: { createdBy: user.id } });
   await prisma.favorite.deleteMany({ where: { createdBy: user.id } });
@@ -156,11 +195,52 @@ export const deleteUser = async (data, adminId) => {
   await prisma.message.deleteMany({ where: { createdBy: user.id } });
   await prisma.dailyVerse.deleteMany({ where: { createdBy: user.id } });
 
-  await prisma.systemUser.delete({ where: { id: user.id } });
+  // ── Soft-delete the user ──────────────────────────────────────────────────
+  // Keep the row (billing/subscription events reference it) but free the
+  // unique email so the person can register a fresh, independent account.
+  // The original email is preserved in deletedEmail for audit. The password is
+  // replaced with an unusable random hash so the token can never authenticate.
+  const unusablePassword = await bcrypt.hash(
+    generateRandomPassword(24),
+    10,
+  );
+  await prisma.systemUser.update({
+    where: { id: user.id },
+    data: {
+      accountStatus: "deleted",
+      status: false,
+      deletedAt: new Date(),
+      deletedEmail: user.email,
+      email: `deleted+${user.id}@exegesis.invalid`,
+      // Free the unique username too, so the person can re-register with it.
+      username: `deleted_${user.id}`,
+      password: unusablePassword,
+      sessionId: null,
+      isLoggedIn: false,
+      subscriptionTier: "free",
+      accessExpiresAt: null,
+      stripeSubscriptionId: null,
+    },
+  });
+
+  // Record the cancellation for the audit trail.
+  await prisma.subscriptionEvent.create({
+    data: {
+      userId: user.id,
+      eventType: "cancelled",
+      tier: "free",
+      stripeEventId: user.stripeSubscriptionId || null,
+      metadata: {
+        action: "account_deleted",
+        previousTier: user.subscriptionTier,
+        deletedBy: adminId,
+      },
+    },
+  });
 
   return {
     status: 200,
-    message: "User and all associated activity deleted successfully",
+    message: "User account deleted. Subscription cancelled and billing history retained.",
   };
 };
 

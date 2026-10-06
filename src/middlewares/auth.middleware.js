@@ -21,7 +21,7 @@ export const authenticate = async (req, res, next) => {
     const userStatus = await withDbRetry(() =>
       prisma.systemUser.findUnique({
         where: { id: decoded.id },
-        select: { status: true },
+        select: { status: true, accountStatus: true },
       }),
     );
 
@@ -29,7 +29,7 @@ export const authenticate = async (req, res, next) => {
       return res.status(401).json(formatApiResponse({ status: 401, message: "User not found" }));
     }
 
-    if (!userStatus.status) {
+    if (userStatus.accountStatus === "deleted" || !userStatus.status) {
       return res.status(403).json(formatApiResponse({ status: 403, message: "Account is disabled" }));
     }
 
