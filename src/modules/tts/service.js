@@ -453,6 +453,10 @@ const ELEVENLABS_MODEL = "eleven_multilingual_v2";
 // background prefetch windows to finish first.
 const TIMED_FORMAT = OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3;
 const WORK_POOL_SIZE = 2;
+const EDGE_SYNTHESIS_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.TTS_EDGE_SYNTHESIS_TIMEOUT_MS) || 45_000,
+);
 
 let _express = null; // { client, busy, voice } — high-priority only
 let _workPool = []; // up to WORK_POOL_SIZE background clients
@@ -522,7 +526,8 @@ const prepEntry = async (entry, voice) => {
 };
 
 const dropEntry = (entry) => {
-  if (entry === _express) {
+  const isExpress = entry === _express;
+  if (isExpress) {
     _express = null;
   } else {
     const idx = _workPool.indexOf(entry);
@@ -531,7 +536,7 @@ const dropEntry = (entry) => {
   closeClient(entry);
   // Refill asynchronously so surviving clients keep working while the
   // replacement socket connects in the background.
-  void recreateEntry(entry === _express);
+  void recreateEntry(isExpress);
 };
 
 const recreateEntry = async (isExpress) => {
@@ -864,9 +869,20 @@ const synthesizeEdge = async (
 
       const chunks = [];
       await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          const error = new Error("Edge TTS synthesis timed out");
+          audioStream.destroy(error);
+          reject(error);
+        }, EDGE_SYNTHESIS_TIMEOUT_MS);
         audioStream.on("data", (d) => chunks.push(d));
-        audioStream.on("end", resolve);
-        audioStream.on("error", reject);
+        audioStream.on("end", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        audioStream.on("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
       });
 
       const buf = Buffer.concat(chunks);
@@ -900,14 +916,26 @@ export const synthesizeWithTimings = async (
   voiceId = DEFAULT_EDGE_VOICE,
   speed = DEFAULT_TTS_SPEED,
   priority = "low",
+  providerLock = null,
 ) => {
-  if (getEffectiveTtsProvider() === "lordsbook") {
+  const requestedProvider =
+    providerLock === "lordsbook" || providerLock === "edge"
+      ? providerLock
+      : null;
+  const provider = requestedProvider || getEffectiveTtsProvider();
+
+  if (provider === "lordsbook") {
+    if (getTtsProvider() !== "lordsbook") {
+      throw new Error("Lordsbook is disabled on this server");
+    }
     try {
       return {
         audioBuffer: await synthesizeLordsbook(text, voiceId, speed, priority),
         wordOffsetsMs: [],
+        provider: "lordsbook",
       };
     } catch (error) {
+      if (requestedProvider) throw error;
       console.warn(
         `[TTS] Lordsbook timed synthesis failed; using Edge fallback: ${error.message}`,
       );
@@ -918,7 +946,10 @@ export const synthesizeWithTimings = async (
   for (const candidate of candidates) {
     const edgeVoice = edgeVoiceFromRequest(candidate);
     try {
-      return await synthesizeWithTimingsOnce(text, edgeVoice, speed, priority);
+      return {
+        ...(await synthesizeWithTimingsOnce(text, edgeVoice, speed, priority)),
+        provider: "edge",
+      };
     } catch (err) {
       if (edgeVoice === DEFAULT_EDGE_VOICE) throw err;
       console.warn(
@@ -971,13 +1002,22 @@ const synthesizeWithTimingsOnce = async (
       });
 
       const audioComplete = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          const error = new Error("Edge TTS synthesis timed out");
+          audioStream.destroy(error);
+          reject(error);
+        }, EDGE_SYNTHESIS_TIMEOUT_MS);
         audioStream.on("data", (chunk) => audioChunks.push(chunk));
         audioStream.on("end", () => {
+          clearTimeout(timer);
           audioEnded = true;
           resolveMeta(); // metadata stream never emits "end"; stop waiting once audio is done
           resolve();
         });
-        audioStream.on("error", reject);
+        audioStream.on("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
       });
 
       metadataStream?.on("data", (chunk) => {
@@ -997,8 +1037,8 @@ const synthesizeWithTimingsOnce = async (
       await metadataDone;
 
       const audioBuffer = Buffer.concat(audioChunks);
-      if (audioBuffer.length === 0)
-        throw new Error("Empty audio received from Edge TTS");
+      if (audioBuffer.length < 1_000)
+        throw new Error("Silent audio received from Edge TTS");
       return { audioBuffer, wordOffsetsMs };
     },
   );

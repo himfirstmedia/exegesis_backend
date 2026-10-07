@@ -1,9 +1,15 @@
 jest.mock("msedge-tts", () => {
-  const { Readable } = jest.requireActual("stream");
+  const { PassThrough, Readable } = jest.requireActual("stream");
   class FakeMsEdgeTTS {
     setMetadata() {}
     close() {}
-    toStream() {
+    toStream(text) {
+      if (text === "stalled stream") {
+        return {
+          audioStream: new PassThrough(),
+          metadataStream: Readable.from([]),
+        };
+      }
       return {
         audioStream: Readable.from([Buffer.alloc(2000, 1)]),
         metadataStream: Readable.from([]),
@@ -22,6 +28,7 @@ import {
   DEFAULT_EDGE_VOICE,
   DEFAULT_TTS_SPEED,
   synthesize,
+  synthesizeWithTimings,
   resetLordsbookBreaker,
 } from "./service.js";
 
@@ -68,6 +75,51 @@ describe("TTS voice defaults", () => {
   test("disabled Lordsbook flag keeps Edge even when legacy provider says Lordsbook", () => {
     process.env.TTS_PROVIDER = "lordsbook";
     expect(getStatus().provider).toBe("edge");
+  });
+
+  test("timed synthesis reports the provider used", async () => {
+    const result = await synthesizeWithTimings(
+      "In the beginning",
+      DEFAULT_EDGE_VOICE,
+      DEFAULT_TTS_SPEED,
+      "high",
+      "edge",
+    );
+
+    expect(result.provider).toBe("edge");
+    expect(result.audioBuffer.length).toBeGreaterThanOrEqual(1_000);
+  });
+
+  test("timed synthesis honors a locked disabled provider", async () => {
+    await expect(
+      synthesizeWithTimings(
+        "In the beginning",
+        "af_alloy",
+        DEFAULT_TTS_SPEED,
+        "high",
+        "lordsbook",
+      ),
+    ).rejects.toThrow("Lordsbook is disabled");
+  });
+
+  test("timed synthesis rejects a stalled Edge stream", async () => {
+    jest.useFakeTimers();
+    try {
+      const synthesis = synthesizeWithTimings(
+        "stalled stream",
+        DEFAULT_EDGE_VOICE,
+        DEFAULT_TTS_SPEED,
+        "high",
+        "edge",
+      );
+      const rejection = expect(synthesis).rejects.toThrow(
+        "Edge TTS synthesis timed out",
+      );
+      await jest.advanceTimersByTimeAsync(45_000);
+      await rejection;
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
@@ -176,6 +228,27 @@ describe("Lordsbook TTS breaker", () => {
     expect(voices.length).toBeGreaterThan(0);
     expect(voices.some((voice) => voice.source === "api")).toBe(true);
     expect(voices.some((voice) => voice.source === "edge")).toBe(false);
+  });
+
+  test("timed synthesis only falls back when the provider is not locked", async () => {
+    await expect(
+      synthesizeWithTimings(
+        "locked provider verse",
+        "bm_george",
+        1.0,
+        "high",
+        "lordsbook",
+      ),
+    ).rejects.toThrow("Upstream service unavailable");
+
+    const fallback = await synthesizeWithTimings(
+      "unlocked provider verse",
+      "bm_george",
+      1.0,
+      "high",
+    );
+    expect(fallback.provider).toBe("edge");
+    expect(fallback.audioBuffer.length).toBeGreaterThanOrEqual(1_000);
   });
 
   test("opens the circuit after repeated failures and stops calling the upstream", async () => {
