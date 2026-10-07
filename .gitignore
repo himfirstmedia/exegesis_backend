@@ -19,6 +19,10 @@ bun.lockb
 # Local development files
 /local-dev/*    
 
+# Locally stored uploads (fallback when R2 is unconfigured).
+# Production media lives in Cloudflare R2.
+/uploads/
+
 # VSCode settings
 .vscode/*
 

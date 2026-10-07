@@ -15,15 +15,15 @@ export const toAbsoluteMediaUrl = (url, baseUrl) => {
 
 /**
  * Recursively absolutize media paths inside API payloads.
- * Only string values starting with "/uploads/" (the media root served by the
- * backend) are rewritten; everything else — including already-absolute URLs,
+ * Only string values starting with "/uploads/" (local media root) or "/media/"
+ * (R2 proxy root) are rewritten; everything else — including already-absolute URLs,
  * bible text, timestamps, BigInt-serialized numbers — passes through unchanged.
  * Subtrees where nothing was rewritten are returned as-is (same reference), so
  * large media-free payloads (bible chapters, search results) aren't re-allocated.
  */
 export const absolutizeMediaUrls = (value, baseUrl) => {
   if (typeof value === "string") {
-    return value.startsWith("/uploads/")
+    return value.startsWith("/uploads/") || value.startsWith("/media/")
       ? toAbsoluteMediaUrl(value, baseUrl)
       : value;
   }
@@ -57,6 +57,8 @@ export const absolutizeMediaUrls = (value, baseUrl) => {
  * internal hop. When unavailable, the URL is left relative (safe fallback).
  */
 const getBaseUrl = (req) => {
+  const configuredBaseUrl = (process.env.BACKEND_URL || "").replace(/\/+$/, "");
+  if (configuredBaseUrl) return configuredBaseUrl;
   const headers = req.headers || {};
   const forwardedProto = headers["x-forwarded-proto"];
   const protocol =
@@ -68,7 +70,7 @@ const getBaseUrl = (req) => {
     typeof forwardedHost === "string"
       ? forwardedHost.split(",")[0].trim()
       : req.get?.("host");
-  return host ? `${protocol}://${host}` : "";
+  return host && /^(?:http|https)$/.test(protocol) ? `${protocol}://${host}` : "";
 };
 
 /**
@@ -111,4 +113,3 @@ export const absoluteMediaUrl = (req, res, next) => {
   };
   next();
 };
-

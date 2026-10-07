@@ -20,6 +20,7 @@
     "seed-strongs": "node prisma/seed-strongs.js",
     "seed-verse-resources": "node prisma/seed-verse-resources.js",
     "seed-journal": "node prisma/seed-journal.js",
+    "migrate:uploads": "node prisma/migrate-uploads-to-r2.js",
     "postinstall": "npx prisma generate"
   },
   "keywords": [],
@@ -27,6 +28,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1146.0",
     "@prisma/client": "^6.19.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",

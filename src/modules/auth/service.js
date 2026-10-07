@@ -2,21 +2,19 @@ import { prisma } from "../../config/db.js";
 import { withDbRetry } from "../../utils/dbRetry.js";
 import bcrypt from "bcryptjs";
 import Stripe from "stripe";
-import fs from "fs";
-import path from "path";
 import crypto from "crypto";
-import { fileURLToPath } from "url";
 import { generateToken, verifyToken, generateSixDigitCode, serializeBigInt } from "../../utils/helpers.js";
 import { hashCode, codeMatches } from "../../utils/codes.js";
 import { validatePassword, PASSWORD_REQUIREMENTS_MESSAGE } from "../../utils/passwordPolicy.js";
 import { emailTemplates } from "../../utils/emailTemplates.js";
 import { OAuth2Client } from "google-auth-library";
 import { decodeImageUpload } from "./imageUpload.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// backend/uploads — served statically at /uploads
-const COVERS_DIR = path.join(__dirname, "../../../uploads/covers");
-const PROFILE_PHOTOS_DIR = path.join(__dirname, "../../../uploads/profile-photos");
+import {
+  uploadObject,
+  deleteObject,
+  deleteStoredMedia,
+  contentTypeForExtension,
+} from "../../services/objectStorage.js";
 
 
 
@@ -705,9 +703,6 @@ export const updateCurrentUser = async (userId, data) => {
   if (data.emergencyContactName !== undefined) updateData.emergencyContactName = data.emergencyContactName;
   if (data.emergencyContactPhone !== undefined) updateData.emergencyContactPhone = data.emergencyContactPhone;
   if (data.emergencyContactRelationship !== undefined) updateData.emergencyContactRelationship = data.emergencyContactRelationship;
-  if (data.profilePhotoUrl !== undefined) updateData.profilePhotoUrl = data.profilePhotoUrl;
-  if (data.coverPhotoUrl !== undefined) updateData.coverPhotoUrl = data.coverPhotoUrl;
-
   updateData.updatedOn = new Date();
   updateData.updatedBy = user.id;
 
@@ -724,26 +719,48 @@ export const uploadCoverPhoto = async (userId, data) => {
   const decoded = decodeImageUpload(data?.coverPhoto, "coverPhoto");
   if (decoded.error) return decoded.error;
   const { buffer, extension: ext } = decoded;
-  const filename = `${crypto.randomUUID()}.${ext}`;
+  const key = `covers/${crypto.randomUUID()}.${ext}`;
 
+  const user = await prisma.systemUser.findUnique({
+    where: { id: userId },
+    select: { coverPhotoUrl: true },
+  });
+  if (!user) return { status: 404, message: "User not found" };
+
+  let stored;
   try {
-    fs.mkdirSync(COVERS_DIR, { recursive: true });
-    fs.writeFileSync(path.join(COVERS_DIR, filename), buffer);
+    stored = await uploadObject({
+      key,
+      buffer,
+      contentType: contentTypeForExtension(ext),
+    });
   } catch (error) {
-    console.error("Cover photo write failed:", error);
+    console.error("Cover photo upload failed:", error);
     return { status: 500, message: "Failed to store cover photo" };
   }
 
-  const coverPhotoUrl = `/uploads/covers/${filename}`;
+  const coverPhotoUrl = stored.url;
 
-  const updatedUser = await prisma.systemUser.update({
-    where: { id: userId },
-    data: {
-      coverPhotoUrl,
-      updatedOn: new Date(),
-      updatedBy: userId,
-    },
-  });
+  let updatedUser;
+  try {
+    updatedUser = await prisma.systemUser.update({
+      where: { id: userId },
+      data: {
+        coverPhotoUrl,
+        updatedOn: new Date(),
+        updatedBy: userId,
+      },
+    });
+  } catch (error) {
+    await deleteObject(stored.key, stored.storage).catch((cleanupError) =>
+      console.error("Failed to clean up unreferenced cover photo:", cleanupError),
+    );
+    throw error;
+  }
+
+  await deleteStoredMedia(user.coverPhotoUrl).catch((error) =>
+    console.error("Failed to delete previous cover photo:", error),
+  );
 
   return {
     status: 200,
@@ -756,25 +773,47 @@ export const uploadProfilePhoto = async (userId, data) => {
   const decoded = decodeImageUpload(data?.profilePhoto, "profilePhoto");
   if (decoded.error) return decoded.error;
   const { buffer, extension } = decoded;
-  const filename = `${crypto.randomUUID()}.${extension}`;
+  const key = `profile-photos/${crypto.randomUUID()}.${extension}`;
 
+  const user = await prisma.systemUser.findUnique({
+    where: { id: userId },
+    select: { profilePhotoUrl: true },
+  });
+  if (!user) return { status: 404, message: "User not found" };
+
+  let stored;
   try {
-    fs.mkdirSync(PROFILE_PHOTOS_DIR, { recursive: true });
-    fs.writeFileSync(path.join(PROFILE_PHOTOS_DIR, filename), buffer);
+    stored = await uploadObject({
+      key,
+      buffer,
+      contentType: contentTypeForExtension(extension),
+    });
   } catch (error) {
-    console.error("Profile photo write failed:", error);
+    console.error("Profile photo upload failed:", error);
     return { status: 500, message: "Failed to store profile photo" };
   }
 
-  const profilePhotoUrl = `/uploads/profile-photos/${filename}`;
-  const updatedUser = await prisma.systemUser.update({
-    where: { id: userId },
-    data: {
-      profilePhotoUrl,
-      updatedOn: new Date(),
-      updatedBy: userId,
-    },
-  });
+  const profilePhotoUrl = stored.url;
+  let updatedUser;
+  try {
+    updatedUser = await prisma.systemUser.update({
+      where: { id: userId },
+      data: {
+        profilePhotoUrl,
+        updatedOn: new Date(),
+        updatedBy: userId,
+      },
+    });
+  } catch (error) {
+    await deleteObject(stored.key, stored.storage).catch((cleanupError) =>
+      console.error("Failed to clean up unreferenced profile photo:", cleanupError),
+    );
+    throw error;
+  }
+
+  await deleteStoredMedia(user.profilePhotoUrl).catch((error) =>
+    console.error("Failed to delete previous profile photo:", error),
+  );
 
   return {
     status: 200,

@@ -36,6 +36,9 @@ jest.mock("../../config/db.js", () => ({
 }));
 
 jest.mock("../../services/cacheService.js", () => ({ cache: {} }));
+jest.mock("../../services/objectStorage.js", () => ({
+  deleteStoredMedia: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock("../../utils/emailTemplates.js", () => ({
   __esModule: true,
   default: {},
@@ -45,6 +48,7 @@ const { deleteUser } = require("./service.js");
 // Capture the Stripe instance the service constructed at module load.
 const stripeInstance = require("stripe").default.mock.results[0].value;
 const { prisma: mockPrisma } = require("../../config/db.js");
+const { deleteStoredMedia } = require("../../services/objectStorage.js");
 
 const payingUser = {
   id: "u1",
@@ -53,6 +57,8 @@ const payingUser = {
   subscriptionTier: "legacy_sower_monthly",
   stripeCustomerId: "cus_1",
   stripeSubscriptionId: "sub_1",
+  profilePhotoUrl: "https://cdn.example.com/profile-photo.jpg",
+  coverPhotoUrl: "/media/covers/cover.jpg",
 };
 
 describe("deleteUser — billing-safe soft delete", () => {
@@ -123,6 +129,21 @@ describe("deleteUser — billing-safe soft delete", () => {
         }),
       }),
     );
+  });
+
+  test("clears and deletes profile media", async () => {
+    await deleteUser({ username: "reader" }, "admin-1");
+
+    expect(mockPrisma.systemUser.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          profilePhotoUrl: null,
+          coverPhotoUrl: null,
+        }),
+      }),
+    );
+    expect(deleteStoredMedia).toHaveBeenCalledWith(payingUser.profilePhotoUrl);
+    expect(deleteStoredMedia).toHaveBeenCalledWith(payingUser.coverPhotoUrl);
   });
 
   test("refuses to delete the admin's own account", async () => {

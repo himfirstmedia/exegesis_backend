@@ -8,6 +8,7 @@ import { parseLocalDate, utcToday } from "../../utils/dates.js";
 import bcrypt from "bcryptjs";
 import emailTemplates from "../../utils/emailTemplates.js";
 import Stripe from "stripe";
+import { deleteStoredMedia } from "../../services/objectStorage.js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -220,7 +221,20 @@ export const deleteUser = async (data, adminId) => {
       subscriptionTier: "free",
       accessExpiresAt: null,
       stripeSubscriptionId: null,
+      profilePhotoUrl: null,
+      coverPhotoUrl: null,
     },
+  });
+
+  await Promise.allSettled([
+    deleteStoredMedia(user.profilePhotoUrl),
+    deleteStoredMedia(user.coverPhotoUrl),
+  ]).then((results) => {
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.error("Failed to delete media for deleted account:", result.reason);
+      }
+    }
   });
 
   // Record the cancellation for the audit trail.

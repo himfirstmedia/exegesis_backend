@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+import { pipeline } from "stream/promises";
 import { config } from "dotenv";
 import { connectDB, disconnectDB } from "./config/db.js";
 import authRouter from "./modules/auth/route.js";
@@ -31,6 +32,11 @@ import textToTextTranslationRouter from "./modules/text-to-text-translation/rout
 import pushRouter from "./modules/push/route.js";
 import landingRouter from "./modules/landing/route.js";
 import { handleStripeWebhook } from "./modules/subscriptions/webhook.js";
+import {
+  getObjectStream,
+  isMediaObjectKey,
+  validateObjectStorageConfig,
+} from "./services/objectStorage.js";
 
 config();
 
@@ -38,6 +44,13 @@ config();
 // insecure default. Tokens signed with a known default are forgeable.
 if (!process.env.JWT_SECRET) {
   console.error("FATAL: JWT_SECRET is not set. Refusing to start.");
+  process.exit(1);
+}
+
+try {
+  validateObjectStorageConfig();
+} catch (error) {
+  console.error(`FATAL: ${error.message}`);
   process.exit(1);
 }
 
@@ -94,6 +107,35 @@ app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 // Serve uploaded cover photos (backend/uploads) at /uploads
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+
+// Proxy R2 objects that have no public bucket URL. Objects uploaded to R2 while
+// R2_PUBLIC_BASE_URL is unset resolve to /media/<key>; this streams them back
+// through the server without exposing bucket credentials.
+app.get(/^\/media\/(.+)$/, async (req, res) => {
+  const key = req.params[0];
+  if (!isMediaObjectKey(key)) {
+    return res.status(404).json({ status: 404, message: "Not found" });
+  }
+  try {
+    const object = await getObjectStream(key);
+    if (!object) return res.status(404).json({ status: 404, message: "Not found" });
+    if (object.contentType) res.setHeader("Content-Type", object.contentType);
+    if (object.contentLength !== undefined) {
+      res.setHeader("Content-Length", object.contentLength);
+    }
+    res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+    await pipeline(object.body, res);
+  } catch (error) {
+    console.error("Media proxy error:", error?.message || error);
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    const notFound =
+      error?.name === "NoSuchKey" || error?.$metadata?.httpStatusCode === 404;
+    res.status(notFound ? 404 : 502).end();
+  }
+});
 
 // Serve static assets (e.g. /assets/logo.png used in email templates)
 app.use(
