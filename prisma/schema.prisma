@@ -70,6 +70,8 @@ model SystemUser {
   userQuizAnswers              UserQuizAnswer[]
   triviaAnswers                TriviaAnswer[]
   verifications                Verification[]
+  supportTickets               SupportTicket[]
+  supportMessages              SupportMessage[]
 
   @@map("system_users")
 }
@@ -936,4 +938,49 @@ model BookPrologue {
   updatedOn         DateTime @updatedAt @map("updated_on")
 
   @@map("book_prologues")
+}
+
+// ─── Support (user complaints / messages to admins) ──────────────────────────
+// A ticket is a conversation thread. The first message is the complaint the
+// user submits; every reply (user or admin) is a SupportMessage row, so the
+// whole history lives in one ordered list and either side can read it.
+model SupportTicket {
+  id            BigInt    @id @default(autoincrement())
+  ticketCode    String    @unique @map("ticket_code")
+  userId        String    @map("user_id")
+  subject       String
+  category      String    @default("other") // account | bible | content | subscription | technical | suggestion | other
+  priority      String    @default("normal") // low | normal | high
+  status        String    @default("open") // open | in_progress | resolved | closed
+  deviceInfo    String?   @map("device_info")
+  adminUnread   Boolean   @default(true) @map("admin_unread")
+  userUnread    Boolean   @default(false) @map("user_unread")
+  lastMessageAt DateTime  @default(now()) @map("last_message_at")
+  resolvedAt    DateTime? @map("resolved_at")
+  resolvedBy    String?   @map("resolved_by")
+  createdOn     DateTime  @default(now()) @map("created_on")
+  updatedOn     DateTime  @updatedAt @map("updated_on")
+
+  user          SystemUser      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages      SupportMessage[]
+
+  @@index([userId, lastMessageAt])
+  @@index([status, lastMessageAt])
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id         BigInt   @id @default(autoincrement())
+  ticketId   BigInt   @map("ticket_id")
+  senderId   String   @map("sender_id")
+  senderRole String   @map("sender_role") // user | admin
+  body       String   @db.Text
+  attachment String?
+  createdOn  DateTime @default(now()) @map("created_on")
+
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender     SystemUser    @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdOn])
+  @@map("support_messages")
 }
