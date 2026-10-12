@@ -15,6 +15,7 @@ const MODULE_DIR = (() => {
   }
 })();
 const XML_DIR = path.join(MODULE_DIR, 'Holy-Bible-XML-Format');
+const XML_CACHE_VERSION = 'v3';
 
 // Persisted precomputed books/chapters metadata (books, chapter counts, verse
 // counts). Built once per translation by scanning the XML, then written to disk
@@ -22,6 +23,7 @@ const XML_DIR = path.join(MODULE_DIR, 'Holy-Bible-XML-Format');
 const BOOKS_INDEX_DIR = path.join(MODULE_DIR, 'index');
 const booksIndexPromise = new Map(); // fullId -> Promise<books[]>
 const booksIndexLoaded = new Map();  // fullId -> books[] (cached copy)
+const BOOKS_INDEX_VERSIONS = { BengaliBible: XML_CACHE_VERSION };
 
 const readBooksIndexFromDisk = (filePath) => {
   try {
@@ -38,7 +40,9 @@ const getPrecomputedBooks = async (id, buildFn) => {
   if (booksIndexLoaded.has(fullId)) return booksIndexLoaded.get(fullId);
   if (booksIndexPromise.has(fullId)) return booksIndexPromise.get(fullId);
 
-  const filePath = path.join(BOOKS_INDEX_DIR, `${fullId}.books.json`);
+  const indexVersion = BOOKS_INDEX_VERSIONS[fullId];
+  const fileName = `${fullId}${indexVersion ? `.${indexVersion}` : ''}.books.json`;
+  const filePath = path.join(BOOKS_INDEX_DIR, fileName);
   const onDisk = readBooksIndexFromDisk(filePath);
   if (onDisk) {
     booksIndexLoaded.set(fullId, onDisk);
@@ -211,7 +215,8 @@ export const TRANSLATION_DISPLAY_NAMES = {
   'RSV': { name: 'Revised Standard Version', year: '1971' },
   'TL': { name: 'The Living Bible', year: '1971' },
   'Tyndale': { name: 'Tyndale Bible', year: '1537' },
-  'YLT': { name: "Young's Literal Translation", year: '1898' }
+  'YLT': { name: "Young's Literal Translation", year: '1898' },
+  'Bengali': { name: 'Indian Revised Version - Bengali', year: '2019' },
 };
 
 const DISPLAY_ABBREVIATIONS = {
@@ -224,6 +229,7 @@ const DISPLAY_ABBREVIATIONS = {
   Passion: 'TPT',
   TL: 'TLB',
   Tyndale: 'TYNDALE',
+  Bengali: 'IRV-BEN',
 };
 
 const getCatalogVersionCode = (entry) => {
@@ -480,17 +486,18 @@ const extractChapterXml = (bookXml, chapterNumber) => {
   return match[0];
 };
 
+const getVerseText = (verse) => {
+  if (typeof verse === 'string') return verse;
+  return typeof verse?._ === 'string' ? verse._ : '';
+};
+
 const parseChapterVerses = async (chapterXml) => {
   const parsed = await parseXml(chapterXml);
   const chapter = parsed.chapter;
   const verses = Array.isArray(chapter.verse) ? chapter.verse : [chapter.verse];
   return verses.filter(Boolean).map((verse) => ({
     verseNumber: parseInt(verse.$.number),
-    text: typeof verse === 'string'
-      ? verse
-      : typeof verse._ === 'string'
-        ? verse._
-        : '',
+    text: getVerseText(verse),
   }));
 };
 
@@ -581,7 +588,7 @@ const findChapter = (book, chapterNumber) => {
 };
 
 export const getAllTranslations = async () => {
-  const cached = await cache.get('bible', 'translations:all:v2');
+  const cached = await cache.get('bible', `translations:all:${XML_CACHE_VERSION}`);
   if (cached) return cached;
 
   const entries = buildCatalog();
@@ -601,12 +608,12 @@ export const getAllTranslations = async () => {
     };
   });
 
-  await cache.set('bible', 'translations:all:v2', translations);
+  await cache.set('bible', `translations:all:${XML_CACHE_VERSION}`, translations);
   return translations;
 };
 
 export const getTranslationInfo = async (id) => {
-  const cached = await cache.get('bible', `translation:${id}`);
+  const cached = await cache.get('bible', `translation:${XML_CACHE_VERSION}:${id}`);
   if (cached) return cached;
 
   const parsed = await getParsedBible(id);
@@ -617,18 +624,18 @@ export const getTranslationInfo = async (id) => {
     id: shortId,
     name: bible.$.translation || bible.$.name || shortId,
     shortName: shortId,
-    description: bible.$.title || null,
-    copyright: bible.$.status || null,
+    description: bible.$.title || bible.$.info || null,
+    copyright: bible.$.status || bible.$.info || null,
     link: bible.$.link || null
   };
 
-  await cache.set('bible', `translation:${id}`, result);
+  await cache.set('bible', `translation:${XML_CACHE_VERSION}:${id}`, result);
   return result;
 };
 
 export const getBooks = async (id) => {
   const fullId = toFullId(id);
-  const cacheKey = `books:${fullId}`;
+  const cacheKey = `books:${XML_CACHE_VERSION}:${fullId}`;
   const cached = await cache.get('bible', cacheKey);
   if (cached) return cached;
 
@@ -643,7 +650,7 @@ export const getBooks = async (id) => {
 
 export const getBooksWithMaxChapters = async (id) => {
   const fullId = toFullId(id);
-  const cacheKey = `books:${fullId}:with-max`;
+  const cacheKey = `books:${XML_CACHE_VERSION}:${fullId}:with-max`;
   const cached = await cache.get('bible', cacheKey);
   if (cached) return cached;
 
@@ -660,7 +667,7 @@ export const getChapters = async (id, bookName) => {
   const context = resolveBookContext(id, bookName);
   const { bookNumber } = context;
 
-  const cacheKey = `chapters:${context.fullId}:${context.bookName}`;
+  const cacheKey = `chapters:${XML_CACHE_VERSION}:${context.fullId}:${context.bookName}`;
   const cached = await cache.get('bible', cacheKey);
   if (cached) return cached;
 
@@ -692,7 +699,7 @@ export const getVerses = async (id, bookName, chapterNumber) => {
     throw new Error('Invalid chapter number');
   }
 
-  const cacheKey = `verses:v2:${context.fullId}:${context.bookName}:${numericChapter}`;
+  const cacheKey = `verses:${XML_CACHE_VERSION}:${context.fullId}:${context.bookName}:${numericChapter}`;
   const cached = await cache.get('bible', cacheKey);
   if (cached) return cached;
 
@@ -754,7 +761,7 @@ export const searchVerses = async (id, query, limit = 50) => {
         const chapterVerses = Array.isArray(chapter.verse) ? chapter.verse : [chapter.verse];
         
         for (const verse of chapterVerses) {
-          const text = typeof verse === 'string' ? verse : (verse._ || verse);
+          const text = getVerseText(verse);
           
           if (text && text.toLowerCase().includes(searchLower)) {
             results.push({

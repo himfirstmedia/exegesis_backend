@@ -4,6 +4,8 @@ import {
   getVerse,
   getVerses,
   getVersesBatch,
+  getBibleMetadata,
+  searchVerses,
   getBooksWithMaxChapters,
   getChapters,
   getAllTranslations,
@@ -48,6 +50,7 @@ describe('catalog presentation', () => {
     const catalog = getCatalog();
     const kjv = catalog.find((entry) => entry.id === 'KJV');
     const berean = catalog.find((entry) => entry.id === 'Berean');
+    const bengali = catalog.find((entry) => entry.id === 'Bengali');
 
     expect(kjv).toMatchObject({
       name: 'King James Version (KJV)',
@@ -58,6 +61,11 @@ describe('catalog presentation', () => {
       name: 'Berean Standard Bible (BSB)',
       abbreviation: 'BSB',
       fileName: 'BSB.xml',
+    });
+    expect(bengali).toMatchObject({
+      name: 'Indian Revised Version - Bengali (IRV-BEN)',
+      abbreviation: 'IRV-BEN',
+      year: '2019',
     });
   });
 });
@@ -181,7 +189,20 @@ describe('fast XML reader paths', () => {
     });
     expect(chapters[0].verses.length).toBeGreaterThan(0);
     expect(chapters[0].verses.every((verse) => typeof verse.text === 'string')).toBe(true);
-    expect(chapters[0].verses.find((verse) => verse.verseNumber === 14)?.text).toBe('');
+    expect(chapters[0].verses.find((verse) => verse.verseNumber === 14)?.text.length).toBeGreaterThan(0);
+  });
+
+  test('reports a complete Bengali canon', async () => {
+    const metadata = await getBibleMetadata('Bengali');
+
+    expect(metadata.bookCount).toBe(66);
+    expect(metadata.chapterCount).toBe(1189);
+  });
+
+  test('search safely skips empty Bengali verse nodes', async () => {
+    await expect(
+      searchVerses('Bengali', 'definitely-not-present-in-scripture', 5),
+    ).resolves.toEqual([]);
   });
 });
 
