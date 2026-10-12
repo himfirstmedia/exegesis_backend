@@ -170,6 +170,19 @@ describe('fast XML reader paths', () => {
       verses: [],
     });
   });
+
+  test('batch reads an Old Testament chapter from the Bengali XML', async () => {
+    const chapters = await getVersesBatch('Bengali', 'Joshua', [1]);
+
+    expect(chapters[0]).toMatchObject({
+      bookNumber: 6,
+      bookName: 'Joshua',
+      chapterNumber: 1,
+    });
+    expect(chapters[0].verses.length).toBeGreaterThan(0);
+    expect(chapters[0].verses.every((verse) => typeof verse.text === 'string')).toBe(true);
+    expect(chapters[0].verses.find((verse) => verse.verseNumber === 14)?.text).toBe('');
+  });
 });
 
 describe('getAllTranslations', () => {

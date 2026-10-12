@@ -486,7 +486,11 @@ const parseChapterVerses = async (chapterXml) => {
   const verses = Array.isArray(chapter.verse) ? chapter.verse : [chapter.verse];
   return verses.filter(Boolean).map((verse) => ({
     verseNumber: parseInt(verse.$.number),
-    text: typeof verse === 'string' ? verse : (verse._ || verse),
+    text: typeof verse === 'string'
+      ? verse
+      : typeof verse._ === 'string'
+        ? verse._
+        : '',
   }));
 };
 
@@ -688,7 +692,7 @@ export const getVerses = async (id, bookName, chapterNumber) => {
     throw new Error('Invalid chapter number');
   }
 
-  const cacheKey = `verses:${context.fullId}:${context.bookName}:${numericChapter}`;
+  const cacheKey = `verses:v2:${context.fullId}:${context.bookName}:${numericChapter}`;
   const cached = await cache.get('bible', cacheKey);
   if (cached) return cached;
 
