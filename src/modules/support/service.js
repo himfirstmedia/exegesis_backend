@@ -4,9 +4,18 @@
 // the user submits, every later row is a reply from either side. Both the user
 // app and the admin dashboard read from the same thread, so there is exactly
 // one history per issue.
+import crypto from "crypto";
 import { prisma } from "../../config/db.js";
 import { serializeBigInt } from "../../utils/helpers.js";
 import { withDbRetry } from "../../utils/dbRetry.js";
+import {
+  contentTypeForExtension,
+  storedMediaLocation,
+  uploadObject,
+} from "../../services/objectStorage.js";
+import { emailTemplates } from "../../utils/emailTemplates.js";
+import { sendToUsers } from "../push/service.js";
+import { decodeAttachmentUpload, safeAttachmentName } from "./attachmentUpload.js";
 
 export const SUPPORT_CATEGORIES = [
   "account",
@@ -31,6 +40,7 @@ const LIMITS = {
   bodyMin: 10,
   bodyMax: 4000,
   deviceInfoMax: 300,
+  attachmentNameMax: 120,
 };
 
 const makeTicketCode = () => {
@@ -57,9 +67,90 @@ const summarySelect = {
   messages: {
     orderBy: { createdOn: "desc" },
     take: 1,
-    select: { body: true, senderRole: true, createdOn: true },
+    select: {
+      body: true,
+      senderRole: true,
+      createdOn: true,
+      attachment: true,
+      attachmentName: true,
+    },
   },
   _count: { select: { messages: true } },
+};
+
+/**
+ * Attachments must already live in our own storage — a client cannot point a
+ * message at an arbitrary external URL.
+ */
+const normalizeAttachment = (attachment, attachmentName) => {
+  if (!attachment) return { attachment: null, attachmentName: null };
+  const stored = storedMediaLocation(String(attachment));
+  if (!stored) return { error: "Attachment must be uploaded first." };
+  const name = attachmentName
+    ? safeAttachmentName(attachmentName, "file").slice(0, LIMITS.attachmentNameMax)
+    : null;
+  return { attachment: String(attachment), attachmentName: name };
+};
+
+// ─── Admin notifications ─────────────────────────────────────────────────────
+// Never allowed to break a reader's send: failures are logged and swallowed.
+
+const getAdminContacts = async () => {
+  const configured = String(process.env.SUPPORT_ADMIN_EMAILS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const admins = await withDbRetry(() =>
+    prisma.systemUser.findMany({
+      where: { userRole: 1, status: true, accountStatus: "active" },
+      select: { id: true, email: true },
+    }),
+  );
+  const ids = admins.map((admin) => admin.id);
+  const emails = new Set(admins.map((admin) => admin.email).filter(Boolean));
+  configured.forEach((email) => emails.add(email));
+  return { ids, emails: [...emails] };
+};
+
+export const notifyAdminsOfNewTicket = async (ticket) => {
+  try {
+    const { ids, emails } = await getAdminContacts();
+    if (ids.length === 0 && emails.length === 0) return;
+
+    const adminUrl = `${(process.env.CLIENT_URL || "https://exegesisproject.org").replace(/\/+$/, "")}/admin/support`;
+    const template = emailTemplates.newSupportTicket({
+      ticket,
+      reporter: ticket.user,
+      adminUrl,
+    });
+
+    for (const recipient of emails) {
+      await withDbRetry(() =>
+        prisma.message.create({
+          data: {
+            message: template.html,
+            recipient,
+            subject: template.subject,
+            status: "PENDING",
+            sendCount: 0n,
+            createdBy: ticket.userId,
+            createdOn: new Date(),
+          },
+        }),
+      );
+    }
+
+    if (ids.length > 0) {
+      await sendToUsers(ids, {
+        title: `Support: ${ticket.subject}`.slice(0, 120),
+        body: String(ticket.messages?.[0]?.body || "").slice(0, 180),
+        data: { link: adminUrl, ticketId: String(ticket.id) },
+      });
+    }
+  } catch (error) {
+    console.error("[Support] Failed to notify admins:", error.message);
+  }
 };
 
 const serializeTicketSummary = (ticket) => {
@@ -117,6 +208,42 @@ const findTicketOrFail = async (ticketId) => {
   );
 };
 
+// ─── Attachments ─────────────────────────────────────────────────────────────
+// Screenshots and PDFs are uploaded first (base64 → object storage), then the
+// returned URL is attached to the message on create/reply.
+
+export const uploadAttachment = async (data) => {
+  const decoded = decodeAttachmentUpload(
+    data?.attachment ?? data?.file ?? data?.data,
+    data?.fileName ?? data?.name,
+  );
+  if (decoded.error) return decoded.error;
+
+  const key = `support/${crypto.randomUUID()}.${decoded.extension}`;
+  let stored;
+  try {
+    stored = await uploadObject({
+      key,
+      buffer: decoded.buffer,
+      contentType: contentTypeForExtension(decoded.extension),
+    });
+  } catch (error) {
+    console.error("Support attachment upload failed:", error);
+    return { status: 500, message: "Failed to store the attachment" };
+  }
+
+  return {
+    status: 201,
+    message: "Attachment uploaded",
+    data: {
+      url: stored.url,
+      name: decoded.name,
+      size: decoded.buffer.length,
+      type: contentTypeForExtension(decoded.extension),
+    },
+  };
+};
+
 // ─── User-side ───────────────────────────────────────────────────────────────
 
 export const createTicket = async (data, userId) => {
@@ -144,7 +271,9 @@ export const createTicket = async (data, userId) => {
       message: `Subject must be ${LIMITS.subjectMax} characters or fewer.`,
     };
   }
-  if (body.length < LIMITS.bodyMin) {
+  const attached = normalizeAttachment(data?.attachment, data?.attachmentName);
+  if (attached.error) return { status: 400, message: attached.error };
+  if (!attached.attachment && body.length < LIMITS.bodyMin) {
     return {
       status: 400,
       message: `Please describe the issue in at least ${LIMITS.bodyMin} characters.`,
@@ -172,7 +301,13 @@ export const createTicket = async (data, userId) => {
         userUnread: false,
         lastMessageAt: now,
         messages: {
-          create: { senderId: userId, senderRole: "user", body },
+          create: {
+            senderId: userId,
+            senderRole: "user",
+            body,
+            attachment: attached.attachment,
+            attachmentName: attached.attachmentName,
+          },
         },
       },
       include: {
@@ -181,6 +316,9 @@ export const createTicket = async (data, userId) => {
       },
     }),
   );
+
+  // Fire-and-forget: a notification problem must never fail the reader's send.
+  await notifyAdminsOfNewTicket(ticket);
 
   return {
     status: 201,
@@ -253,8 +391,10 @@ export const getTicket = async (data, userId) => {
 
 export const replyToTicket = async (data, userId) => {
   const body = cleanText(data?.message ?? data?.body);
-  if (body.length < 1) {
-    return { status: 400, message: "Reply cannot be empty." };
+  const attached = normalizeAttachment(data?.attachment, data?.attachmentName);
+  if (attached.error) return { status: 400, message: attached.error };
+  if (!body && !attached.attachment) {
+    return { status: 400, message: "Add a message or an attachment." };
   }
   if (body.length > LIMITS.bodyMax) {
     return {
@@ -281,7 +421,14 @@ export const replyToTicket = async (data, userId) => {
   await withDbRetry(() =>
     prisma.$transaction([
       prisma.supportMessage.create({
-        data: { ticketId: ticket.id, senderId: userId, senderRole: "user", body },
+        data: {
+          ticketId: ticket.id,
+          senderId: userId,
+          senderRole: "user",
+          body,
+          attachment: attached.attachment,
+          attachmentName: attached.attachmentName,
+        },
       }),
       prisma.supportTicket.update({
         where: { id: ticket.id },
@@ -382,8 +529,10 @@ export const getAdminTicket = async (data) => {
 
 export const adminReply = async (data, adminId) => {
   const body = cleanText(data?.message ?? data?.body);
-  if (body.length < 1) {
-    return { status: 400, message: "Reply cannot be empty." };
+  const attached = normalizeAttachment(data?.attachment, data?.attachmentName);
+  if (attached.error) return { status: 400, message: attached.error };
+  if (!body && !attached.attachment) {
+    return { status: 400, message: "Add a message or an attachment." };
   }
   if (body.length > LIMITS.bodyMax) {
     return {
@@ -401,7 +550,14 @@ export const adminReply = async (data, adminId) => {
   await withDbRetry(() =>
     prisma.$transaction([
       prisma.supportMessage.create({
-        data: { ticketId: ticket.id, senderId: adminId, senderRole: "admin", body },
+        data: {
+          ticketId: ticket.id,
+          senderId: adminId,
+          senderRole: "admin",
+          body,
+          attachment: attached.attachment,
+          attachmentName: attached.attachmentName,
+        },
       }),
       prisma.supportTicket.update({
         where: { id: ticket.id },

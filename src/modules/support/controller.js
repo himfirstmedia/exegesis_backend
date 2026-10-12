@@ -18,6 +18,12 @@ const handle = (serviceFn, logLabel) => async (req, res) => {
   }
 };
 
+// ─── Attachments ─────────────────────────────────────────────────────────────
+export const uploadAttachment = handle(
+  (req) => supportService.uploadAttachment(req.body),
+  "uploadAttachment controller",
+);
+
 // ─── User-side ───────────────────────────────────────────────────────────────
 export const createTicket = handle(
   (req) => supportService.createTicket(req.body, req.user.id),

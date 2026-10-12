@@ -37,13 +37,16 @@ const CONTENT_TYPES = {
   jpeg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
+  pdf: "application/pdf",
 };
 
 export const contentTypeForExtension = (extension) =>
   CONTENT_TYPES[String(extension || "").toLowerCase()] || "application/octet-stream";
 
+// Folders that may hold stored media. `support` carries attachments sent with
+// support conversations (screenshots and PDFs).
 const MEDIA_KEY_PATTERN =
-  /^(?:covers|profile-photos)\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpe?g|png|webp)$/i;
+  /^(?:covers|profile-photos|support)\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpe?g|png|webp|pdf)$/i;
 
 export const isMediaObjectKey = (key) => MEDIA_KEY_PATTERN.test(String(key || ""));
 

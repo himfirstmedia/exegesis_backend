@@ -974,9 +974,10 @@ model SupportMessage {
   ticketId   BigInt   @map("ticket_id")
   senderId   String   @map("sender_id")
   senderRole String   @map("sender_role") // user | admin
-  body       String   @db.Text
-  attachment String?
-  createdOn  DateTime @default(now()) @map("created_on")
+  body           String   @db.Text
+  attachment     String?
+  attachmentName String?  @map("attachment_name")
+  createdOn      DateTime @default(now()) @map("created_on")
 
   ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   sender     SystemUser    @relation(fields: [senderId], references: [id], onDelete: Cascade)

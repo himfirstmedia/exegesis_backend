@@ -1,4 +1,6 @@
 import { prisma } from '../../config/db.js';
+import { uploadObject } from '../../services/objectStorage.js';
+import { sendToUsers } from '../push/service.js';
 import {
   adminReply,
   createTicket,
@@ -8,6 +10,7 @@ import {
   getTicket,
   replyToTicket,
   updateTicketStatus,
+  uploadAttachment,
 } from './service.js';
 
 jest.mock('../../config/db.js', () => ({
@@ -21,10 +24,34 @@ jest.mock('../../config/db.js', () => ({
       groupBy: jest.fn(),
     },
     supportMessage: { create: jest.fn() },
+    message: { create: jest.fn() },
+    systemUser: { findMany: jest.fn() },
     // The service passes an array of operations; resolve them together.
     $transaction: jest.fn((ops) => Promise.all(ops)),
   },
 }));
+
+// Keep the upload off the real disk / R2 bucket.
+jest.mock('../../services/objectStorage.js', () => ({
+  contentTypeForExtension: jest.fn((ext) =>
+    ext === 'pdf' ? 'application/pdf' : `image/${ext}`,
+  ),
+  storedMediaLocation: jest.fn((url) =>
+    /^(?:\/media\/|\/uploads\/)(?:covers|profile-photos|support)\//.test(String(url))
+      ? { key: String(url).split('/').slice(2).join('/'), storage: 'local' }
+      : null,
+  ),
+  uploadObject: jest.fn(),
+}));
+
+jest.mock('../push/service.js', () => ({
+  sendToUsers: jest.fn().mockResolvedValue({ sent: 0, pruned: 0 }),
+}));
+
+// 1x1 transparent PNG — a real image body so the magic-byte check passes.
+const PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+const PDF_BASE64 = Buffer.from('%PDF-1.7\n%%EOF\n').toString('base64');
 
 const USER_ID = 'user-1';
 const ADMIN_ID = 'admin-1';
@@ -60,6 +87,10 @@ const makeTicket = (overrides = {}) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  prisma.systemUser.findMany.mockReset();
+  prisma.systemUser.findMany.mockResolvedValue([]);
+  prisma.message.create.mockResolvedValue({});
+  uploadObject.mockResolvedValue({ key: 'support/x.png', url: '/media/support/x.png', storage: 'local' });
 });
 
 describe('createTicket', () => {
@@ -109,6 +140,8 @@ describe('createTicket', () => {
       senderId: USER_ID,
       senderRole: 'user',
       body: 'It closes every time.',
+      attachment: null,
+      attachmentName: null,
     });
     expect(createArgs.data.ticketCode).toMatch(/^SUP-\d{8}-[A-Z0-9]{4}$/);
     expect(result.data.messageCount).toBe(1);
@@ -186,7 +219,14 @@ describe('adminReply', () => {
       userUnread: true,
     });
     expect(prisma.supportMessage.create).toHaveBeenCalledWith({
-      data: { ticketId: 7, senderId: ADMIN_ID, senderRole: 'admin', body: 'Fixed in the next build.' },
+      data: {
+        ticketId: 7,
+        senderId: ADMIN_ID,
+        senderRole: 'admin',
+        body: 'Fixed in the next build.',
+        attachment: null,
+        attachmentName: null,
+      },
     });
     expect(result.data.status).toBe('in_progress');
   });
@@ -210,6 +250,124 @@ describe('updateTicketStatus', () => {
     expect(updateArgs.data.status).toBe('resolved');
     expect(updateArgs.data.resolvedBy).toBe(ADMIN_ID);
     expect(updateArgs.data.resolvedAt).toBeInstanceOf(Date);
+  });
+});
+
+describe('attachments', () => {
+  it('rejects an unsupported file type', async () => {
+    const result = await uploadAttachment({
+      attachment: Buffer.from('MZ\u0090 executable').toString('base64'),
+      fileName: 'virus.exe',
+    });
+    expect(result.status).toBe(400);
+    expect(uploadObject).not.toHaveBeenCalled();
+  });
+
+  it('rejects an attachment over 5MB', async () => {
+    const big = Buffer.alloc(6 * 1024 * 1024, 1).toString('base64');
+    const result = await uploadAttachment({ attachment: big, fileName: 'big.png' });
+    expect(result.status).toBe(400);
+    expect(result.message).toMatch(/too large/i);
+  });
+
+  it('stores a screenshot under the support/ prefix and returns its url', async () => {
+    const result = await uploadAttachment({ attachment: PNG_BASE64, fileName: 'bug shot.png' });
+
+    expect(result.status).toBe(201);
+    expect(result.data.name).toBe('bug shot.png');
+    expect(result.data.url).toMatch(/\/media\/support\//);
+    const key = uploadObject.mock.calls[0][0].key;
+    expect(key).toMatch(/^support\/[0-9a-f-]{36}\.png$/);
+  });
+
+  it('accepts a PDF and keeps its declared name', async () => {
+    const result = await uploadAttachment({ attachment: PDF_BASE64, fileName: 'logs.pdf' });
+
+    expect(result.status).toBe(201);
+    expect(uploadObject.mock.calls[0][0].contentType).toBe('application/pdf');
+    expect(uploadObject.mock.calls[0][0].key).toMatch(/\.pdf$/);
+  });
+
+  it('stores the attachment on the message when creating a ticket', async () => {
+    prisma.supportTicket.create.mockResolvedValue(makeTicket());
+
+    await createTicket(
+      {
+        subject: 'Screenshot attached',
+        message: 'See the screenshot.',
+        attachment: '/media/support/abc.png',
+        attachmentName: 'abc.png',
+      },
+      USER_ID,
+    );
+
+    const data = prisma.supportTicket.create.mock.calls[0][0].data.messages.create;
+    expect(data.attachment).toBe('/media/support/abc.png');
+    expect(data.attachmentName).toBe('abc.png');
+  });
+
+  it('refuses an attachment hosted outside our storage', async () => {
+    const result = await createTicket(
+      { subject: 'External link', message: 'See https://evil.example.com/x.png', attachment: 'https://evil.example.com/x.png' },
+      USER_ID,
+    );
+
+    expect(result.status).toBe(400);
+    expect(prisma.supportTicket.create).not.toHaveBeenCalled();
+  });
+
+  it('allows an attachment-only reply', async () => {
+    prisma.supportTicket.findUnique
+      .mockResolvedValueOnce(makeTicket({ status: 'open' }))
+      .mockResolvedValueOnce(makeTicket({ status: 'open' }));
+    prisma.supportMessage.create.mockResolvedValue({});
+    prisma.supportTicket.update.mockResolvedValue({});
+
+    const result = await replyToTicket(
+      { ticketId: 7, message: '', attachment: '/media/support/abc.pdf' },
+      USER_ID,
+    );
+
+    expect(result.status).toBe(200);
+    expect(prisma.supportMessage.create.mock.calls[0][0].data.attachment).toBe('/media/support/abc.pdf');
+  });
+});
+
+describe('admin notifications', () => {
+  it('queues one email per admin and pushes to their devices', async () => {
+    prisma.systemUser.findMany.mockResolvedValue([
+      { id: ADMIN_ID, email: 'admin@test.local' },
+    ]);
+    // Echo the submitted subject so the notification can be checked against it.
+    prisma.supportTicket.create.mockImplementation(async ({ data }) =>
+      makeTicket({ subject: data.subject, messages: [data.messages.create] }),
+    );
+
+    await createTicket(
+      { subject: 'Broken app', message: 'It closes every time.' },
+      USER_ID,
+    );
+
+    expect(prisma.message.create).toHaveBeenCalledTimes(1);
+    const mail = prisma.message.create.mock.calls[0][0].data;
+    expect(mail.recipient).toBe('admin@test.local');
+    expect(mail.status).toBe('PENDING');
+    expect(mail.subject).toContain('Broken app');
+    expect(sendToUsers).toHaveBeenCalledWith([ADMIN_ID], expect.objectContaining({ title: expect.stringContaining('Broken app') }));
+  });
+
+  it('still delivers the ticket when notifying admins fails', async () => {
+    prisma.systemUser.findMany.mockRejectedValue(new Error('db down'));
+    prisma.supportTicket.create.mockImplementation(async ({ data }) =>
+      makeTicket({ subject: data.subject, messages: [data.messages.create] }),
+    );
+
+    const result = await createTicket(
+      { subject: 'Broken app', message: 'It closes every time.' },
+      USER_ID,
+    );
+
+    expect(result.status).toBe(201);
   });
 });
 

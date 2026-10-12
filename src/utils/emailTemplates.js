@@ -29,6 +29,15 @@ export const EMAIL_LOGO_URL = LOGO_URL;
 // Content-ID used for the embedded logo attachment
 export const EMAIL_LOGO_CID = "exegesis-logo";
 
+/** Minimal HTML escaping for values interpolated into templates. */
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 // Common header with the Exegesis Project logo, shared across all templates.
 // Uses a table-based layout for maximum email-client compatibility.
 const emailHeader = (subtitle) => `
@@ -387,6 +396,79 @@ export const emailTemplates = {
 </html>
     `,
   }),
+
+  // Sent to the admin team the moment a reader opens a support conversation.
+  newSupportTicket: ({ ticket, reporter, adminUrl }) => {
+    const reporterName =
+      [reporter?.firstName, reporter?.lastName].filter(Boolean).join(" ") ||
+      reporter?.username ||
+      "A reader";
+    const rows = [
+      ["Ticket", ticket.ticketCode],
+      ["Category", ticket.category],
+      ["Priority", ticket.priority],
+      ["From", `${reporterName} (${reporter?.email || "no email"})`],
+      ["Device", ticket.deviceInfo || "unknown"],
+    ];
+
+    return {
+      subject: `[Support] ${ticket.subject}`,
+      html: `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Support Message</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f4f4f4;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 560px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,0.1);">
+          ${emailHeader("Support Inbox")}
+          <tr>
+            <td style="padding: 32px 40px 24px;">
+              <h2 style="margin: 0 0 16px; font-size: 20px; font-weight: 600; color: #1e3a5f;">
+                New support message
+              </h2>
+              <p style="margin: 0 0 20px; font-size: 15px; line-height: 1.6; color: #555555;">
+                ${escapeHtml(reporterName)} sent a message through the app.
+              </p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 20px;">
+                ${rows
+                  .map(
+                    ([label, value]) => `<tr>
+                  <td style="padding: 6px 0; font-size: 13px; color: #888888; width: 30%;">${label}:</td>
+                  <td style="padding: 6px 0; font-size: 14px; color: #1e3a5f; font-weight: 600;">${escapeHtml(String(value))}</td>
+                </tr>`,
+                  )
+                  .join("\n")}
+              </table>
+              <div style="padding: 16px; background-color: #f8f9fa; border-left: 4px solid #2d5a87; border-radius: 6px; margin-bottom: 24px;">
+                <p style="margin: 0; font-size: 15px; line-height: 1.6; color: #333333; white-space: pre-wrap;">${escapeHtml(ticket.messages?.[0]?.body || "")}</p>
+              </div>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td align="center">
+                    <a href="${adminUrl}" style="display: inline-block; padding: 13px 40px; background-color: #1e3a5f; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 600; border-radius: 10px;">
+                      Open the Support Inbox
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          ${emailFooter}
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+    `,
+    };
+  },
 };
 
 export default emailTemplates;

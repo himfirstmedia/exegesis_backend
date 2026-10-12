@@ -14,8 +14,26 @@ jest.mock('../../config/db.js', () => ({
       groupBy: jest.fn(),
     },
     supportMessage: { create: jest.fn() },
+    message: { create: jest.fn() },
+    systemUser: { findUnique: jest.fn(), findMany: jest.fn() },
     $transaction: jest.fn((ops) => Promise.all(ops)),
   },
+}));
+
+jest.mock('../../services/objectStorage.js', () => ({
+  contentTypeForExtension: jest.fn(() => 'image/png'),
+  storedMediaLocation: jest.fn((url) =>
+    /^\/media\/support\//.test(String(url)) ? { key: 'x', storage: 'local' } : null,
+  ),
+  uploadObject: jest.fn().mockResolvedValue({
+    key: 'support/abc.png',
+    url: '/media/support/abc.png',
+    storage: 'local',
+  }),
+}));
+
+jest.mock('../push/service.js', () => ({
+  sendToUsers: jest.fn().mockResolvedValue({ sent: 0, pruned: 0 }),
 }));
 
 import { prisma } from '../../config/db.js';
@@ -75,6 +93,8 @@ beforeEach(() => {
     status: true,
     accountStatus: 'active',
   });
+  prisma.systemUser.findMany.mockResolvedValue([]);
+  prisma.message.create.mockResolvedValue({});
 });
 
 const post = (path, body, token) =>
@@ -117,6 +137,33 @@ describe('/support routes', () => {
 
     expect(res.status).toBe(403);
     expect(prisma.supportTicket.findMany).not.toHaveBeenCalled();
+  });
+
+  it('uploads an attachment and returns a usable url', async () => {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+      'base64',
+    ).toString('base64');
+    const token = generateToken({ id: USER_ID, username: 'reader', email: 'r@x.com', userRole: 3 });
+
+    const res = await post('/upload', { attachment: png, fileName: 'shot.png' }, token);
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body.returnData.url).toBe('/media/support/abc.png');
+    expect(body.returnData.name).toBe('shot.png');
+  });
+
+  it('rejects an attachment that is not a supported file', async () => {
+    const token = generateToken({ id: USER_ID, username: 'reader', email: 'r@x.com', userRole: 3 });
+
+    const res = await post(
+      '/upload',
+      { attachment: Buffer.from('not-an-image').toString('base64'), fileName: 'notes.txt' },
+      token,
+    );
+
+    expect(res.status).toBe(400);
   });
 
   it('allows an admin to read the inbox stats', async () => {

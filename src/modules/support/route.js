@@ -8,6 +8,7 @@ import {
 const router = express.Router();
 
 // ─── User conversations (any signed-in reader) ───────────────────────────────
+router.post("/upload", authenticate, supportController.uploadAttachment);
 router.post("/create", authenticate, supportController.createTicket);
 router.post("/get-my-tickets", authenticate, supportController.getMyTickets);
 router.post("/get-ticket", authenticate, supportController.getTicket);
