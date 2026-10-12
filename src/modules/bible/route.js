@@ -1,32 +1,8 @@
 import express from "express";
 import * as bibleController from "./controller.js";
 import { authenticate } from "../../middlewares/auth.middleware.js";
-import {
-  normalizeLanguage,
-  translateText,
-} from "../../utils/translator.js";
 
 const router = express.Router();
-
-// Localize every Bible API message at the response boundary. Data translation
-// remains field-specific in the service so references and user notes are safe.
-router.use((req, res, next) => {
-  const sendJson = res.json.bind(res);
-  res.json = async (body) => {
-    const lang = normalizeLanguage(req.body?.lang);
-    if (
-      lang.toLowerCase() !== "en" &&
-      typeof body?.returnMessage === "string"
-    ) {
-      body = {
-        ...body,
-        returnMessage: await translateText(body.returnMessage, lang),
-      };
-    }
-    return sendJson(body);
-  };
-  next();
-});
 
 router.post("/add-highlight", authenticate, bibleController.addHighlight);
 router.post("/get-highlights", authenticate, bibleController.getHighlights);

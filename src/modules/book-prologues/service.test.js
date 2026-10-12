@@ -116,6 +116,27 @@ describe('book prologue translation', () => {
     expect(translateMany).not.toHaveBeenCalled();
   });
 
+  test('returns source content when translation exceeds its response budget', async () => {
+    jest.useFakeTimers();
+    process.env.BOOK_PROLOGUE_TRANSLATION_TIMEOUT_MS = '10';
+    const source = makePrologue();
+    prisma.bookPrologue.findUnique.mockResolvedValue(source);
+    translateMany.mockImplementation(() => new Promise(() => {}));
+
+    try {
+      const request = getBookPrologue({ bookName: 'Genesis', lang: 'ta' });
+      await jest.advanceTimersByTimeAsync(10);
+      const result = await request;
+
+      expect(result.status).toBe(200);
+      expect(result.data.summary).toBe(source.summary);
+      expect(result.data.structure).toEqual(source.structure);
+    } finally {
+      delete process.env.BOOK_PROLOGUE_TRANSLATION_TIMEOUT_MS;
+      jest.useRealTimers();
+    }
+  });
+
   test('get-all preserves list ordering, cardinality, and pagination metadata', async () => {
     const first = makePrologue();
     const second = makePrologue({ bookName: 'Exodus', sortOrder: 2, author: 'Moses', summary: 'God delivers Israel.' });

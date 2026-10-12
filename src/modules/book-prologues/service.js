@@ -72,6 +72,26 @@ const replaceParagraph = (segments, index, value) => {
   segments[index] = leadingSpace + value.trim() + trailingSpace;
 };
 
+const getTranslationTimeoutMs = () => {
+  const value = Number.parseInt(process.env.BOOK_PROLOGUE_TRANSLATION_TIMEOUT_MS, 10);
+  return Number.isInteger(value) && value > 0 ? value : 8000;
+};
+
+const translateWithinBudget = async (values, target) => {
+  let timeout;
+  const result = await Promise.race([
+    translateMany(values, target),
+    new Promise((resolve) => {
+      timeout = setTimeout(() => resolve(null), getTranslationTimeoutMs());
+    }),
+  ]).finally(() => clearTimeout(timeout));
+
+  if (result === null) {
+    console.warn(`[BookPrologues] Translation timed out for ${target}; returning source content`);
+  }
+  return result;
+};
+
 const translateBookPrologue = async (prologue, lang = 'en') => {
   const target = normalizeLanguage(lang);
   if (!prologue || target.toLowerCase() === 'en') return prologue;
@@ -133,7 +153,8 @@ const translateBookPrologue = async (prologue, lang = 'en') => {
     });
   }
 
-  const values = await translateMany(entries.map(entry => entry.value), target);
+  const values = await translateWithinBudget(entries.map(entry => entry.value), target);
+  if (!values) return prologue;
   entries.forEach((entry, index) => entry.setValue(values[index]));
   return translated;
 };
