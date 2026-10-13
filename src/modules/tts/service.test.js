@@ -27,6 +27,7 @@ import {
   getStatus,
   DEFAULT_EDGE_VOICE,
   DEFAULT_TTS_SPEED,
+  buildEdgeSynthUrl,
   synthesize,
   synthesizeWithTimings,
   resetLordsbookBreaker,
@@ -70,6 +71,15 @@ describe("TTS voice defaults", () => {
     const status = getStatus();
     expect(status.enabled).toBe(true);
     expect(status.provider).toBe("edge");
+  });
+
+  test("uses Microsoft's current Edge synthesis endpoint", async () => {
+    const url = new URL(await buildEdgeSynthUrl());
+
+    expect(url.host).toBe("api.msedgeservices.com");
+    expect(url.searchParams.has("Ocp-Apim-Subscription-Key")).toBe(true);
+    expect(url.searchParams.has("TrustedClientToken")).toBe(false);
+    expect(url.searchParams.get("Sec-MS-GEC")).toMatch(/^[A-F0-9]{64}$/);
   });
 
   test("disabled Lordsbook flag keeps Edge even when legacy provider says Lordsbook", () => {

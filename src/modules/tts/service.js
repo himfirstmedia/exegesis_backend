@@ -7,6 +7,34 @@ import {
   synthesizeLordsbookSpeech,
 } from "../../services/lordsbookGateway.js";
 
+// Microsoft moved Edge Read Aloud synthesis off speech.platform.bing.com in
+// October 2026. Published msedge-tts versions still target the retired URL,
+// which now returns 403. Keep the library's streaming implementation while
+// overriding only its connection URL until the upstream fix is released.
+const EDGE_TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+const EDGE_WEBSOCKET_URL =
+  "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1";
+
+export const buildEdgeSynthUrl = async () => {
+  const seconds = Math.floor(Date.now() / 1000) + 11644473600;
+  const windowsTicks = (seconds - (seconds % 300)) * 10000000;
+  const secMsGec = crypto
+    .createHash("sha256")
+    .update(`${windowsTicks}${EDGE_TRUSTED_CLIENT_TOKEN}`)
+    .digest("hex")
+    .toUpperCase();
+  const connectionId = crypto.randomUUID();
+  const params = new URLSearchParams({
+    "Ocp-Apim-Subscription-Key": EDGE_TRUSTED_CLIENT_TOKEN,
+    "Sec-MS-GEC": secMsGec,
+    "Sec-MS-GEC-Version": "1-143.0.3650.96",
+    ConnectionId: connectionId,
+  });
+  return `${EDGE_WEBSOCKET_URL}?${params}`;
+};
+
+MsEdgeTTS.getSynthUrl = buildEdgeSynthUrl;
+
 const REDIS_CACHE_TTL = parseInt(process.env.REDIS_CACHE_TTL, 10) || 86400; // 24h
 const REDIS_NAMESPACE = "tts";
 const LORDSBOOK_VOICE_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -601,20 +629,23 @@ const dispatchTimed = () => {
 // Runs `job` on a client configured for `voice`. High-priority jobs go to the
 // dedicated express client (never blocked behind prefetch windows).
 const acquireTimedClient = async (voice, high, job) => {
+  let setupError = null;
   try {
     if (high) {
       await ensureExpress();
     } else {
       await ensureWorkPool();
     }
-  } catch {
-    // fall through — dispatch below will surface connection failures
+  } catch (error) {
+    setupError = error;
   }
 
   if (high && !_express) {
+    if (setupError) throw setupError;
     throw new Error("No Edge TTS express client available");
   }
   if (!high && _workPool.length === 0) {
+    if (setupError) throw setupError;
     throw new Error("No Edge TTS client available");
   }
 
