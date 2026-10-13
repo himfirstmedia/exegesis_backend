@@ -7,6 +7,10 @@ import { emitToUser, getIO, initRealtime } from "./index.js";
 jest.mock("../config/db.js", () => ({
   prisma: {
     systemUser: { findUnique: jest.fn() },
+    supportMessage: {
+      findMany: jest.fn().mockResolvedValue([]),
+      updateManyAndReturn: jest.fn().mockResolvedValue([]),
+    },
   },
 }));
 
@@ -74,5 +78,39 @@ describe("realtime socket authentication", () => {
     emitToUser("reader-1", "support:unread", { count: 2 });
     await expect(received).resolves.toEqual({ count: 2 });
     client.disconnect();
+  });
+
+  it("emits reconnect delivery receipts only for rows it updated", async () => {
+    prisma.systemUser.findUnique
+      .mockResolvedValueOnce({
+        status: true,
+        accountStatus: "active",
+        userRole: 2,
+      })
+      .mockResolvedValueOnce({
+        status: true,
+        accountStatus: "active",
+        userRole: 1,
+      });
+    prisma.supportMessage.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: 9n, ticketId: 3n, ticket: { userId: "reader-2" } },
+        { id: 10n, ticketId: 3n, ticket: { userId: "reader-2" } },
+      ]);
+    prisma.supportMessage.updateManyAndReturn.mockResolvedValueOnce([{ id: 10n }]);
+
+    const reader = await connect(tokenFor({ id: "reader-2", userRole: 2 }));
+    const receipt = new Promise((resolve) =>
+      reader.once("support:receipt", resolve),
+    );
+    const admin = await connect(tokenFor({ id: "admin-2", userRole: 1 }));
+
+    await expect(receipt).resolves.toMatchObject({
+      messageIds: ["10"],
+      ticketIds: ["3"],
+    });
+    reader.disconnect();
+    admin.disconnect();
   });
 });

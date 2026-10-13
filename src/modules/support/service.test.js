@@ -22,11 +22,13 @@ jest.mock('../../config/db.js', () => ({
       findMany: jest.fn(),
       count: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
       groupBy: jest.fn(),
     },
     supportMessage: {
       create: jest.fn(),
       updateMany: jest.fn(),
+      updateManyAndReturn: jest.fn(),
     },
     message: { create: jest.fn() },
     systemUser: { findMany: jest.fn() },
@@ -96,7 +98,8 @@ beforeEach(() => {
   prisma.systemUser.findMany.mockReset();
   prisma.systemUser.findMany.mockResolvedValue([]);
   prisma.message.create.mockResolvedValue({});
-  prisma.supportMessage.updateMany.mockResolvedValue({ count: 0 });
+  prisma.supportTicket.updateMany.mockResolvedValue({ count: 0 });
+  prisma.supportMessage.updateManyAndReturn.mockResolvedValue([]);
   uploadObject.mockResolvedValue({ key: 'support/x.png', url: '/media/support/x.png', storage: 'local' });
 });
 
@@ -168,24 +171,38 @@ describe('getTicket', () => {
   });
 
   it('clears the user unread flag when the owner opens it', async () => {
-    prisma.supportTicket.findUnique.mockResolvedValue(makeTicket({ userUnread: true }));
-    prisma.supportTicket.update.mockResolvedValue(makeTicket({ userUnread: false }));
+    prisma.supportTicket.findUnique.mockResolvedValue(makeTicket({
+      userUnread: true,
+      messages: [{
+        ...makeTicket().messages[0],
+        id: 2,
+        senderId: ADMIN_ID,
+        senderRole: 'admin',
+      }],
+    }));
+    prisma.supportTicket.updateMany.mockResolvedValue({ count: 1 });
 
     const result = await getTicket({ ticketId: 7 }, USER_ID);
 
     expect(result.status).toBe(200);
-    expect(prisma.supportTicket.update).toHaveBeenCalledWith({
-      where: { id: 7 },
+    expect(prisma.supportTicket.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 7,
+        userUnread: true,
+        lastMessageAt: new Date('2026-10-12T08:00:00.000Z'),
+      },
       data: { userUnread: false },
     });
     expect(result.data.userUnread).toBe(false);
-    expect(prisma.supportMessage.updateMany).toHaveBeenCalledWith({
-      where: {
-        ticketId: 7,
-        senderRole: 'admin',
-        OR: [{ deliveredAt: null }, { readAt: null }],
-      },
-      data: { deliveredAt: expect.any(Date), readAt: expect.any(Date) },
+    expect(prisma.supportMessage.updateManyAndReturn).toHaveBeenNthCalledWith(1, {
+      where: { id: { in: [2] }, deliveredAt: null },
+      data: { deliveredAt: expect.any(Date) },
+      select: { id: true },
+    });
+    expect(prisma.supportMessage.updateManyAndReturn).toHaveBeenNthCalledWith(2, {
+      where: { id: { in: [2] }, readAt: null },
+      data: { readAt: expect.any(Date) },
+      select: { id: true },
     });
   });
 });
@@ -215,6 +232,23 @@ describe('replyToTicket', () => {
     expect(result.status).toBe(400);
     expect(prisma.supportMessage.create).not.toHaveBeenCalled();
   });
+
+  it('conditionally clears unread state already seen by the replying user', async () => {
+    prisma.supportTicket.findUnique.mockResolvedValue(makeTicket({ userUnread: true }));
+    prisma.supportMessage.create.mockResolvedValue({ id: 2 });
+    prisma.supportTicket.update.mockResolvedValue({});
+
+    await replyToTicket({ ticketId: 7, message: 'I saw your reply.' }, USER_ID);
+
+    expect(prisma.supportTicket.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 7,
+        userUnread: true,
+        lastMessageAt: new Date('2026-10-12T08:00:00.000Z'),
+      },
+      data: { userUnread: false },
+    });
+  });
 });
 
 describe('adminReply', () => {
@@ -230,8 +264,16 @@ describe('adminReply', () => {
     const updateArgs = prisma.supportTicket.update.mock.calls[0][0];
     expect(updateArgs.data).toMatchObject({
       status: 'in_progress',
-      adminUnread: false,
       userUnread: true,
+    });
+    expect(updateArgs.data).not.toHaveProperty('adminUnread');
+    expect(prisma.supportTicket.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 7,
+        adminUnread: true,
+        lastMessageAt: new Date('2026-10-12T08:00:00.000Z'),
+      },
+      data: { adminUnread: false },
     });
     expect(prisma.supportMessage.create).toHaveBeenCalledWith({
       data: {
@@ -463,46 +505,87 @@ describe('getMyTickets', () => {
 describe('getAdminTicket', () => {
   it('clears the admin unread flag when an admin opens it', async () => {
     prisma.supportTicket.findUnique.mockResolvedValue(makeTicket({ adminUnread: true }));
-    prisma.supportTicket.update.mockResolvedValue({});
+    prisma.supportTicket.updateMany.mockResolvedValue({ count: 1 });
 
     await getAdminTicket({ ticketId: 7 });
 
-    expect(prisma.supportTicket.update).toHaveBeenCalledWith({
-      where: { id: 7 },
+    expect(prisma.supportTicket.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 7,
+        adminUnread: true,
+        lastMessageAt: new Date('2026-10-12T08:00:00.000Z'),
+      },
       data: { adminUnread: false },
     });
-    expect(prisma.supportMessage.updateMany).toHaveBeenCalledWith({
-      where: {
-        ticketId: 7,
-        senderRole: 'user',
-        OR: [{ deliveredAt: null }, { readAt: null }],
-      },
-      data: { deliveredAt: expect.any(Date), readAt: expect.any(Date) },
+    expect(prisma.supportMessage.updateManyAndReturn).toHaveBeenNthCalledWith(1, {
+      where: { id: { in: [1] }, deliveredAt: null },
+      data: { deliveredAt: expect.any(Date) },
+      select: { id: true },
+    });
+    expect(prisma.supportMessage.updateManyAndReturn).toHaveBeenNthCalledWith(2, {
+      where: { id: { in: [1] }, readAt: null },
+      data: { readAt: expect.any(Date) },
+      select: { id: true },
     });
   });
 
   it('returns read receipts for user messages when the admin opens the thread', async () => {
     prisma.supportTicket.findUnique.mockResolvedValue(makeTicket({ adminUnread: false }));
-    prisma.supportMessage.updateMany.mockResolvedValue({ count: 1 });
+    prisma.supportMessage.updateManyAndReturn.mockResolvedValue([{ id: 1 }]);
 
     const result = await getAdminTicket({ ticketId: 7 });
 
     expect(result.data.messages[0].deliveredAt).toEqual(expect.any(String));
     expect(result.data.messages[0].readAt).toEqual(expect.any(String));
   });
+
+  it('preserves the original delivery time when marking a message read', async () => {
+    const deliveredAt = new Date('2026-10-12T08:01:00.000Z');
+    prisma.supportTicket.findUnique.mockResolvedValue(makeTicket({
+      adminUnread: false,
+      messages: [{ ...makeTicket().messages[0], deliveredAt }],
+    }));
+    prisma.supportMessage.updateManyAndReturn
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: 1 }]);
+
+    const result = await getAdminTicket({ ticketId: 7 });
+
+    expect(prisma.supportMessage.updateManyAndReturn).toHaveBeenNthCalledWith(1, {
+      where: { id: { in: [1] }, deliveredAt: null },
+      data: { deliveredAt: expect.any(Date) },
+      select: { id: true },
+    });
+    expect(prisma.supportMessage.updateManyAndReturn).toHaveBeenNthCalledWith(2, {
+      where: { id: { in: [1] }, readAt: null },
+      data: { readAt: expect.any(Date) },
+      select: { id: true },
+    });
+    expect(result.data.messages[0].deliveredAt).toBe(deliveredAt.toISOString());
+    expect(result.data.messages[0].readAt).toEqual(expect.any(String));
+  });
 });
 
 describe('read-only realtime refreshes', () => {
   it('does not clear the user unread flag when markRead is false', async () => {
-    prisma.supportTicket.findUnique.mockResolvedValue(makeTicket({ userUnread: true }));
+    prisma.supportTicket.findUnique.mockResolvedValue(makeTicket({
+      userUnread: true,
+      messages: [{
+        ...makeTicket().messages[0],
+        id: 2,
+        senderId: ADMIN_ID,
+        senderRole: 'admin',
+      }],
+    }));
 
     const result = await getTicket({ ticketId: 7, markRead: false }, USER_ID);
 
     expect(result.status).toBe(200);
-    expect(prisma.supportTicket.update).not.toHaveBeenCalled();
-    expect(prisma.supportMessage.updateMany).toHaveBeenCalledWith({
-      where: { ticketId: 7, senderRole: 'admin', deliveredAt: null },
+    expect(prisma.supportTicket.updateMany).not.toHaveBeenCalled();
+    expect(prisma.supportMessage.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: { in: [2] }, deliveredAt: null },
       data: { deliveredAt: expect.any(Date) },
+      select: { id: true },
     });
     expect(result.data.userUnread).toBe(true);
   });
@@ -513,10 +596,11 @@ describe('read-only realtime refreshes', () => {
     const result = await getAdminTicket({ ticketId: 7, markRead: false });
 
     expect(result.status).toBe(200);
-    expect(prisma.supportTicket.update).not.toHaveBeenCalled();
-    expect(prisma.supportMessage.updateMany).toHaveBeenCalledWith({
-      where: { ticketId: 7, senderRole: 'user', deliveredAt: null },
+    expect(prisma.supportTicket.updateMany).not.toHaveBeenCalled();
+    expect(prisma.supportMessage.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: { in: [1] }, deliveredAt: null },
       data: { deliveredAt: expect.any(Date) },
+      select: { id: true },
     });
     expect(result.data.adminUnread).toBe(true);
   });

@@ -71,7 +71,7 @@ const normalizePage = (page, pageSize) => {
 /** Whose turn it is: the user reads their own thread, admins read all of them. */
 const summarySelect = {
   messages: {
-    orderBy: { createdOn: "desc" },
+    orderBy: [{ createdOn: "desc" }, { id: "desc" }],
     take: 1,
     select: {
       body: true,
@@ -328,7 +328,7 @@ const findTicketOrFail = async (ticketId) => {
     prisma.supportTicket.findUnique({
       where: { id },
       include: {
-        messages: { orderBy: { createdOn: "asc" } },
+        messages: { orderBy: [{ createdOn: "asc" }, { id: "asc" }] },
         user: { select: userSelect },
       },
     }),
@@ -337,30 +337,42 @@ const findTicketOrFail = async (ticketId) => {
 
 const markMessagesReceived = async (ticket, recipientRole, markRead) => {
   const senderRole = recipientRole === "admin" ? "user" : "admin";
+  const messageIds = ticket.messages
+    .filter((message) => message.senderRole === senderRole)
+    .map((message) => message.id);
+  if (messageIds.length === 0) return false;
+
   const now = new Date();
-  const result = await withDbRetry(() =>
-    prisma.supportMessage.updateMany({
+  const delivered = await withDbRetry(() =>
+    prisma.supportMessage.updateManyAndReturn({
       where: {
-        ticketId: ticket.id,
-        senderRole,
-        ...(markRead
-          ? { OR: [{ deliveredAt: null }, { readAt: null }] }
-          : { deliveredAt: null }),
+        id: { in: messageIds },
+        deliveredAt: null,
       },
-      data: markRead
-        ? { deliveredAt: now, readAt: now }
-        : { deliveredAt: now },
+      data: { deliveredAt: now },
+      select: { id: true },
     }),
   );
+  const read = markRead
+    ? await withDbRetry(() =>
+        prisma.supportMessage.updateManyAndReturn({
+          where: { id: { in: messageIds }, readAt: null },
+          data: { readAt: now },
+          select: { id: true },
+        }),
+      )
+    : [];
 
-  if ((result?.count ?? 0) > 0) {
+  if (delivered.length > 0 || read.length > 0) {
+    const deliveredIds = new Set(delivered.map((message) => String(message.id)));
+    const readIds = new Set(read.map((message) => String(message.id)));
     for (const message of ticket.messages) {
       if (message.senderRole !== senderRole) continue;
-      message.deliveredAt ??= now;
-      if (markRead) message.readAt ??= now;
+      if (deliveredIds.has(String(message.id))) message.deliveredAt = now;
+      if (readIds.has(String(message.id))) message.readAt = now;
     }
   }
-  return (result?.count ?? 0) > 0;
+  return delivered.length > 0 || read.length > 0;
 };
 
 // ─── Attachments ─────────────────────────────────────────────────────────────
@@ -467,7 +479,7 @@ export const createTicket = async (data, userId) => {
         },
       },
       include: {
-        messages: { orderBy: { createdOn: "asc" } },
+        messages: { orderBy: [{ createdOn: "asc" }, { id: "asc" }] },
         user: { select: userSelect },
       },
     }),
@@ -540,21 +552,28 @@ export const getTicket = async (data, userId) => {
   const receiptsChanged = await markMessagesReceived(ticket, "user", markRead);
   let unreadChanged = false;
   if (ticket.userUnread && markRead) {
-    await withDbRetry(() =>
-      prisma.supportTicket.update({
-        where: { id: ticket.id },
+    const result = await withDbRetry(() =>
+      prisma.supportTicket.updateMany({
+        where: {
+          id: ticket.id,
+          userUnread: true,
+          lastMessageAt: ticket.lastMessageAt,
+        },
         data: { userUnread: false },
       }),
     );
-    ticket.userUnread = false;
-    unreadChanged = true;
+    if ((result?.count ?? 0) > 0) {
+      ticket.userUnread = false;
+      unreadChanged = true;
+    }
   }
-  if (receiptsChanged || unreadChanged) emitTicketUpdate(ticket);
+  const currentTicket = await findTicketOrFail(ticket.id) ?? ticket;
+  if (receiptsChanged || unreadChanged) emitTicketUpdate(currentTicket);
 
   return {
     status: 200,
     message: "Conversation fetched successfully",
-    data: serializeTicketDetail(ticket),
+    data: serializeTicketDetail(currentTicket),
   };
 };
 
@@ -587,36 +606,50 @@ export const replyToTicket = async (data, userId) => {
   }
 
   const now = new Date();
-  await withDbRetry(() =>
-    prisma.$transaction([
-      prisma.supportMessage.create({
-        data: {
-          ticketId: ticket.id,
-          senderId: userId,
-          senderRole: "user",
-          body,
-          attachment: attached.attachment,
-          attachmentName: attached.attachmentName,
-          ...(hasConnectedAdmins() ? { deliveredAt: now } : {}),
+  const operations = [];
+  if (ticket.userUnread) {
+    operations.push(
+      prisma.supportTicket.updateMany({
+        where: {
+          id: ticket.id,
+          userUnread: true,
+          lastMessageAt: ticket.lastMessageAt,
         },
+        data: { userUnread: false },
       }),
-      prisma.supportTicket.update({
-        where: { id: ticket.id },
-        data: {
-          lastMessageAt: now,
-          adminUnread: true,
-          userUnread: false,
-          // A reply on a settled ticket puts it back in the admin queue.
-          status: SETTLED_STATUSES.includes(ticket.status) ? "open" : ticket.status,
-          resolvedAt: null,
-        },
-      }),
-    ]),
+    );
+  }
+  const messageOperationIndex = operations.length;
+  operations.push(
+    prisma.supportMessage.create({
+      data: {
+        ticketId: ticket.id,
+        senderId: userId,
+        senderRole: "user",
+        body,
+        attachment: attached.attachment,
+        attachmentName: attached.attachmentName,
+        ...(hasConnectedAdmins() ? { deliveredAt: now } : {}),
+      },
+    }),
+    prisma.supportTicket.update({
+      where: { id: ticket.id },
+      data: {
+        lastMessageAt: now,
+        adminUnread: true,
+        // A reply on a settled ticket puts it back in the admin queue.
+        status: SETTLED_STATUSES.includes(ticket.status) ? "open" : ticket.status,
+        resolvedAt: null,
+      },
+    }),
   );
+  const transactionResult = await withDbRetry(() =>
+    prisma.$transaction(operations),
+  );
+  const createdMessage = transactionResult[messageOperationIndex];
 
   const updated = await findTicketOrFail(ticket.id);
   try {
-    const createdMessage = updated.messages?.[updated.messages.length - 1];
     emitSupportMessageToUserAndAdmins(updated, createdMessage);
   } catch (error) {
     console.warn("[support] Realtime emit failed for user reply:", error.message);
@@ -690,21 +723,28 @@ export const getAdminTicket = async (data) => {
   const receiptsChanged = await markMessagesReceived(ticket, "admin", markRead);
   let unreadChanged = false;
   if (ticket.adminUnread && markRead) {
-    await withDbRetry(() =>
-      prisma.supportTicket.update({
-        where: { id: ticket.id },
+    const result = await withDbRetry(() =>
+      prisma.supportTicket.updateMany({
+        where: {
+          id: ticket.id,
+          adminUnread: true,
+          lastMessageAt: ticket.lastMessageAt,
+        },
         data: { adminUnread: false },
       }),
     );
-    ticket.adminUnread = false;
-    unreadChanged = true;
+    if ((result?.count ?? 0) > 0) {
+      ticket.adminUnread = false;
+      unreadChanged = true;
+    }
   }
-  if (receiptsChanged || unreadChanged) emitTicketUpdate(ticket);
+  const currentTicket = await findTicketOrFail(ticket.id) ?? ticket;
+  if (receiptsChanged || unreadChanged) emitTicketUpdate(currentTicket);
 
   return {
     status: 200,
     message: "Conversation fetched successfully",
-    data: serializeTicketDetail(ticket),
+    data: serializeTicketDetail(currentTicket),
   };
 };
 
@@ -728,34 +768,48 @@ export const adminReply = async (data, adminId) => {
   if (!ticket) return { status: 404, message: "Conversation not found" };
 
   const now = new Date();
-  await withDbRetry(() =>
-    prisma.$transaction([
-      prisma.supportMessage.create({
-        data: {
-          ticketId: ticket.id,
-          senderId: adminId,
-          senderRole: "admin",
-          body,
-          attachment: attached.attachment,
-          attachmentName: attached.attachmentName,
-          ...(hasConnectedUser(ticket.userId) ? { deliveredAt: now } : {}),
+  const operations = [];
+  if (ticket.adminUnread) {
+    operations.push(
+      prisma.supportTicket.updateMany({
+        where: {
+          id: ticket.id,
+          adminUnread: true,
+          lastMessageAt: ticket.lastMessageAt,
         },
+        data: { adminUnread: false },
       }),
-      prisma.supportTicket.update({
-        where: { id: ticket.id },
-        data: {
-          lastMessageAt: now,
-          adminUnread: false,
-          userUnread: true,
-          status: ticket.status === "open" ? "in_progress" : ticket.status,
-        },
-      }),
-    ]),
+    );
+  }
+  const messageOperationIndex = operations.length;
+  operations.push(
+    prisma.supportMessage.create({
+      data: {
+        ticketId: ticket.id,
+        senderId: adminId,
+        senderRole: "admin",
+        body,
+        attachment: attached.attachment,
+        attachmentName: attached.attachmentName,
+        ...(hasConnectedUser(ticket.userId) ? { deliveredAt: now } : {}),
+      },
+    }),
+    prisma.supportTicket.update({
+      where: { id: ticket.id },
+      data: {
+        lastMessageAt: now,
+        userUnread: true,
+        status: ticket.status === "open" ? "in_progress" : ticket.status,
+      },
+    }),
   );
+  const transactionResult = await withDbRetry(() =>
+    prisma.$transaction(operations),
+  );
+  const createdMessage = transactionResult[messageOperationIndex];
 
   const updated = await findTicketOrFail(ticket.id);
   try {
-    const createdMessage = updated.messages?.[updated.messages.length - 1];
     emitSupportMessageToUserAndAdmins(updated, createdMessage);
   } catch (error) {
     console.warn("[support] Realtime emit failed for admin reply:", error.message);
@@ -779,13 +833,15 @@ export const updateTicketStatus = async (data, adminId) => {
   if (!ticket) return { status: 404, message: "Conversation not found" };
 
   const settled = SETTLED_STATUSES.includes(status);
+  const updatedAt = new Date();
   await withDbRetry(() =>
     prisma.supportTicket.update({
       where: { id: ticket.id },
       data: {
         status,
-        resolvedAt: settled ? new Date() : null,
+        resolvedAt: settled ? updatedAt : null,
         resolvedBy: settled ? adminId : null,
+        lastMessageAt: updatedAt,
         // The user has something new to look at whenever the admin acts.
         userUnread: true,
         adminUnread: false,

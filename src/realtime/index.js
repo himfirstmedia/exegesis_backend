@@ -71,16 +71,25 @@ const markWaitingMessagesDelivered = async (user) => {
   if (waiting.length === 0) return;
 
   const deliveredAt = new Date();
-  await withDbRetry(() =>
-    prisma.supportMessage.updateMany({
-      where: { id: { in: waiting.map((message) => message.id) } },
+  const delivered = await withDbRetry(() =>
+    prisma.supportMessage.updateManyAndReturn({
+      where: {
+        id: { in: waiting.map((message) => message.id) },
+        deliveredAt: null,
+      },
       data: { deliveredAt },
+      select: { id: true },
     }),
+  );
+  if (delivered.length === 0) return;
+  const deliveredIds = new Set(delivered.map((message) => String(message.id)));
+  const deliveredMessages = waiting.filter((message) =>
+    deliveredIds.has(String(message.id)),
   );
 
   const payload = {
-    messageIds: waiting.map((message) => String(message.id)),
-    ticketIds: [...new Set(waiting.map((message) => String(message.ticketId)))],
+    messageIds: deliveredMessages.map((message) => String(message.id)),
+    ticketIds: [...new Set(deliveredMessages.map((message) => String(message.ticketId)))],
     deliveredAt: deliveredAt.toISOString(),
     at: deliveredAt.toISOString(),
   };
@@ -90,7 +99,7 @@ const markWaitingMessagesDelivered = async (user) => {
   }
 
   const messagesByUser = new Map();
-  for (const message of waiting) {
+  for (const message of deliveredMessages) {
     const userId = message.ticket.userId;
     const current = messagesByUser.get(userId) ?? [];
     current.push(message);

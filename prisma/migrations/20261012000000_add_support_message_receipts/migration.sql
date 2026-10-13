@@ -1,3 +1,3 @@
 ALTER TABLE "support_messages"
-  ADD COLUMN "delivered_at" TIMESTAMP(3),
-  ADD COLUMN "read_at" TIMESTAMP(3);
+  ADD COLUMN IF NOT EXISTS "delivered_at" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "read_at" TIMESTAMP(3);
