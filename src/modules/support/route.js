@@ -46,4 +46,8 @@ router.post(
   supportController.getSupportStats,
 );
 
+// Unread summary (for bell)
+router.post("/get-unread", authenticate, supportController.getUnreadSummary);
+router.get("/get-unread", authenticate, supportController.getUnreadSummary);
+
 export default router;

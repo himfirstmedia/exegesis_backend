@@ -70,3 +70,8 @@ export const getSupportStats = handle(
   () => supportService.getSupportStats(),
   "getSupportStats controller",
 );
+
+export const getUnreadSummary = handle(
+  (req) => supportService.getUnreadSummary(req.user),
+  "getUnreadSummary controller",
+);

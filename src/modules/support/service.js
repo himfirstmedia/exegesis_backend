@@ -16,6 +16,12 @@ import {
 import { emailTemplates } from "../../utils/emailTemplates.js";
 import { sendToUsers } from "../push/service.js";
 import { decodeAttachmentUpload, safeAttachmentName } from "./attachmentUpload.js";
+import {
+  REALTIME_EVENTS,
+  hasConnectedAdmins,
+  hasConnectedUser,
+  publishSupportEvent,
+} from "../../realtime/index.js";
 
 export const SUPPORT_CATEGORIES = [
   "account",
@@ -73,6 +79,8 @@ const summarySelect = {
       createdOn: true,
       attachment: true,
       attachmentName: true,
+      deliveredAt: true,
+      readAt: true,
     },
   },
   _count: { select: { messages: true } },
@@ -184,6 +192,125 @@ const serializeTicketDetail = (ticket) => {
   };
 };
 
+const buildRealtimeSummary = (ticket) => {
+  const serialized = serializeBigInt(ticket);
+  const messages = Array.isArray(serialized.messages)
+    ? serialized.messages
+    : [];
+  const lastMessage =
+    messages.length > 0
+      ? messages[messages.length - 1]
+      : (serialized.lastMessage ? serialized.lastMessage : null);
+  const messageCount = messages.length || serialized._count?.messages || 0;
+  return {
+    id: serialized.id,
+    ticketCode: serialized.ticketCode,
+    userId: serialized.userId,
+    subject: serialized.subject,
+    category: serialized.category,
+    priority: serialized.priority,
+    status: serialized.status,
+    deviceInfo: serialized.deviceInfo,
+    adminUnread: serialized.adminUnread,
+    userUnread: serialized.userUnread,
+    lastMessageAt: serialized.lastMessageAt,
+    resolvedAt: serialized.resolvedAt,
+    resolvedBy: serialized.resolvedBy,
+    createdOn: serialized.createdOn,
+    updatedOn: serialized.updatedOn,
+    user: serialized.user
+      ? {
+          id: serialized.user.id,
+          firstName: serialized.user.firstName,
+          lastName: serialized.user.lastName,
+          username: serialized.user.username,
+          email: serialized.user.email,
+          profilePhotoUrl: serialized.user.profilePhotoUrl,
+          subscriptionTier: serialized.user.subscriptionTier,
+        }
+      : null,
+    messageCount,
+    lastMessage: lastMessage
+      ? {
+          id: lastMessage.id,
+          ticketId: lastMessage.ticketId,
+          senderId: lastMessage.senderId,
+          senderRole: lastMessage.senderRole,
+          body: lastMessage.body,
+          attachment: lastMessage.attachment,
+          attachmentName: lastMessage.attachmentName,
+          deliveredAt: lastMessage.deliveredAt,
+          readAt: lastMessage.readAt,
+          createdOn: lastMessage.createdOn,
+        }
+      : null,
+    _count: serialized._count ? { messages: messageCount } : undefined,
+  };
+};
+
+const emitSupportMessageToUserAndAdmins = (ticket, message) => {
+  const summary = buildRealtimeSummary(ticket);
+  const msg = serializeBigInt(message);
+  publishSupportEvent({
+    audience: "admin",
+    event: REALTIME_EVENTS.supportMessage,
+    ticket: summary,
+    message: msg,
+  });
+  publishSupportEvent({
+    audience: "user",
+    userId: ticket.userId,
+    event: REALTIME_EVENTS.supportMessage,
+    ticket: summary,
+    message: msg,
+  });
+  // Signal unread refresh for both rooms.
+  publishSupportEvent({
+    audience: "admin",
+    event: REALTIME_EVENTS.supportUnread,
+    ticket: summary,
+    message: null,
+  });
+  publishSupportEvent({
+    audience: "user",
+    userId: ticket.userId,
+    event: REALTIME_EVENTS.supportUnread,
+    ticket: summary,
+    message: null,
+  });
+};
+
+const emitTicketUpdate = (ticket) => {
+  const summary = buildRealtimeSummary(ticket);
+  publishSupportEvent({
+    audience: "admin",
+    event: REALTIME_EVENTS.supportTicketUpdated,
+    ticket: summary,
+    message: null,
+  });
+  publishSupportEvent({
+    audience: "user",
+    userId: ticket.userId,
+    event: REALTIME_EVENTS.supportTicketUpdated,
+    ticket: summary,
+    message: null,
+  });
+  // Unread badge refresh.
+  publishSupportEvent({
+    audience: "admin",
+    event: REALTIME_EVENTS.supportUnread,
+    ticket: summary,
+    message: null,
+  });
+  publishSupportEvent({
+    audience: "user",
+    userId: ticket.userId,
+    event: REALTIME_EVENTS.supportUnread,
+    ticket: summary,
+    message: null,
+  });
+};
+
 const userSelect = {
   id: true,
   firstName: true,
@@ -206,6 +333,34 @@ const findTicketOrFail = async (ticketId) => {
       },
     }),
   );
+};
+
+const markMessagesReceived = async (ticket, recipientRole, markRead) => {
+  const senderRole = recipientRole === "admin" ? "user" : "admin";
+  const now = new Date();
+  const result = await withDbRetry(() =>
+    prisma.supportMessage.updateMany({
+      where: {
+        ticketId: ticket.id,
+        senderRole,
+        ...(markRead
+          ? { OR: [{ deliveredAt: null }, { readAt: null }] }
+          : { deliveredAt: null }),
+      },
+      data: markRead
+        ? { deliveredAt: now, readAt: now }
+        : { deliveredAt: now },
+    }),
+  );
+
+  if ((result?.count ?? 0) > 0) {
+    for (const message of ticket.messages) {
+      if (message.senderRole !== senderRole) continue;
+      message.deliveredAt ??= now;
+      if (markRead) message.readAt ??= now;
+    }
+  }
+  return (result?.count ?? 0) > 0;
 };
 
 // ─── Attachments ─────────────────────────────────────────────────────────────
@@ -307,6 +462,7 @@ export const createTicket = async (data, userId) => {
             body,
             attachment: attached.attachment,
             attachmentName: attached.attachmentName,
+            ...(hasConnectedAdmins() ? { deliveredAt: now } : {}),
           },
         },
       },
@@ -317,8 +473,16 @@ export const createTicket = async (data, userId) => {
     }),
   );
 
-  // Fire-and-forget: a notification problem must never fail the reader's send.
+  // The notifier swallows delivery failures, so readers still get a successful
+  // response while tests and callers can rely on notification work completing.
   await notifyAdminsOfNewTicket(ticket);
+
+  // Realtime: new ticket from user -> push to admins (and also user room for completeness).
+  try {
+    emitSupportMessageToUserAndAdmins(ticket, ticket.messages?.[ticket.messages.length - 1]);
+  } catch (error) {
+    console.warn("[support] Realtime emit failed for new ticket:", error.message);
+  }
 
   return {
     status: 201,
@@ -372,7 +536,10 @@ export const getTicket = async (data, userId) => {
     return { status: 404, message: "Conversation not found" };
   }
 
-  if (ticket.userUnread) {
+  const markRead = data?.markRead !== false;
+  const receiptsChanged = await markMessagesReceived(ticket, "user", markRead);
+  let unreadChanged = false;
+  if (ticket.userUnread && markRead) {
     await withDbRetry(() =>
       prisma.supportTicket.update({
         where: { id: ticket.id },
@@ -380,7 +547,9 @@ export const getTicket = async (data, userId) => {
       }),
     );
     ticket.userUnread = false;
+    unreadChanged = true;
   }
+  if (receiptsChanged || unreadChanged) emitTicketUpdate(ticket);
 
   return {
     status: 200,
@@ -428,6 +597,7 @@ export const replyToTicket = async (data, userId) => {
           body,
           attachment: attached.attachment,
           attachmentName: attached.attachmentName,
+          ...(hasConnectedAdmins() ? { deliveredAt: now } : {}),
         },
       }),
       prisma.supportTicket.update({
@@ -445,6 +615,12 @@ export const replyToTicket = async (data, userId) => {
   );
 
   const updated = await findTicketOrFail(ticket.id);
+  try {
+    const createdMessage = updated.messages?.[updated.messages.length - 1];
+    emitSupportMessageToUserAndAdmins(updated, createdMessage);
+  } catch (error) {
+    console.warn("[support] Realtime emit failed for user reply:", error.message);
+  }
   return {
     status: 200,
     message: "Reply sent",
@@ -510,7 +686,10 @@ export const getAdminTicket = async (data) => {
   const ticket = await findTicketOrFail(data?.ticketId ?? data?.id);
   if (!ticket) return { status: 404, message: "Conversation not found" };
 
-  if (ticket.adminUnread) {
+  const markRead = data?.markRead !== false;
+  const receiptsChanged = await markMessagesReceived(ticket, "admin", markRead);
+  let unreadChanged = false;
+  if (ticket.adminUnread && markRead) {
     await withDbRetry(() =>
       prisma.supportTicket.update({
         where: { id: ticket.id },
@@ -518,7 +697,9 @@ export const getAdminTicket = async (data) => {
       }),
     );
     ticket.adminUnread = false;
+    unreadChanged = true;
   }
+  if (receiptsChanged || unreadChanged) emitTicketUpdate(ticket);
 
   return {
     status: 200,
@@ -557,6 +738,7 @@ export const adminReply = async (data, adminId) => {
           body,
           attachment: attached.attachment,
           attachmentName: attached.attachmentName,
+          ...(hasConnectedUser(ticket.userId) ? { deliveredAt: now } : {}),
         },
       }),
       prisma.supportTicket.update({
@@ -572,6 +754,12 @@ export const adminReply = async (data, adminId) => {
   );
 
   const updated = await findTicketOrFail(ticket.id);
+  try {
+    const createdMessage = updated.messages?.[updated.messages.length - 1];
+    emitSupportMessageToUserAndAdmins(updated, createdMessage);
+  } catch (error) {
+    console.warn("[support] Realtime emit failed for admin reply:", error.message);
+  }
   return {
     status: 200,
     message: "Reply sent to the user",
@@ -606,6 +794,11 @@ export const updateTicketStatus = async (data, adminId) => {
   );
 
   const updated = await findTicketOrFail(ticket.id);
+  try {
+    emitTicketUpdate(updated);
+  } catch (error) {
+    console.warn("[support] Realtime emit failed for status update:", error.message);
+  }
   return {
     status: 200,
     message: `Ticket marked as ${status.replace("_", " ")}`,
@@ -635,4 +828,36 @@ export const getSupportStats = async () => {
     message: "Support stats fetched successfully",
     data: { counts, totalCount, unreadCount },
   };
+};
+
+export const getUserUnreadSummary = async (userId) => {
+  const uid = String(userId || "").trim();
+  if (!uid) return { userUnreadCount: 0 };
+  const count = await withDbRetry(() =>
+    prisma.supportTicket.count({ where: { userId: uid, userUnread: true } }),
+  );
+  return { userUnreadCount: count };
+};
+
+export const getAdminUnreadSummary = async () => {
+  const count = await withDbRetry(() =>
+    prisma.supportTicket.count({ where: { adminUnread: true } }),
+  );
+  return { adminUnreadCount: count };
+};
+
+export const getUnreadSummary = async (reqUser) => {
+  const summary = { userUnreadCount: 0, adminUnreadCount: 0 };
+  if (!reqUser?.id) {
+    return { status: 200, message: "Unread summary fetched", data: summary };
+  }
+  summary.userUnreadCount = (
+    await getUserUnreadSummary(reqUser.id)
+  ).userUnreadCount;
+  if (Number(reqUser.userRole) === 1) {
+    summary.adminUnreadCount = (
+      await getAdminUnreadSummary()
+    ).adminUnreadCount;
+  }
+  return { status: 200, message: "Unread summary fetched", data: summary };
 };

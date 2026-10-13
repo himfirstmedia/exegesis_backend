@@ -31,13 +31,13 @@ import aiRouter from "./modules/ai/route.js";
 import textToTextTranslationRouter from "./modules/text-to-text-translation/route.js";
 import pushRouter from "./modules/push/route.js";
 import landingRouter from "./modules/landing/route.js";
-import supportRouter from "./modules/support/route.js";
 import { handleStripeWebhook } from "./modules/subscriptions/webhook.js";
 import {
   getObjectStream,
   isMediaObjectKey,
   validateObjectStorageConfig,
 } from "./services/objectStorage.js";
+import { initRealtime } from "./realtime/index.js";
 
 config();
 
@@ -172,8 +172,6 @@ app.use("/translation", textToTextTranslationRouter);
 app.use("/push", pushRouter);
 // Public landing-page data (daily verse, featured plans, tiers, stats).
 app.use("/landing", landingRouter);
-// User complaints / messages to admins (tickets + replies).
-app.use("/support", supportRouter);
 
 app.get("/health", (req, res) => {
   res.send(
@@ -198,6 +196,8 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   // doesn't pay the ~2s WebSocket handshake.
   warmUpTTS();
 });
+
+initRealtime(server);
 
 process.on("unhandledRejection", (error) => {
   console.error("Unhandled Rejection:", error);

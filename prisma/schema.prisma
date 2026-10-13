@@ -977,6 +977,8 @@ model SupportMessage {
   body           String   @db.Text
   attachment     String?
   attachmentName String?  @map("attachment_name")
+  deliveredAt    DateTime? @map("delivered_at")
+  readAt         DateTime? @map("read_at")
   createdOn      DateTime @default(now()) @map("created_on")
 
   ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
