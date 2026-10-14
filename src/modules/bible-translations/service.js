@@ -295,7 +295,7 @@ const getCatalogPresentation = (entry) => {
   return {
     abbreviation: safeAbbreviation,
     name,
-    fileName: `${safeAbbreviation}.xml`,
+    fileName: entry.fileName,
     year: displayInfo?.year || null,
   };
 };

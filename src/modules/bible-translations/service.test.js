@@ -46,7 +46,7 @@ describe('normalizeTranslationId', () => {
 });
 
 describe('catalog presentation', () => {
-  test('uses recognizable names, abbreviations, and language-free display filenames', () => {
+  test('uses recognizable names, abbreviations, and actual XML filenames', () => {
     const catalog = getCatalog();
     const kjv = catalog.find((entry) => entry.id === 'KJV');
     const berean = catalog.find((entry) => entry.id === 'Berean');
@@ -55,17 +55,34 @@ describe('catalog presentation', () => {
     expect(kjv).toMatchObject({
       name: 'King James Version (KJV)',
       abbreviation: 'KJV',
-      fileName: 'KJV.xml',
+      fileName: 'EnglishKJBible.xml',
     });
     expect(berean).toMatchObject({
       name: 'Berean Standard Bible (BSB)',
       abbreviation: 'BSB',
-      fileName: 'BSB.xml',
+      fileName: 'EnglishBereanBible.xml',
     });
     expect(bengali).toMatchObject({
       name: 'Indian Revised Version - Bengali (IRV-BEN)',
       abbreviation: 'IRV-BEN',
+      fileName: 'BengaliBible.xml',
       year: '2019',
+    });
+  });
+
+  test.each([
+    ['Assamese', 'AssameseBible.xml'],
+    ['Dogri', 'DogriBible.xml'],
+    ['Konkani', 'KonkaniBible.xml'],
+    ['Maithili', 'MaithiliBible.xml'],
+    ['Meitei', 'MeiteiBible.xml'],
+    ['OdiaIRV2017', 'OdiaIRV2017Bible.xml'],
+    ['SanskritDevanagari', 'SanskritDevanagariBible.xml'],
+    ['SantaliCommon', 'SantaliCommonBible.xml'],
+    ['SindhiMuslim', 'SindhiMuslimBible.xml'],
+  ])('returns the real filename for %s', (translationId, fileName) => {
+    expect(getCatalog().find((entry) => entry.id === translationId)).toMatchObject({
+      fileName,
     });
   });
 });
@@ -116,6 +133,37 @@ describe('getVerse (real XML files)', () => {
     const verse = await getVerse(translationId, 'Genesis', 1, 1);
     expect(verse).toMatchObject({
       bookName: 'Genesis',
+      chapterNumber: 1,
+      verseNumber: 1,
+    });
+    expect(verse.text.length).toBeGreaterThan(0);
+  });
+
+  test.each([
+    'Assamese',
+    'OdiaIRV2017',
+    'SindhiMuslim',
+  ])('fetches Genesis 1:1 from the new %s XML', async (translationId) => {
+    const verse = await getVerse(translationId, 'Genesis', 1, 1);
+    expect(verse).toMatchObject({
+      bookName: 'Genesis',
+      chapterNumber: 1,
+      verseNumber: 1,
+    });
+    expect(verse.text.length).toBeGreaterThan(0);
+  });
+
+  test.each([
+    'Dogri',
+    'Konkani',
+    'Maithili',
+    'Meitei',
+    'SanskritDevanagari',
+    'SantaliCommon',
+  ])('fetches Matthew 1:1 from the new NT-only %s XML', async (translationId) => {
+    const verse = await getVerse(translationId, 'Matthew', 1, 1);
+    expect(verse).toMatchObject({
+      bookName: 'Matthew',
       chapterNumber: 1,
       verseNumber: 1,
     });
