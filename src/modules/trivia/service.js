@@ -134,6 +134,43 @@ export const getAnsweredIds = async (userId) => {
   };
 };
 
+export const getOfflinePack = async (userId, body = {}) => {
+  const limit = Math.min(Math.max(Number(body.limit) || 25, 1), 50);
+  const answered = await prisma.triviaAnswer.findMany({
+    where: { userId },
+    select: { questionId: true },
+  });
+  const excluded = new Set(answered.map(item => item.questionId.toString()));
+  if (Array.isArray(body.excludeIds)) {
+    for (const id of body.excludeIds) {
+      try {
+        excluded.add(BigInt(id).toString());
+      } catch {}
+    }
+  }
+
+  const where = { isActive: true };
+  if (body.difficulty) where.difficulty = body.difficulty;
+  if (excluded.size > 0) {
+    where.id = { notIn: [...excluded].map(id => BigInt(id)) };
+  }
+
+  const questions = await prisma.triviaQuestion.findMany({
+    where,
+    orderBy: { createdOn: 'desc' },
+    take: limit,
+  });
+
+  return {
+    status: 200,
+    message: 'Offline trivia pack',
+    data: {
+      data: serializeBigInt(questions),
+      total: questions.length,
+    },
+  };
+};
+
 export const getRandomQuestion = async (userId, body) => {
   const { category, difficulty, excludeIds } = body || {};
 
@@ -200,15 +237,6 @@ export const submitAnswer = async (userId, body) => {
     return { status: 400, message: 'questionId and selectedAnswer are required' };
   }
 
-  // Check if already answered
-  const existing = await prisma.triviaAnswer.findUnique({
-    where: { userId_questionId: { userId, questionId: BigInt(questionId) } },
-  });
-
-  if (existing) {
-    return { status: 400, message: 'Already answered this question' };
-  }
-
   const question = await prisma.triviaQuestion.findUnique({
     where: { id: BigInt(questionId) },
   });
@@ -217,27 +245,73 @@ export const submitAnswer = async (userId, body) => {
     return { status: 404, message: 'Question not found' };
   }
 
-  const isCorrect = Number(selectedAnswer) === question.correctAnswer;
+  let options;
+  try {
+    options = JSON.parse(question.optionsJson || '[]');
+  } catch {
+    return { status: 500, message: 'Question options are invalid' };
+  }
+  const submittedAnswer = Number(selectedAnswer);
+  if (
+    !Array.isArray(options) ||
+    !Number.isInteger(submittedAnswer) ||
+    submittedAnswer < 0 ||
+    submittedAnswer >= options.length
+  ) {
+    return { status: 400, message: 'selectedAnswer is invalid' };
+  }
 
-  await prisma.triviaAnswer.create({
-    data: {
-      userId,
-      questionId: BigInt(questionId),
-      selectedAnswer: Number(selectedAnswer),
-      isCorrect,
-    },
+  const answerKey = { userId_questionId: { userId, questionId: BigInt(questionId) } };
+  let answer = await prisma.triviaAnswer.findUnique({ where: answerKey });
+  let duplicate = !!answer;
+
+  if (!answer) {
+    try {
+      answer = await prisma.triviaAnswer.create({
+        data: {
+          userId,
+          questionId: BigInt(questionId),
+          selectedAnswer: submittedAnswer,
+          isCorrect: submittedAnswer === question.correctAnswer,
+        },
+      });
+    } catch (error) {
+      if (error?.code !== 'P2002') throw error;
+      answer = await prisma.triviaAnswer.findUnique({ where: answerKey });
+      if (!answer) throw error;
+      duplicate = true;
+    }
+  }
+
+  const grouped = await prisma.triviaAnswer.groupBy({
+    by: ['selectedAnswer'],
+    where: { questionId: BigInt(questionId) },
+    _count: { _all: true },
   });
-
-  const options = JSON.parse(question.optionsJson || '[]');
+  const optionSelectionCounts = Array(options.length).fill(0);
+  for (const group of grouped) {
+    if (group.selectedAnswer >= 0 && group.selectedAnswer < options.length) {
+      optionSelectionCounts[group.selectedAnswer] = group._count._all;
+    }
+  }
+  const totalSelections = optionSelectionCounts.reduce((sum, count) => sum + count, 0);
 
   return {
     status: 200,
-    message: isCorrect ? 'Correct!' : 'Incorrect',
+    message: duplicate
+      ? 'Answer already recorded'
+      : answer.isCorrect
+        ? 'Correct!'
+        : 'Incorrect',
     data: {
-      isCorrect,
+      selectedAnswer: answer.selectedAnswer,
+      isCorrect: answer.isCorrect,
       correctAnswer: question.correctAnswer,
       correctAnswerText: options[question.correctAnswer] || '',
       explanation: question.explanation,
+      duplicate,
+      optionSelectionCounts,
+      totalSelections,
     },
   };
 };

@@ -76,7 +76,9 @@ describe('trivia response translation', () => {
       selectedAnswer: 1,
       correctAnswerText: 'Jerusalem',
       explanation: 'Jerusalem is correct.',
-      attempts: 4,
+      duplicate: false,
+      optionSelectionCounts: [2, 4, 8, 1],
+      totalSelections: 15,
     };
 
     await expect(translateSubmitResult(item, 'ar')).resolves.toEqual({

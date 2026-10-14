@@ -95,6 +95,22 @@ export const getAnsweredIds = async (req, res) => {
   }
 };
 
+export const getOfflinePack = async (req, res) => {
+  try {
+    const result = await triviaService.getOfflinePack(req.user.id, req.body);
+    if (result.data?.data) {
+      result.data.data = await translateTriviaQuestions(
+        result.data.data,
+        req.body?.lang || 'en',
+      );
+    }
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[TriviaController] getOfflinePack error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error fetching offline trivia: ' + error.message }));
+  }
+};
+
 export const getUserStats = async (req, res) => {
   try {
     const result = await triviaService.getUserStats(req.user.id);

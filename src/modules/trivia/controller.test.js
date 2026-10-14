@@ -11,6 +11,7 @@ jest.mock('./service.js', () => ({
   getQuestion: jest.fn(),
   getAllQuestions: jest.fn(),
   getRandomQuestion: jest.fn(),
+  getOfflinePack: jest.fn(),
   submitAnswer: jest.fn(),
   getTodaysTrivia: jest.fn(),
 }));
@@ -56,6 +57,22 @@ describe('trivia controller response languages', () => {
     await triviaController.getAllQuestions({ body: { lang: 'sw' }, user: { id: 'user-1' } }, makeRes());
 
     expect(translateTriviaQuestions).toHaveBeenCalledWith(records, 'sw');
+  });
+
+  test('getOfflinePack translates its user-specific question pack', async () => {
+    const records = [{ id: 4, correctAnswer: 1 }];
+    triviaService.getOfflinePack.mockResolvedValue({
+      status: 200,
+      message: 'OK',
+      data: { data: records, total: 1 },
+    });
+
+    await triviaController.getOfflinePack(
+      { body: { lang: 'fr' }, user: { id: 'user-1' } },
+      makeRes(),
+    );
+
+    expect(translateTriviaQuestions).toHaveBeenCalledWith(records, 'fr');
   });
 
   test('defaults a missing body language to English', async () => {

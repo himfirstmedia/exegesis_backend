@@ -10,6 +10,7 @@ router.post('/submit', authenticate, triviaController.submitAnswer);
 router.post('/stats', authenticate, triviaController.getUserStats);
 router.post('/performance', authenticate, triviaController.getCurrentUserPerformance);
 router.post('/answered-ids', authenticate, triviaController.getAnsweredIds);
+router.post('/offline-pack', authenticate, triviaController.getOfflinePack);
 
 // Admin CRUD (authenticated + admin)
 router.post('/create', authenticate, requireAdmin, triviaController.createQuestion);
