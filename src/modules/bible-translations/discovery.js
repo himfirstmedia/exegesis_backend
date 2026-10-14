@@ -32,6 +32,9 @@ export const LANGUAGE_NAMES = {
   ur: 'Urdu', ug: 'Uyghur', uz: 'Uzbek', vi: 'Vietnamese',
   cy: 'Welsh', xh: 'Xhosa', yi: 'Yiddish', yo: 'Yoruba', zu: 'Zulu',
   fil: 'Filipino',
+  // Added with the Indian-language Bibles (Lordsbook/Indic provider codes)
+  brx: 'Bodo', doi: 'Dogri', kok: 'Konkani', mai: 'Maithili',
+  mni: 'Meitei (Manipuri)', sa: 'Sanskrit', sat: 'Santali',
 };
 
 // Longest-first match: language name (as it appears in the file prefix) → ISO 639-1 code
@@ -104,7 +107,7 @@ export const PREFIX_TO_LANG = {
   Kazakhstan: 'kk', KenyaGIK: 'ki', Khasi: 'kha', Kiche: 'quc',
   Kikongo: 'kg', Kikuyu: 'ki', Kikwango: 'kg', Kimbundu: 'kmb',
   Kimiiru: 'mer', Kirundi: 'rn', Kituba: 'ktu', Kongo: 'kg',
-  Konkani: 'gom', Korku: 'kfq', Koya: 'kff', Kosraean: 'kos',
+  Konkani: 'kok', Korku: 'kfq', Koya: 'kff', Kosraean: 'kos',
   KoyraChiini: 'khq', KoyraboroSenni: 'ses', Kpelle: 'kpe',
   Krio: 'kri', Kumaoni: 'kfy', Kurukh: 'kru', Kusaal: 'kus',
   Kutchhi: 'kfr', Ladin: 'lld', Lahu: 'lhu', Lakota: 'lkt',
@@ -113,6 +116,7 @@ export const PREFIX_TO_LANG = {
   Luo: 'luo', Maasai: 'mas', Madurese: 'mad', Maithili: 'mai',
   Makassar: 'mak', Makhuwa: 'vmw', Makonde: 'kde', Mandingo: 'man',
   Manipuri: 'mni', Mapudungun: 'arn', Mari: 'chm', Marwari: 'mwr',
+  Meetei: 'mni', MeiteiMayek: 'mni',
   Marshallese: 'mh', Mazanderani: 'mzn', Meitei: 'mni', Mende: 'men',
   Mewari: 'mtr', Mizo: 'lus', Moba: 'mff', Morisyen: 'mfe',
   Mossi: 'mos', Munda: 'unr', Nahuatl: 'nah', Nahuati: 'nah',
@@ -190,6 +194,7 @@ export const LEGACY_SHORT_IDS = {
   MalayalamBCSBible: 'MalayalamBCS',
   MarathiIRVMARBible: 'MarathiIRVMAR',
   Nepali2012Bible: 'Nepali2012',
+  OdiaIRV2017Bible: 'OdiaIRV2017',
   PunjabiIRVBible: 'PunjabiIRV',
   Tamil2017Bible: 'Tamil2017',
   UrduIRVURDBible: 'Urdu',
@@ -323,6 +328,16 @@ export const CURATED_TRANSLATION_SHORT_IDS = new Set([
   'PunjabiIRV',
   'Tamil2017',
   'Telugu',
+  // Indian-language Bibles served from the Holy-Bible-XML-Format corpus
+  'Assamese',
+  'Dogri',
+  'Konkani',
+  'Maithili',
+  'Meitei',
+  'OdiaIRV2017',
+  'SanskritDevanagari',
+  'SantaliCommon',
+  'SindhiMuslim',
 ]);
 
 const shouldIncludeCatalogEntry = (entry) => {

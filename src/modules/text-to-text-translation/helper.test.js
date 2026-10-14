@@ -16,6 +16,12 @@ describe("text translation helpers", () => {
     expect(toLibreLanguageCode("ar")).toBe("ar");
   });
 
+  test("maps the app script-neutral codes to the provider's script-tagged ones", () => {
+    expect(toLibreLanguageCode("mni")).toBe("mni-mtei");
+    expect(toLibreLanguageCode("sd")).toBe("sd-arab");
+    expect(toLibreLanguageCode("as")).toBe("as");
+  });
+
   test("splits at natural boundaries without losing text", () => {
     const text = "First paragraph sentence.\n\nSecond paragraph has several words to split.";
     const chunks = splitText(text, 30);

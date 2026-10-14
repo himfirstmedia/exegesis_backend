@@ -9,7 +9,7 @@ const XML_DIR = path.join(MODULE_DIR, 'Holy-Bible-XML-Format');
 describe('discoverBibles', () => {
   test('keeps the lean curated free-translation catalog', () => {
     const entries = discoverBibles(XML_DIR);
-    expect(entries.length).toBeLessThan(40);
+    expect(entries.length).toBe(47);
     expect(entries.length).toBeGreaterThan(10);
     expect(entries.map((entry) => entry.shortId)).toEqual(
       expect.arrayContaining([
@@ -29,6 +29,16 @@ describe('discoverBibles', () => {
         'MalayalamBCS',
         'PunjabiIRV',
         'Nepali2012',
+        // Indian-language Bibles added from the Holy-Bible-XML-Format corpus
+        'Assamese',
+        'Dogri',
+        'Konkani',
+        'Maithili',
+        'Meitei',
+        'OdiaIRV2017',
+        'SanskritDevanagari',
+        'SantaliCommon',
+        'SindhiMuslim',
       ]),
     );
   });
@@ -138,5 +148,21 @@ describe('discoverBibles', () => {
     const entries = discoverBibles(XML_DIR);
     const entry = entries.find((candidate) => candidate.fileName === fileName);
     expect(entry).toMatchObject({ shortId, language });
+  });
+
+  test.each([
+    ['AssameseBible.xml', 'Assamese', 'as', 'Assamese'],
+    ['DogriBible.xml', 'Dogri', 'doi', 'Dogri'],
+    ['KonkaniBible.xml', 'Konkani', 'kok', 'Konkani'],
+    ['MaithiliBible.xml', 'Maithili', 'mai', 'Maithili'],
+    ['MeiteiBible.xml', 'Meitei', 'mni', 'Meitei (Manipuri)'],
+    ['OdiaIRV2017Bible.xml', 'OdiaIRV2017', 'or', 'Odia'],
+    ['SanskritDevanagariBible.xml', 'SanskritDevanagari', 'sa', 'Sanskrit'],
+    ['SantaliCommonBible.xml', 'SantaliCommon', 'sat', 'Santali'],
+    ['SindhiMuslimBible.xml', 'SindhiMuslim', 'sd', 'Sindhi'],
+  ])('%s → %s / %s / "%s"', (fileName, shortId, language, languageName) => {
+    const entries = discoverBibles(XML_DIR);
+    const entry = entries.find((candidate) => candidate.fileName === fileName);
+    expect(entry).toMatchObject({ shortId, language, languageName });
   });
 });
