@@ -305,9 +305,41 @@ describe("text-to-text translation service", () => {
     await expect(first).resolves.toMatchObject({ translatedText: "lento" });
   });
 
+  test("lets Libre fallback run while the Lordsbook queue is saturated", async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = "true";
+    process.env.LORDSBOOK_TEXT_MAX_CONCURRENCY = "1";
+    process.env.LORDSBOOK_TEXT_QUEUE_MAX = "2";
+    process.env.LORDSBOOK_TEXT_QUEUE_WAIT_MS = "10";
+    let releaseFirst;
+    let markStarted;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    global.fetch.mockImplementation((url, options) => {
+      const { q } = JSON.parse(options.body);
+      if (url.startsWith("https://lordsbook.test")) {
+        if (q === "first provider") {
+          markStarted();
+          return new Promise((resolve) => {
+            releaseFirst = () => resolve(jsonResponse({ message: "down" }, 503));
+          });
+        }
+        throw new Error("Queued Lordsbook work should expire before starting");
+      }
+      return Promise.resolve(jsonResponse({ translatedText: `libre:${q}` }));
+    });
+
+    const first = translateText({ q: "first provider", source: "en", target: "es" });
+    await started;
+    await expect(
+      translateText({ q: "fallback provider", source: "en", target: "es" }),
+    ).resolves.toMatchObject({ translatedText: "libre:fallback provider" });
+
+    releaseFirst();
+    await expect(first).resolves.toMatchObject({ translatedText: "libre:first provider" });
+  });
+
   test("enforces queue deadline while waiting at the provider start gate", async () => {
     process.env.LIBRETRANSLATE_MAX_CONCURRENCY = "2";
-    process.env.LIBRETRANSLATE_MIN_DELAY_MS = "100";
+    process.env.LIBRETRANSLATE_MIN_DELAY_MS = "1000";
     process.env.TRANSLATION_PROVIDER_QUEUE_WAIT_MS = "10";
     let releaseFirst;
     let markStarted;
@@ -369,10 +401,55 @@ describe("text-to-text translation service", () => {
     ]);
   });
 
+  test("skips Lordsbook for targets only advertised by LibreTranslate", async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = "true";
+    global.fetch.mockImplementation(async (url, options) => {
+      expect(url).toBe("https://translate.test/translate");
+      const payload = JSON.parse(options.body);
+      return jsonResponse({ translatedText: `libre:${payload.q}` });
+    });
+
+    await expect(
+      translateText({ q: "Welcome", source: "en", target: "uk" }),
+    ).resolves.toMatchObject({ translatedText: "libre:Welcome" });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("stops a failed Lordsbook batch instead of retrying every item", async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = "true";
+    process.env.LORDSBOOK_TEXT_MAX_CONCURRENCY = "2";
+    global.fetch.mockImplementation(async (url, options) => {
+      const payload = JSON.parse(options.body);
+      if (url.startsWith("https://lordsbook.test")) {
+        return jsonResponse({ message: "down" }, 503);
+      }
+      return jsonResponse({
+        translatedText: payload.q.map((text) => `libre:${text}`),
+      });
+    });
+
+    const result = await translateBatch({
+      q: ["one", "two", "three"],
+      source: "en",
+      target: "ta",
+    });
+
+    expect(result.translations.map((item) => item.translatedText)).toEqual([
+      "libre:one",
+      "libre:two",
+      "libre:three",
+    ]);
+    expect(global.fetch.mock.calls.filter(([url]) =>
+      url.startsWith("https://lordsbook.test"))).toHaveLength(2);
+  });
+
   test("trips the Lordsbook breaker only for retryable upstream failures", async () => {
     process.env.LORDSBOOK_TEXT_ENABLE = "true";
     process.env.LORDSBOOK_TEXT_BREAKER_THRESHOLD = "2";
     let lordsbookStatus = 400;
+    const lordsbookCalls = () =>
+      global.fetch.mock.calls.filter(([url]) =>
+        url.startsWith("https://lordsbook.test"));
     global.fetch.mockImplementation(async (url, options) => {
       const { q } = JSON.parse(options.body);
       if (url.startsWith("https://lordsbook.test")) {
@@ -381,11 +458,22 @@ describe("text-to-text translation service", () => {
       return jsonResponse({ translatedText: `libre:${q}` });
     });
 
-    for (const text of ["bad request 1", "bad request 2", "bad request 3"]) {
-      await translateText({ q: text, source: "en", target: "es" });
+    // Three distinct targets: each is attempted once, and none of the 4xx
+    // responses trips the breaker.
+    for (const [text, target] of [
+      ["bad request 1", "es"],
+      ["bad request 2", "fr"],
+      ["bad request 3", "de"],
+    ]) {
+      await translateText({ q: text, source: "en", target });
     }
-    expect(global.fetch.mock.calls.filter(([url]) =>
-      url.startsWith("https://lordsbook.test"))).toHaveLength(3);
+    expect(lordsbookCalls()).toHaveLength(3);
+
+    // A target Lordsbook rejected is remembered, so it stops paying the wasted
+    // upstream round trip until the capability entry expires.
+    global.fetch.mockClear();
+    await translateText({ q: "bad request 4", source: "en", target: "es" });
+    expect(lordsbookCalls()).toHaveLength(0);
 
     __resetTranslationProviderCache();
     cache.get.mockResolvedValue(null);
@@ -394,8 +482,7 @@ describe("text-to-text translation service", () => {
     for (const text of ["upstream 1", "upstream 2", "upstream 3"]) {
       await translateText({ q: text, source: "en", target: "es" });
     }
-    expect(global.fetch.mock.calls.filter(([url]) =>
-      url.startsWith("https://lordsbook.test"))).toHaveLength(2);
+    expect(lordsbookCalls()).toHaveLength(2);
   });
 
   test("rejects incomplete provider batch output", async () => {

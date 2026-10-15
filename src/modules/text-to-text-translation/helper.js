@@ -2,8 +2,15 @@ const MIN_BOUNDARY_RATIO = 0.5;
 // App/UI language codes that need a different code on the translation provider.
 // `fil` is LibreTranslate's `tl`; the Indian-language provider (Lordsbook) has no
 // bare `mni`/`sd`, only the script-tagged `mni-mtei` (Meetei Mayek) and
-// `sd-arab` (Arabic script).
-const LIBRE_LANGUAGE_CODES = { fil: "tl", mni: "mni-mtei", sd: "sd-arab" };
+// `sd-arab` (Arabic script). `zh` has to be script-tagged too: the LibreTranslate
+// deployment exposes `zh-Hans`/`zh-Hant` and rejects the bare `zh` in its
+// `/languages` capability check (its `/translate` accepts both).
+const LIBRE_LANGUAGE_CODES = {
+  fil: "tl",
+  mni: "mni-mtei",
+  sd: "sd-arab",
+  zh: "zh-Hans",
+};
 
 export const toLibreLanguageCode = (language) =>
   LIBRE_LANGUAGE_CODES[language] || language;

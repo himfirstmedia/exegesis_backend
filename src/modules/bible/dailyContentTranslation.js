@@ -39,12 +39,12 @@ const getMaxBatchItems = () => {
   return Number.isInteger(value) && value > 0 ? value : 100;
 };
 
-// Daily content includes several long prose fields. Its endpoints use a longer
-// client timeout than ordinary API calls, so allow enough time for bounded
-// chunk translation while still preventing a permanently hung request.
+// Return cached/source content before the app's 12-second request timeout. Any
+// provider work still resolves independently and can populate lower-level
+// translation caches for the next request.
 const getTranslationTimeBudget = () => {
   const value = Number.parseInt(process.env.TRANSLATION_TIME_BUDGET_MS, 10);
-  return Number.isInteger(value) && value > 0 ? value : 45000;
+  return Number.isInteger(value) && value > 0 ? value : 9000;
 };
 
 const addText = (entries, value, setValue) => {

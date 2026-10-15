@@ -16,6 +16,12 @@ describe("text translation helpers", () => {
     expect(toLibreLanguageCode("ar")).toBe("ar");
   });
 
+  test("maps app codes that the provider only exposes with a script tag", () => {
+    // LibreTranslate lists zh-Hans/zh-Hant and rejects bare `zh` in its
+    // capability check, so the request has to carry the script tag.
+    expect(toLibreLanguageCode("zh")).toBe("zh-Hans");
+  });
+
   test("maps the app script-neutral codes to the provider's script-tagged ones", () => {
     expect(toLibreLanguageCode("mni")).toBe("mni-mtei");
     expect(toLibreLanguageCode("sd")).toBe("sd-arab");

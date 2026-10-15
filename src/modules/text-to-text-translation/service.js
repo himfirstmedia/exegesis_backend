@@ -22,6 +22,11 @@ const readPositiveInt = (name, fallback) => {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 };
 
+const readNonNegativeInt = (name, fallback) => {
+  const value = Number.parseInt(process.env[name], 10);
+  return Number.isInteger(value) && value >= 0 ? value : fallback;
+};
+
 const getConfig = () => ({
   baseUrl: (process.env.LIBRETRANSLATE_URL || DEFAULT_LIBRETRANSLATE_URL).replace(/\/$/, ""),
   apiKey: process.env.LIBRETRANSLATE_API_KEY || "",
@@ -35,6 +40,13 @@ const getConfig = () => ({
   maxBatchItems: readPositiveInt("TRANSLATION_MAX_BATCH_ITEMS", 100),
   providerQueueMax: readPositiveInt("TRANSLATION_PROVIDER_QUEUE_MAX", 100),
   providerQueueWaitMs: readPositiveInt("TRANSLATION_PROVIDER_QUEUE_WAIT_MS", 2000),
+  lordsbookMaxConcurrency: readPositiveInt("LORDSBOOK_TEXT_MAX_CONCURRENCY", 2),
+  lordsbookMinDelayMs: readNonNegativeInt("LORDSBOOK_TEXT_MIN_DELAY_MS", 0),
+  lordsbookQueueMax: readPositiveInt("LORDSBOOK_TEXT_QUEUE_MAX", 20),
+  // Must outlast a normal upstream round trip: Lordsbook translates one item
+  // per request (~0.5-1.5s), so a 1s default expired queued batch items before
+  // they could even start, which dumped them onto the LibreTranslate fallback.
+  lordsbookQueueWaitMs: readPositiveInt("LORDSBOOK_TEXT_QUEUE_WAIT_MS", 15000),
   cacheTtl: readPositiveInt("TRANSLATION_CACHE_TTL_SECONDS", 7 * 24 * 60 * 60),
   fallbackCacheTtl: readPositiveInt(
     "TRANSLATION_LORDSBOOK_FALLBACK_CACHE_TTL_SECONDS",
@@ -179,7 +191,9 @@ const assertSupportedTarget = async (target) => {
 
   try {
     const codes = await getSupportedLanguageCodes();
-    if (!codes.has(language)) {
+    // The provider reports its list lowercased (`zh-hans`) while a mapped code
+    // keeps its script tag (`zh-Hans`), so compare case-insensitively.
+    if (!codes.has(language.toLowerCase())) {
       throw new ValidationError(
         `Translation to '${target}' is not supported by the configured translation provider (libretranslate); install the missing model or choose a supported language`,
       );
@@ -199,8 +213,13 @@ export const __resetTranslationProviderCache = () => {
   translationMemoryCache.clear();
   translationInFlight.clear();
   lordsbookTextBreaker = { failures: [], cooldownUntil: 0 };
-  providerStartGate = Promise.resolve();
-  lastProviderStart = 0;
+  lordsbookUnsupportedTargets.clear();
+  for (const state of Object.values(providerLimiters)) {
+    state.queue.splice(0).forEach((entry) => clearTimeout(entry.timer));
+    state.active = 0;
+    state.startGate = Promise.resolve();
+    state.lastStart = 0;
+  }
 };
 
 // ── Lordsbook text-provider circuit breaker ────────────────────────────────
@@ -244,10 +263,78 @@ const isLordsbookBreakerFailure = (error) =>
   !error.providerQueueOverload &&
   (!error.status || error.status >= 500);
 
-let activeProviderRequests = 0;
-const providerQueue = [];
-let providerStartGate = Promise.resolve();
-let lastProviderStart = 0;
+// ── Lordsbook per-target capability memory ─────────────────────────────────
+// Lordsbook text ships a fixed language list; anything outside it answers 400
+// "Translation failed" (e.g. Indonesian, Japanese, Korean, Polish, Romanian,
+// Turkish, Ukrainian, Chinese — LibreTranslate-only targets). Remember the
+// rejection briefly so every chunk of every request does not pay a wasted
+// Lordsbook round trip plus a warning before the LibreTranslate fallback runs.
+const LORDSBOOK_UNSUPPORTED_TARGET_TTL_MS = 10 * 60 * 1000;
+const lordsbookUnsupportedTargets = new Map();
+const LORDSBOOK_TARGET_ALIASES = {
+  mni: "mni-mtei",
+  sd: "sd-arab",
+};
+const LORDSBOOK_TARGETS = new Set([
+  "en", "ar", "de", "el", "es", "fr", "hi", "it", "pt", "ru", "sw",
+  "as", "bn", "brx", "doi", "gu", "kn", "ks-arab", "ks-deva", "kok",
+  "mai", "ml", "mni-beng", "mni-mtei", "mr", "ne", "or", "pa", "sa",
+  "sat", "sd-arab", "sd-deva", "ta", "te", "ur", "tl", "fil",
+]);
+
+const normalizeTargetKey = (target) => {
+  const key = String(target || "").trim().toLowerCase();
+  return LORDSBOOK_TARGET_ALIASES[key] || key;
+};
+
+const isLordsbookTargetUnsupported = (target) => {
+  const key = normalizeTargetKey(target);
+  if (!LORDSBOOK_TARGETS.has(key)) return true;
+  const until = lordsbookUnsupportedTargets.get(key);
+  if (!until) return false;
+  if (until <= Date.now()) {
+    lordsbookUnsupportedTargets.delete(key);
+    return false;
+  }
+  return true;
+};
+
+// Only a client-side rejection means "this target is not offered"; upstream
+// failures (5xx, timeouts) are the breaker's job, not a capability signal.
+const isLordsbookTargetRejection = (error) =>
+  !error?.providerQueueOverload &&
+  [400, 404, 422].includes(error?.status);
+
+const markLordsbookTargetUnsupported = (target) => {
+  const key = normalizeTargetKey(target);
+  if (!key) return;
+  lordsbookUnsupportedTargets.set(
+    key,
+    Date.now() + LORDSBOOK_UNSUPPORTED_TARGET_TTL_MS,
+  );
+};
+
+const providerLimiters = {
+  libre: { active: 0, queue: [], startGate: Promise.resolve(), lastStart: 0 },
+  lordsbook: { active: 0, queue: [], startGate: Promise.resolve(), lastStart: 0 },
+};
+
+const getProviderLimit = (provider) => {
+  const config = getConfig();
+  return provider === "lordsbook"
+    ? {
+        maxConcurrency: config.lordsbookMaxConcurrency,
+        minDelayMs: config.lordsbookMinDelayMs,
+        queueMax: config.lordsbookQueueMax,
+        queueWaitMs: config.lordsbookQueueWaitMs,
+      }
+    : {
+        maxConcurrency: config.maxConcurrency,
+        minDelayMs: config.minDelayMs,
+        queueMax: config.providerQueueMax,
+        queueWaitMs: config.providerQueueWaitMs,
+      };
+};
 
 const providerQueueError = (message) => {
   const error = new AppError(503, message);
@@ -255,29 +342,30 @@ const providerQueueError = (message) => {
   return error;
 };
 
-const waitForProviderStart = (entry) => {
-  const scheduled = providerStartGate.then(async () => {
+const waitForProviderStart = (state, entry, minDelayMs) => {
+  const scheduled = state.startGate.then(async () => {
     if (entry.expired || Date.now() >= entry.deadline) return;
-    const wait = getConfig().minDelayMs - (Date.now() - lastProviderStart);
+    const wait = minDelayMs - (Date.now() - state.lastStart);
     if (wait > 0) {
       await new Promise((resolve) =>
         setTimeout(resolve, Math.min(wait, Math.max(0, entry.deadline - Date.now()))));
     }
     if (entry.expired || Date.now() >= entry.deadline) return;
-    lastProviderStart = Date.now();
+    state.lastStart = Date.now();
   });
-  providerStartGate = scheduled.catch(() => {});
+  state.startGate = scheduled.catch(() => {});
   return scheduled;
 };
 
-const runNextProviderRequest = () => {
-  const maxConcurrency = getConfig().maxConcurrency;
-  while (activeProviderRequests < maxConcurrency && providerQueue.length) {
-    const entry = providerQueue.shift();
+const runNextProviderRequest = (provider) => {
+  const state = providerLimiters[provider];
+  const { maxConcurrency, minDelayMs } = getProviderLimit(provider);
+  while (state.active < maxConcurrency && state.queue.length) {
+    const entry = state.queue.shift();
     const { job, resolve, reject } = entry;
     entry.queued = false;
-    activeProviderRequests += 1;
-    void waitForProviderStart(entry)
+    state.active += 1;
+    void waitForProviderStart(state, entry, minDelayMs)
       .then(() => {
         if (entry.expired || Date.now() >= entry.deadline) return undefined;
         clearTimeout(entry.timer);
@@ -285,18 +373,19 @@ const runNextProviderRequest = () => {
       })
       .then(resolve, reject)
       .finally(() => {
-        activeProviderRequests -= 1;
-        runNextProviderRequest();
+        state.active -= 1;
+        runNextProviderRequest(provider);
       });
   }
 };
 
-const withProviderLimit = (job) =>
+const withProviderLimit = (provider, job) =>
   new Promise((resolve, reject) => {
-    const config = getConfig();
+    const state = providerLimiters[provider];
+    const { maxConcurrency, queueMax, queueWaitMs } = getProviderLimit(provider);
     if (
-      activeProviderRequests >= config.maxConcurrency &&
-      providerQueue.length >= config.providerQueueMax
+      state.active >= maxConcurrency &&
+      state.queue.length >= queueMax
     ) {
       reject(providerQueueError("Translation provider queue is full; please retry shortly"));
       return;
@@ -306,20 +395,20 @@ const withProviderLimit = (job) =>
       resolve,
       reject,
       timer: null,
-      deadline: Date.now() + config.providerQueueWaitMs,
+      deadline: Date.now() + queueWaitMs,
       expired: false,
       queued: true,
     };
     entry.timer = setTimeout(() => {
       entry.expired = true;
       if (entry.queued) {
-        const index = providerQueue.indexOf(entry);
-        if (index !== -1) providerQueue.splice(index, 1);
+        const index = state.queue.indexOf(entry);
+        if (index !== -1) state.queue.splice(index, 1);
       }
       reject(providerQueueError("Translation provider queue wait exceeded; please retry shortly"));
-    }, config.providerQueueWaitMs);
-    providerQueue.push(entry);
-    runNextProviderRequest();
+    }, queueWaitMs);
+    state.queue.push(entry);
+    runNextProviderRequest(provider);
   });
 
 const libreRequest = async (path, options = {}) => {
@@ -387,15 +476,20 @@ const translateChunk = async (chunk, options) => {
 
   const config = getConfig();
   
-  // Try Lordsbook first ONLY if explicitly enabled (and the upstream is
-  // believed healthy — see circuit breaker above).
-  if (isLordsbookTextEnabled() && !lordsbookTextBreakerOpen()) {
+  // Try Lordsbook first ONLY if explicitly enabled, the upstream is believed
+  // healthy (see circuit breaker above), and this target is not already known
+  // to be outside Lordsbook's language list.
+  if (
+    isLordsbookTextEnabled() &&
+    !lordsbookTextBreakerOpen() &&
+    !isLordsbookTargetUnsupported(options.target)
+  ) {
     try {
-      const lbResult = await withProviderLimit(() =>
+      const lbResult = await withProviderLimit("lordsbook", () =>
         translateLordsbookText({
           q: value,
           source: options.source,
-          target: options.target,
+          target: normalizeTargetKey(options.target),
           format: options.format,
         }),
       );
@@ -406,10 +500,14 @@ const translateChunk = async (chunk, options) => {
         }, "lordsbook");
       }
     } catch (e) {
-      if (isLordsbookBreakerFailure(e)) {
+      if (isLordsbookTargetRejection(e)) {
+        markLordsbookTargetUnsupported(options.target);
+      } else if (isLordsbookBreakerFailure(e)) {
         recordLordsbookTextFailure();
       }
-      console.warn(`[Translation] Lordsbook failed, falling back to LibreTranslate: ${e.message}`);
+      if (!e.providerQueueOverload) {
+        console.warn(`[Translation] Lordsbook failed, falling back to LibreTranslate: ${e.message}`);
+      }
     }
   }
 
@@ -424,7 +522,7 @@ const translateChunk = async (chunk, options) => {
   };
   let result;
   for (let attempt = 1; attempt <= config.retryAttempts; attempt += 1) {
-    result = await withProviderLimit(() =>
+    result = await withProviderLimit("libre", () =>
       libreRequest("/translate", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -490,7 +588,7 @@ const translateBatchUncached = async ({ q, ...options }) => {
   if (q.some((text) => text.length > config.chunkSize)) {
     const translations = await mapWithConcurrency(
       q,
-      config.maxConcurrency,
+      config.lordsbookMaxConcurrency,
       (text) => translateTextUncached({ q: text, ...options }),
     );
     return {
@@ -510,24 +608,40 @@ const translateBatchUncached = async ({ q, ...options }) => {
   let lordsbookResults = null;
   if (
     isLordsbookTextEnabled() &&
-    !lordsbookTextBreakerOpen()
+    !lordsbookTextBreakerOpen() &&
+    !isLordsbookTargetUnsupported(options.target)
   ) {
+    // Fan out with the Lordsbook provider's own concurrency, not the
+    // LibreTranslate setting: one worker more than the Lordsbook limiter allows
+    // guaranteed a queued item per worker, and those queued items used to
+    // expire while holding a provider slot (see queue-wait default above).
+    let batchFailure = null;
     lordsbookResults = await mapWithConcurrency(
       prepared,
-      config.maxConcurrency,
+      config.lordsbookMaxConcurrency,
       async (item) => {
+        if (batchFailure) return { result: null, error: batchFailure };
         try {
-          const result = await withProviderLimit(() =>
+          const result = await withProviderLimit("lordsbook", () =>
             translateLordsbookText({
               q: item.value,
               source: options.source || "auto",
-              target: options.target,
+              target: normalizeTargetKey(options.target),
               format: options.format || "text",
             }),
           );
           return { result, error: null };
         } catch (error) {
-          console.warn(`[Translation] Lordsbook batch item failed: ${error.message}`);
+          const isFirstFailure = !batchFailure;
+          batchFailure ||= error;
+          if (isLordsbookTargetRejection(error)) {
+            markLordsbookTargetUnsupported(options.target);
+          }
+          if (isFirstFailure && !error.providerQueueOverload) {
+            console.warn(
+              `[Translation] Lordsbook batch failed for ${options.target}; falling back to LibreTranslate: ${error.message}`,
+            );
+          }
           return { result: null, error };
         }
       },
@@ -570,7 +684,7 @@ const translateBatchUncached = async ({ q, ...options }) => {
       : {}),
     ...(config.apiKey ? { api_key: config.apiKey } : {}),
   };
-  const result = await withProviderLimit(() =>
+  const result = await withProviderLimit("libre", () =>
     libreRequest("/translate", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -727,7 +841,7 @@ export const detectLanguage = async (q) => {
   const config = getConfig();
   assertTextLimit(q, config.maxTextLength);
   const payload = { q, ...(config.apiKey ? { api_key: config.apiKey } : {}) };
-  const result = await withProviderLimit(() =>
+  const result = await withProviderLimit("libre", () =>
     libreRequest("/detect", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -740,7 +854,7 @@ export const detectLanguage = async (q) => {
 };
 
 export const getLanguages = async () => {
-  const result = await withProviderLimit(() => libreRequest("/languages"));
+  const result = await withProviderLimit("libre", () => libreRequest("/languages"));
   if (!Array.isArray(result)) {
     throw new AppError(502, "Translation provider returned an invalid language list");
   }
