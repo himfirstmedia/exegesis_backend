@@ -1,4 +1,6 @@
+import { createHash } from "crypto";
 import { AppError, ValidationError } from "../../utils/AppError.js";
+import { cache } from "../../services/cacheService.js";
 import { translateLordsbookText } from "../../services/lordsbookGateway.js";
 import {
   mapWithConcurrency,
@@ -10,6 +12,10 @@ import {
 
 const DEFAULT_LIBRETRANSLATE_URL =
   "https://exegesis-libretranslate-production.up.railway.app";
+const TRANSLATION_CACHE_NAMESPACE = "text-translations";
+const RESULT_PROVIDER = Symbol("translationProvider");
+const translationMemoryCache = new Map();
+const translationInFlight = new Map();
 
 const readPositiveInt = (name, fallback) => {
   const value = Number.parseInt(process.env[name], 10);
@@ -27,7 +33,94 @@ const getConfig = () => ({
   maxTextLength: readPositiveInt("TRANSLATION_MAX_TEXT_LENGTH", 20000),
   chunkSize: readPositiveInt("TRANSLATION_CHUNK_SIZE", 1000),
   maxBatchItems: readPositiveInt("TRANSLATION_MAX_BATCH_ITEMS", 100),
+  providerQueueMax: readPositiveInt("TRANSLATION_PROVIDER_QUEUE_MAX", 100),
+  providerQueueWaitMs: readPositiveInt("TRANSLATION_PROVIDER_QUEUE_WAIT_MS", 2000),
+  cacheTtl: readPositiveInt("TRANSLATION_CACHE_TTL_SECONDS", 7 * 24 * 60 * 60),
+  fallbackCacheTtl: readPositiveInt(
+    "TRANSLATION_LORDSBOOK_FALLBACK_CACHE_TTL_SECONDS",
+    60,
+  ),
+  memoryCacheMax: readPositiveInt("TRANSLATION_MEMORY_CACHE_MAX", 1000),
 });
+
+const isLordsbookTextEnabled = () =>
+  (process.env.LORDSBOOK_TEXT_ENABLE || "").trim().toLowerCase() === "true";
+
+const getTranslationCacheKey = ({ q, source = "auto", target, format = "text", alternatives }) => {
+  const provider = isLordsbookTextEnabled() ? "lordsbook+libre" : "libre";
+  const versions = {
+    libre: process.env.LIBRETRANSLATE_MODEL_VERSION || "default",
+    ...(isLordsbookTextEnabled()
+      ? { lordsbook: process.env.LORDSBOOK_TEXT_MODEL_VERSION || "default" }
+      : {}),
+  };
+  const digest = createHash("sha256")
+    .update(JSON.stringify({ source, target, format, alternatives: alternatives || 0, provider, versions, text: q }))
+    .digest("hex");
+  return `v2:${digest}`;
+};
+
+const markProvider = (result, provider) => {
+  Object.defineProperty(result, RESULT_PROVIDER, { value: provider, configurable: true });
+  return result;
+};
+
+const getMemoryCache = (key) => {
+  const cached = translationMemoryCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    translationMemoryCache.delete(key);
+    return null;
+  }
+  return cached.result;
+};
+
+const setMemoryCache = (key, result, provider, ttl) => {
+  const { memoryCacheMax } = getConfig();
+  if (translationMemoryCache.has(key)) translationMemoryCache.delete(key);
+  while (translationMemoryCache.size >= memoryCacheMax) {
+    translationMemoryCache.delete(translationMemoryCache.keys().next().value);
+  }
+  translationMemoryCache.set(key, {
+    result: markProvider(result, provider),
+    expiresAt: Date.now() + ttl * 1000,
+  });
+};
+
+const getCachedTranslation = async (key) => {
+  const memoryCached = getMemoryCache(key);
+  if (memoryCached) return memoryCached;
+  const cached = await cache.get(TRANSLATION_CACHE_NAMESPACE, key);
+  if (
+    cached?.version === 2 &&
+    cached.result?.translatedText &&
+    typeof cached.result.translatedText === "string" &&
+    ["lordsbook", "libre"].includes(cached.provider)
+  ) {
+    const config = getConfig();
+    const ttl = isLordsbookTextEnabled() && cached.provider === "libre"
+      ? config.fallbackCacheTtl
+      : config.cacheTtl;
+    setMemoryCache(key, cached.result, cached.provider, ttl);
+    return cached.result;
+  }
+  return null;
+};
+
+const cacheTranslation = (key, result) => {
+  const config = getConfig();
+  const provider = result[RESULT_PROVIDER] || "libre";
+  const ttl = isLordsbookTextEnabled() && provider === "libre"
+    ? config.fallbackCacheTtl
+    : config.cacheTtl;
+  setMemoryCache(key, result, provider, ttl);
+  void cache.set(
+    TRANSLATION_CACHE_NAMESPACE,
+    key,
+    { version: 2, provider, result },
+    ttl,
+  );
+};
 
 const assertTextLimit = (text, maxTextLength, field = "q") => {
   const length = typeof text === "number" ? text : text.length;
@@ -103,6 +196,11 @@ export const __resetTranslationProviderCache = () => {
   supportedLanguagesCache.at = 0;
   supportedLanguagesCache.codes = null;
   supportedLanguagesCache.errorUntil = 0;
+  translationMemoryCache.clear();
+  translationInFlight.clear();
+  lordsbookTextBreaker = { failures: [], cooldownUntil: 0 };
+  providerStartGate = Promise.resolve();
+  lastProviderStart = 0;
 };
 
 // ── Lordsbook text-provider circuit breaker ────────────────────────────────
@@ -111,14 +209,6 @@ export const __resetTranslationProviderCache = () => {
 // LibreTranslate fallback runs. Repeated failures open a breaker so the text
 // path goes straight to LibreTranslate until the upstream recovers.
 const LB_TEXT_WINDOW_MS = 60_000;
-const LB_TEXT_THRESHOLD = readPositiveInt(
-  "LORDSBOOK_TEXT_BREAKER_THRESHOLD",
-  3,
-);
-const LB_TEXT_COOLDOWN_MS = readPositiveInt(
-  "LORDSBOOK_TEXT_BREAKER_COOLDOWN_MS",
-  5 * 60_000,
-);
 let lordsbookTextBreaker = { failures: [], cooldownUntil: 0 };
 
 const lordsbookTextBreakerOpen = () =>
@@ -130,31 +220,50 @@ const recordLordsbookTextSuccess = () => {
 
 const recordLordsbookTextFailure = () => {
   const now = Date.now();
+  const threshold = readPositiveInt("LORDSBOOK_TEXT_BREAKER_THRESHOLD", 3);
+  const cooldownMs = readPositiveInt(
+    "LORDSBOOK_TEXT_BREAKER_COOLDOWN_MS",
+    5 * 60_000,
+  );
   lordsbookTextBreaker.failures = [
     ...lordsbookTextBreaker.failures.filter(
       (t) => now - t < LB_TEXT_WINDOW_MS,
     ),
     now,
   ];
-  if (lordsbookTextBreaker.failures.length >= LB_TEXT_THRESHOLD) {
-    lordsbookTextBreaker.cooldownUntil = now + LB_TEXT_COOLDOWN_MS;
+  if (lordsbookTextBreaker.failures.length >= threshold) {
+    lordsbookTextBreaker.cooldownUntil = now + cooldownMs;
     console.warn(
-      `[Translation] Lordsbook text provider unhealthy after ${LB_TEXT_THRESHOLD} failures; skipping it for ${LB_TEXT_COOLDOWN_MS / 1000}s`,
+      `[Translation] Lordsbook text provider unhealthy after ${threshold} failures; skipping it for ${cooldownMs / 1000}s`,
     );
   }
 };
+
+const isLordsbookBreakerFailure = (error) =>
+  error?.retryable === true &&
+  !error.providerQueueOverload &&
+  (!error.status || error.status >= 500);
 
 let activeProviderRequests = 0;
 const providerQueue = [];
 let providerStartGate = Promise.resolve();
 let lastProviderStart = 0;
 
-const waitForProviderStart = () => {
+const providerQueueError = (message) => {
+  const error = new AppError(503, message);
+  error.providerQueueOverload = true;
+  return error;
+};
+
+const waitForProviderStart = (entry) => {
   const scheduled = providerStartGate.then(async () => {
+    if (entry.expired || Date.now() >= entry.deadline) return;
     const wait = getConfig().minDelayMs - (Date.now() - lastProviderStart);
     if (wait > 0) {
-      await new Promise((resolve) => setTimeout(resolve, wait));
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(wait, Math.max(0, entry.deadline - Date.now()))));
     }
+    if (entry.expired || Date.now() >= entry.deadline) return;
     lastProviderStart = Date.now();
   });
   providerStartGate = scheduled.catch(() => {});
@@ -164,10 +273,16 @@ const waitForProviderStart = () => {
 const runNextProviderRequest = () => {
   const maxConcurrency = getConfig().maxConcurrency;
   while (activeProviderRequests < maxConcurrency && providerQueue.length) {
-    const { job, resolve, reject } = providerQueue.shift();
+    const entry = providerQueue.shift();
+    const { job, resolve, reject } = entry;
+    entry.queued = false;
     activeProviderRequests += 1;
-    void waitForProviderStart()
-      .then(job)
+    void waitForProviderStart(entry)
+      .then(() => {
+        if (entry.expired || Date.now() >= entry.deadline) return undefined;
+        clearTimeout(entry.timer);
+        return job();
+      })
       .then(resolve, reject)
       .finally(() => {
         activeProviderRequests -= 1;
@@ -178,7 +293,32 @@ const runNextProviderRequest = () => {
 
 const withProviderLimit = (job) =>
   new Promise((resolve, reject) => {
-    providerQueue.push({ job, resolve, reject });
+    const config = getConfig();
+    if (
+      activeProviderRequests >= config.maxConcurrency &&
+      providerQueue.length >= config.providerQueueMax
+    ) {
+      reject(providerQueueError("Translation provider queue is full; please retry shortly"));
+      return;
+    }
+    const entry = {
+      job,
+      resolve,
+      reject,
+      timer: null,
+      deadline: Date.now() + config.providerQueueWaitMs,
+      expired: false,
+      queued: true,
+    };
+    entry.timer = setTimeout(() => {
+      entry.expired = true;
+      if (entry.queued) {
+        const index = providerQueue.indexOf(entry);
+        if (index !== -1) providerQueue.splice(index, 1);
+      }
+      reject(providerQueueError("Translation provider queue wait exceeded; please retry shortly"));
+    }, config.providerQueueWaitMs);
+    providerQueue.push(entry);
     runNextProviderRequest();
   });
 
@@ -249,7 +389,7 @@ const translateChunk = async (chunk, options) => {
   
   // Try Lordsbook first ONLY if explicitly enabled (and the upstream is
   // believed healthy — see circuit breaker above).
-  if (process.env.LORDSBOOK_TEXT_ENABLE === "true" && !lordsbookTextBreakerOpen()) {
+  if (isLordsbookTextEnabled() && !lordsbookTextBreakerOpen()) {
     try {
       const lbResult = await withProviderLimit(() =>
         translateLordsbookText({
@@ -260,18 +400,20 @@ const translateChunk = async (chunk, options) => {
         }),
       );
       if (lbResult && lbResult.translatedText) {
-        recordLordsbookTextSuccess();
-        return {
+        return markProvider({
           ...lbResult,
           translatedText: `${leading}${lbResult.translatedText}${trailing}`,
-        };
+        }, "lordsbook");
       }
     } catch (e) {
-      recordLordsbookTextFailure();
+      if (isLordsbookBreakerFailure(e)) {
+        recordLordsbookTextFailure();
+      }
       console.warn(`[Translation] Lordsbook failed, falling back to LibreTranslate: ${e.message}`);
     }
   }
 
+  await assertSupportedTarget(options.target);
   const payload = {
     q: value,
     source: toLibreLanguageCode(options.source),
@@ -300,16 +442,14 @@ const translateChunk = async (chunk, options) => {
   if (!result) {
     throw new AppError(502, "Translation provider returned untranslated text");
   }
-  return {
+  return markProvider({
     ...result,
     translatedText: `${leading}${result.translatedText}${trailing}`,
-  };
+  }, "libre");
 };
 
-export const translateText = async ({ q, source = "auto", target, format = "text", alternatives }) => {
+const translateTextUncached = async ({ q, source = "auto", target, format = "text", alternatives }) => {
   const config = getConfig();
-  assertTextLimit(q, config.maxTextLength);
-  await assertSupportedTarget(target);
 
   // LibreTranslate's sentence tokenizer can leave `sentence.[123]` untouched.
   const normalized = format === "text" ? normalizeTranslationText(q) : q;
@@ -322,7 +462,11 @@ export const translateText = async ({ q, source = "auto", target, format = "text
     (chunk) => translateChunk(chunk, { source, target, format, alternatives }),
   );
 
-  return {
+  const provider = results.some((result) => result[RESULT_PROVIDER] === "libre")
+    ? "libre"
+    : "lordsbook";
+  if (provider === "lordsbook") recordLordsbookTextSuccess();
+  return markProvider({
     translatedText: results.map((result) => result.translatedText).join(""),
     ...(results[0]?.detectedLanguage
       ? { detectedLanguage: results[0].detectedLanguage }
@@ -334,19 +478,12 @@ export const translateText = async ({ q, source = "auto", target, format = "text
     target,
     characterCount: q.length,
     chunkCount: chunks.length,
-  };
+  }, provider);
 };
 
-export const translateBatch = async ({ q, ...options }) => {
+const translateBatchUncached = async ({ q, ...options }) => {
   const config = getConfig();
-  if (q.length > config.maxBatchItems) {
-    throw new ValidationError(
-      `q exceeds the ${config.maxBatchItems} item batch limit`,
-    );
-  }
   const totalCharacters = q.reduce((total, text) => total + text.length, 0);
-  assertTextLimit(totalCharacters, config.maxTextLength, "Batch text");
-  await assertSupportedTarget(options.target);
 
   // Preserve chunking for unusually large batch items. Verse-sized items use
   // LibreTranslate's native array input and complete in one provider request.
@@ -354,7 +491,7 @@ export const translateBatch = async ({ q, ...options }) => {
     const translations = await mapWithConcurrency(
       q,
       config.maxConcurrency,
-      (text) => translateText({ q: text, ...options }),
+      (text) => translateTextUncached({ q: text, ...options }),
     );
     return {
       translations,
@@ -370,18 +507,17 @@ export const translateBatch = async ({ q, ...options }) => {
     return { original: text, ...preserveOuterWhitespace(normalized) };
   });
 
-// Try Lordsbook first ONLY if explicitly enabled. Batch succeeds only when
-  // every item translates; otherwise fall back to LibreTranslate's array input.
+  let lordsbookResults = null;
   if (
-    process.env.LORDSBOOK_TEXT_ENABLE === "true" &&
+    isLordsbookTextEnabled() &&
     !lordsbookTextBreakerOpen()
   ) {
-    const lbResults = await mapWithConcurrency(
+    lordsbookResults = await mapWithConcurrency(
       prepared,
       config.maxConcurrency,
       async (item) => {
         try {
-          return await withProviderLimit(() =>
+          const result = await withProviderLimit(() =>
             translateLordsbookText({
               q: item.value,
               source: options.source || "auto",
@@ -389,24 +525,25 @@ export const translateBatch = async ({ q, ...options }) => {
               format: options.format || "text",
             }),
           );
+          return { result, error: null };
         } catch (error) {
           console.warn(`[Translation] Lordsbook batch item failed: ${error.message}`);
-          return null;
+          return { result: null, error };
         }
       },
     );
-    if (lbResults.every((result) => result?.translatedText)) {
+    if (lordsbookResults.every(({ result }) => result?.translatedText)) {
       recordLordsbookTextSuccess();
-      const translations = prepared.map((item, index) => ({
-        translatedText: `${item.leading}${lbResults[index].translatedText}${item.trailing}`,
-        ...(lbResults[index].detectedLanguage
-          ? { detectedLanguage: lbResults[index].detectedLanguage }
+      const translations = prepared.map((item, index) => markProvider({
+        translatedText: `${item.leading}${lordsbookResults[index].result.translatedText}${item.trailing}`,
+        ...(lordsbookResults[index].result.detectedLanguage
+          ? { detectedLanguage: lordsbookResults[index].result.detectedLanguage }
           : {}),
         source: options.source || "auto",
         target: options.target,
         characterCount: item.original.length,
         chunkCount: 1,
-      }));
+      }, "lordsbook"));
       return {
         translations,
         itemCount: translations.length,
@@ -414,11 +551,17 @@ export const translateBatch = async ({ q, ...options }) => {
         provider: "lordsbook",
       };
     }
-    recordLordsbookTextFailure();
+    if (lordsbookResults.some(({ error }) => isLordsbookBreakerFailure(error))) {
+      recordLordsbookTextFailure();
+    }
   }
 
+  const libreIndexes = prepared
+    .map((_, index) => index)
+    .filter((index) => !lordsbookResults?.[index]?.result?.translatedText);
+  await assertSupportedTarget(options.target);
   const payload = {
-    q: prepared.map(({ value }) => value),
+    q: libreIndexes.map((index) => prepared[index].value),
     source: toLibreLanguageCode(options.source || "auto"),
     target: toLibreLanguageCode(options.target),
     format: options.format || "text",
@@ -436,7 +579,7 @@ export const translateBatch = async ({ q, ...options }) => {
   const translatedTexts = result?.translatedText;
   if (
     !Array.isArray(translatedTexts) ||
-    translatedTexts.length !== prepared.length ||
+    translatedTexts.length !== libreIndexes.length ||
     translatedTexts.some((text) => typeof text !== "string" || !text.trim())
   ) {
     throw new AppError(502, "Translation provider returned an incomplete batch");
@@ -448,22 +591,136 @@ export const translateBatch = async ({ q, ...options }) => {
   const alternativeGroups = Array.isArray(result.alternatives?.[0])
     ? result.alternatives
     : null;
-  const translations = prepared.map((item, index) => ({
-    translatedText: `${item.leading}${translatedTexts[index]}${item.trailing}`,
-    ...(detectedLanguages?.[index]
-      ? { detectedLanguage: detectedLanguages[index] }
-      : result.detectedLanguage
-        ? { detectedLanguage: result.detectedLanguage }
+  let libreIndex = 0;
+  const translations = prepared.map((item, index) => {
+    const lordsbook = lordsbookResults?.[index]?.result;
+    if (lordsbook?.translatedText) {
+      return markProvider({
+        translatedText: `${item.leading}${lordsbook.translatedText}${item.trailing}`,
+        ...(lordsbook.detectedLanguage ? { detectedLanguage: lordsbook.detectedLanguage } : {}),
+        source: options.source || "auto",
+        target: options.target,
+        characterCount: item.original.length,
+        chunkCount: 1,
+      }, "lordsbook");
+    }
+    const resultIndex = libreIndex++;
+    return markProvider({
+      translatedText: `${item.leading}${translatedTexts[resultIndex]}${item.trailing}`,
+      ...(detectedLanguages?.[resultIndex]
+        ? { detectedLanguage: detectedLanguages[resultIndex] }
+        : result.detectedLanguage
+          ? { detectedLanguage: result.detectedLanguage }
+          : {}),
+      ...(alternativeGroups?.[resultIndex]
+        ? { alternatives: alternativeGroups[resultIndex] }
         : {}),
-    ...(alternativeGroups?.[index]
-      ? { alternatives: alternativeGroups[index] }
-      : {}),
-    source: options.source || "auto",
-    target: options.target,
-    characterCount: item.original.length,
-    chunkCount: 1,
-  }));
+      source: options.source || "auto",
+      target: options.target,
+      characterCount: item.original.length,
+      chunkCount: 1,
+    }, "libre");
+  });
   return { translations, itemCount: translations.length, characterCount: totalCharacters };
+};
+
+export const translateText = async (request) => {
+  const config = getConfig();
+  assertTextLimit(request.q, config.maxTextLength);
+  const key = getTranslationCacheKey(request);
+  const memoryCached = getMemoryCache(key);
+  if (memoryCached) return memoryCached;
+  if (translationInFlight.has(key)) return translationInFlight.get(key);
+
+  const promise = (async () => {
+    const cached = await getCachedTranslation(key);
+    if (cached) return cached;
+    const result = await translateTextUncached(request);
+    cacheTranslation(key, result);
+    return result;
+  })().finally(() => translationInFlight.delete(key));
+  translationInFlight.set(key, promise);
+  return promise;
+};
+
+export const translateBatch = async ({ q, ...options }) => {
+  const config = getConfig();
+  if (q.length > config.maxBatchItems) {
+    throw new ValidationError(`q exceeds the ${config.maxBatchItems} item batch limit`);
+  }
+  const totalCharacters = q.reduce((total, text) => total + text.length, 0);
+  assertTextLimit(totalCharacters, config.maxTextLength, "Batch text");
+
+  const unique = new Map();
+  q.forEach((text) => {
+    const request = { q: text, ...options };
+    const key = getTranslationCacheKey(request);
+    if (!unique.has(key)) unique.set(key, { key, request, owner: false, promise: null });
+  });
+
+  for (const item of unique.values()) {
+    const memoryCached = getMemoryCache(item.key);
+    if (memoryCached) {
+      item.promise = Promise.resolve(memoryCached);
+    } else if (translationInFlight.has(item.key)) {
+      item.promise = translationInFlight.get(item.key);
+    } else {
+      let resolve;
+      let reject;
+      item.promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+      item.resolve = resolve;
+      item.reject = reject;
+      item.owner = true;
+      translationInFlight.set(item.key, item.promise);
+    }
+  }
+
+  const owners = [...unique.values()].filter((item) => item.owner);
+  const misses = [];
+  let provider;
+  await Promise.all(owners.map(async (item) => {
+    const cached = await getCachedTranslation(item.key);
+    if (cached) {
+      item.resolve(cached);
+      translationInFlight.delete(item.key);
+    } else {
+      misses.push(item);
+    }
+  }));
+
+  if (misses.length) {
+    try {
+      const fresh = await translateBatchUncached({
+        q: misses.map((item) => item.request.q),
+        ...options,
+      });
+      provider = fresh.provider;
+      fresh.translations.forEach((result, index) => {
+        const item = misses[index];
+        cacheTranslation(item.key, result);
+        item.resolve(result);
+        translationInFlight.delete(item.key);
+      });
+    } catch (error) {
+      misses.forEach((item) => {
+        item.reject(error);
+        translationInFlight.delete(item.key);
+      });
+    }
+  }
+
+  const resolved = new Map();
+  await Promise.all([...unique.values()].map(async (item) => {
+    resolved.set(item.key, await item.promise);
+  }));
+  const translations = q.map((text) =>
+    resolved.get(getTranslationCacheKey({ q: text, ...options })));
+  return {
+    translations,
+    itemCount: translations.length,
+    characterCount: totalCharacters,
+    ...(provider ? { provider } : {}),
+  };
 };
 
 export const detectLanguage = async (q) => {

@@ -1,3 +1,4 @@
+import { cache } from "../../services/cacheService.js";
 import {
   __resetTranslationProviderCache,
   detectLanguage,
@@ -5,6 +6,13 @@ import {
   translateBatch,
   translateText,
 } from "./service.js";
+
+jest.mock("../../services/cacheService.js", () => ({
+  cache: {
+    get: jest.fn(),
+    set: jest.fn(),
+  },
+}));
 
 const jsonResponse = (body, status = 200) => ({
   ok: status >= 200 && status < 300,
@@ -29,7 +37,15 @@ describe("text-to-text translation service", () => {
       TRANSLATION_CHUNK_SIZE: "35",
       TRANSLATION_MAX_BATCH_ITEMS: "3",
       TRANSLATION_ENFORCE_SUPPORTED_LANGS: "false",
+      TRANSLATION_CACHE_TTL_SECONDS: "60",
+      TRANSLATION_LORDSBOOK_FALLBACK_CACHE_TTL_SECONDS: "1",
+      LORDSBOOK_TEXT_ENABLE: "false",
+      LORDSBOOK_TEXT_RETRY_ATTEMPTS: "1",
+      LORDSBOOK_GATEWAY_URL: "https://lordsbook.test",
     };
+    __resetTranslationProviderCache();
+    cache.get.mockReset().mockResolvedValue(null);
+    cache.set.mockReset().mockResolvedValue(undefined);
     global.fetch = jest.fn();
   });
 
@@ -106,6 +122,282 @@ describe("text-to-text translation service", () => {
     ]);
   });
 
+  test("uses per-text cache entries and translates only unique batch misses", async () => {
+    global.fetch.mockImplementation(async (_url, options) => {
+      const payload = JSON.parse(options.body);
+      return jsonResponse({
+        translatedText: Array.isArray(payload.q)
+          ? payload.q.map((text) => `translated:${text}`)
+          : `translated:${payload.q}`,
+      });
+    });
+
+    await translateText({ q: "cached", source: "en", target: "es" });
+    global.fetch.mockClear();
+    const result = await translateBatch({
+      q: ["cached", "missing", "missing"],
+      source: "en",
+      target: "es",
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).q).toEqual(["missing"]);
+    expect(result.translations.map((item) => item.translatedText)).toEqual([
+      "translated:cached",
+      "translated:missing",
+      "translated:missing",
+    ]);
+  });
+
+  test("uses Redis results with an opaque SHA-256 cache key", async () => {
+    cache.get.mockResolvedValue({
+      version: 2,
+      provider: "libre",
+      result: {
+        translatedText: "Desde Redis",
+        source: "en",
+        target: "es",
+        characterCount: 16,
+        chunkCount: 1,
+      },
+    });
+
+    await expect(
+      translateText({ q: "sensitive source", source: "en", target: "es" }),
+    ).resolves.toMatchObject({ translatedText: "Desde Redis" });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(cache.get).toHaveBeenCalledWith(
+      "text-translations",
+      expect.stringMatching(/^v2:[a-f0-9]{64}$/),
+    );
+    expect(cache.get.mock.calls[0][1]).not.toContain("sensitive source");
+  });
+
+  test("expires in-memory cache entries", async () => {
+    process.env.TRANSLATION_CACHE_TTL_SECONDS = "1";
+    global.fetch.mockResolvedValue(jsonResponse({ translatedText: "Hola" }));
+    const now = Date.now();
+    const clock = jest.spyOn(Date, "now").mockReturnValue(now);
+
+    await translateText({ q: "memory ttl", source: "en", target: "es" });
+    await translateText({ q: "memory ttl", source: "en", target: "es" });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    clock.mockReturnValue(now + 1001);
+    await translateText({ q: "memory ttl", source: "en", target: "es" });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    clock.mockRestore();
+  });
+
+  test("uses a short cache TTL for Libre fallback and retries recovered Lordsbook", async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = "true";
+    let lordsbookHealthy = false;
+    global.fetch.mockImplementation(async (url, options) => {
+      const { q } = JSON.parse(options.body);
+      if (url.startsWith("https://lordsbook.test")) {
+        return lordsbookHealthy
+          ? jsonResponse({ success: true, data: { translatedText: `lb:${q}` } })
+          : jsonResponse({ message: "down" }, 503);
+      }
+      return jsonResponse({ translatedText: `libre:${q}` });
+    });
+    const now = Date.now();
+    const clock = jest.spyOn(Date, "now").mockReturnValue(now);
+
+    await expect(
+      translateText({ q: "recover", source: "en", target: "es" }),
+    ).resolves.toMatchObject({ translatedText: "libre:recover" });
+    expect(cache.set).toHaveBeenLastCalledWith(
+      "text-translations",
+      expect.any(String),
+      expect.objectContaining({ version: 2, provider: "libre" }),
+      1,
+    );
+
+    lordsbookHealthy = true;
+    clock.mockReturnValue(now + 1001);
+    await expect(
+      translateText({ q: "recover", source: "en", target: "es" }),
+    ).resolves.toMatchObject({ translatedText: "lb:recover" });
+    clock.mockRestore();
+  });
+
+  test("deduplicates concurrent requests for the same text", async () => {
+    let release;
+    let markStarted;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    global.fetch.mockImplementation(() => new Promise((resolve) => {
+      release = () => resolve(jsonResponse({ translatedText: "Hola" }));
+      markStarted();
+    }));
+
+    const first = translateText({ q: "same", source: "en", target: "es" });
+    const second = translateText({ q: "same", source: "en", target: "es" });
+    await started;
+    release();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ translatedText: "Hola" }),
+      expect.objectContaining({ translatedText: "Hola" }),
+    ]);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects excess provider work when the bounded queue is full", async () => {
+    process.env.LIBRETRANSLATE_MAX_CONCURRENCY = "1";
+    process.env.TRANSLATION_PROVIDER_QUEUE_MAX = "1";
+    process.env.TRANSLATION_PROVIDER_QUEUE_WAIT_MS = "1000";
+    let releaseFirst;
+    let markStarted;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    global.fetch.mockImplementation((_url, options) => {
+      const { q } = JSON.parse(options.body);
+      if (q === "first") {
+        markStarted();
+        return new Promise((resolve) => {
+          releaseFirst = () => resolve(jsonResponse({ translatedText: "uno" }));
+        });
+      }
+      return Promise.resolve(jsonResponse({ translatedText: q }));
+    });
+
+    const first = translateText({ q: "first", source: "en", target: "es" });
+    await started;
+    const second = translateText({ q: "second", source: "en", target: "es" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const excess = translateText({ q: "third", source: "en", target: "es" });
+
+    await expect(excess).rejects.toMatchObject({
+      status: 503,
+      message: expect.stringContaining("queue is full"),
+    });
+    releaseFirst();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+  });
+
+  test("expires provider work that waits in the queue too long", async () => {
+    process.env.LIBRETRANSLATE_MAX_CONCURRENCY = "1";
+    process.env.TRANSLATION_PROVIDER_QUEUE_MAX = "2";
+    process.env.TRANSLATION_PROVIDER_QUEUE_WAIT_MS = "10";
+    let releaseFirst;
+    let markStarted;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    global.fetch.mockImplementation((_url, options) => {
+      const { q } = JSON.parse(options.body);
+      if (q === "slow") {
+        markStarted();
+        return new Promise((resolve) => {
+          releaseFirst = () => resolve(jsonResponse({ translatedText: "lento" }));
+        });
+      }
+      return Promise.resolve(jsonResponse({ translatedText: q }));
+    });
+
+    const first = translateText({ q: "slow", source: "en", target: "es" });
+    await started;
+    const waiting = translateText({ q: "waiting", source: "en", target: "es" });
+
+    await expect(waiting).rejects.toMatchObject({
+      status: 503,
+      message: expect.stringContaining("queue wait exceeded"),
+    });
+    releaseFirst();
+    await expect(first).resolves.toMatchObject({ translatedText: "lento" });
+  });
+
+  test("enforces queue deadline while waiting at the provider start gate", async () => {
+    process.env.LIBRETRANSLATE_MAX_CONCURRENCY = "2";
+    process.env.LIBRETRANSLATE_MIN_DELAY_MS = "100";
+    process.env.TRANSLATION_PROVIDER_QUEUE_WAIT_MS = "10";
+    let releaseFirst;
+    let markStarted;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    global.fetch.mockImplementation((_url, options) => {
+      const { q } = JSON.parse(options.body);
+      if (q === "gate first") {
+        markStarted();
+        return new Promise((resolve) => {
+          releaseFirst = () => resolve(jsonResponse({ translatedText: q }));
+        });
+      }
+      return Promise.resolve(jsonResponse({ translatedText: q }));
+    });
+
+    const first = translateText({ q: "gate first", source: "en", target: "es" });
+    await started;
+    const gated = translateText({ q: "gate second", source: "en", target: "es" });
+
+    await expect(gated).rejects.toMatchObject({
+      status: 503,
+      message: expect.stringContaining("queue wait exceeded"),
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await first;
+  });
+
+  test("keeps successful Lordsbook batch items and falls back only failed items", async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = "true";
+    global.fetch.mockImplementation(async (url, options) => {
+      const payload = JSON.parse(options.body);
+      if (url.startsWith("https://lordsbook.test")) {
+        if (payload.q === "second") return jsonResponse({ message: "down" }, 503);
+        return jsonResponse({ success: true, data: { translatedText: `lb:${payload.q}` } });
+      }
+      expect(payload.q).toEqual(["second"]);
+      return jsonResponse({ translatedText: ["libre:second"] });
+    });
+
+    const result = await translateBatch({
+      q: ["first", "second", "third"],
+      source: "en",
+      target: "ta",
+    });
+
+    expect(result.translations.map((item) => item.translatedText)).toEqual([
+      "lb:first",
+      "libre:second",
+      "lb:third",
+    ]);
+    const libreCalls = global.fetch.mock.calls.filter(([url]) =>
+      url.startsWith("https://translate.test"));
+    expect(libreCalls).toHaveLength(1);
+    expect(cache.set.mock.calls.map(([, , value, ttl]) => [value.provider, ttl])).toEqual([
+      ["lordsbook", 60],
+      ["libre", 1],
+      ["lordsbook", 60],
+    ]);
+  });
+
+  test("trips the Lordsbook breaker only for retryable upstream failures", async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = "true";
+    process.env.LORDSBOOK_TEXT_BREAKER_THRESHOLD = "2";
+    let lordsbookStatus = 400;
+    global.fetch.mockImplementation(async (url, options) => {
+      const { q } = JSON.parse(options.body);
+      if (url.startsWith("https://lordsbook.test")) {
+        return jsonResponse({ message: "failed" }, lordsbookStatus);
+      }
+      return jsonResponse({ translatedText: `libre:${q}` });
+    });
+
+    for (const text of ["bad request 1", "bad request 2", "bad request 3"]) {
+      await translateText({ q: text, source: "en", target: "es" });
+    }
+    expect(global.fetch.mock.calls.filter(([url]) =>
+      url.startsWith("https://lordsbook.test"))).toHaveLength(3);
+
+    __resetTranslationProviderCache();
+    cache.get.mockResolvedValue(null);
+    global.fetch.mockClear();
+    lordsbookStatus = 503;
+    for (const text of ["upstream 1", "upstream 2", "upstream 3"]) {
+      await translateText({ q: text, source: "en", target: "es" });
+    }
+    expect(global.fetch.mock.calls.filter(([url]) =>
+      url.startsWith("https://lordsbook.test"))).toHaveLength(2);
+  });
+
   test("rejects incomplete provider batch output", async () => {
     global.fetch.mockResolvedValue(
       jsonResponse({ translatedText: ["only one"] }),
@@ -137,6 +429,7 @@ describe("text-to-text translation service", () => {
 
     await expect(translateText({ q: "Hello", target: "ar" }))
       .rejects.toMatchObject({ status: 502 });
+    expect(cache.set).not.toHaveBeenCalled();
   });
 
   test("retries temporary provider errors", async () => {
@@ -172,7 +465,10 @@ describe("capability enforcement (TRANSLATION_ENFORCE_SUPPORTED_LANGS)", () => {
 
   beforeEach(() => {
     process.env.TRANSLATION_ENFORCE_SUPPORTED_LANGS = "true";
+    process.env.LORDSBOOK_TEXT_ENABLE = "false";
     __resetTranslationProviderCache();
+    cache.get.mockReset().mockResolvedValue(null);
+    cache.set.mockReset().mockResolvedValue(undefined);
     global.fetch = jest.fn();
   });
 
@@ -216,5 +512,21 @@ describe("capability enforcement (TRANSLATION_ENFORCE_SUPPORTED_LANGS)", () => {
       translateText({ q: "Hello", target: "es" }),
     ).rejects.toMatchObject({ status: 502 });
     expect(translateCalls().length).toBeGreaterThan(0);
+  });
+
+  test("lets enabled Lordsbook translate before applying Libre capabilities", async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = "true";
+    process.env.LORDSBOOK_GATEWAY_URL = "https://lordsbook.test";
+    global.fetch.mockImplementation(async (url) => {
+      if (url.startsWith("https://lordsbook.test")) {
+        return jsonResponse({ success: true, data: { translatedText: "வணக்கம்" } });
+      }
+      throw new Error("Libre capability endpoint must not be called");
+    });
+
+    await expect(
+      translateText({ q: "Hello", source: "en", target: "ta" }),
+    ).resolves.toMatchObject({ translatedText: "வணக்கம்" });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });

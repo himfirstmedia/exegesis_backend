@@ -20,7 +20,14 @@ const XML_CACHE_VERSION = 'v3';
 // Persisted precomputed books/chapters metadata (books, chapter counts, verse
 // counts). Built once per translation by scanning the XML, then written to disk
 // so subsequent reads (and server restarts) never re-scan the multi-MB files.
-const BOOKS_INDEX_DIR = path.join(MODULE_DIR, 'index');
+const COMMITTED_BOOKS_INDEX_DIR = path.join(MODULE_DIR, 'index');
+const GENERATED_BOOKS_INDEX_DIR = process.env.BIBLE_INDEX_CACHE_DIR
+  ? path.resolve(process.env.BIBLE_INDEX_CACHE_DIR)
+  : path.resolve(MODULE_DIR, '../../../.cache/bible-indexes');
+export const __booksIndexDirectories = {
+  committed: COMMITTED_BOOKS_INDEX_DIR,
+  generated: GENERATED_BOOKS_INDEX_DIR,
+};
 const booksIndexPromise = new Map(); // fullId -> Promise<books[]>
 const booksIndexLoaded = new Map();  // fullId -> books[] (cached copy)
 const BOOKS_INDEX_VERSIONS = { BengaliBible: XML_CACHE_VERSION };
@@ -34,6 +41,17 @@ const readBooksIndexFromDisk = (filePath) => {
   }
 };
 
+export const __persistBooksIndex = async (filePath, books) => {
+  try {
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify(books));
+    return true;
+  } catch (err) {
+    console.error('[BooksIndex] Failed to persist generated index:', err?.message || err);
+    return false;
+  }
+};
+
 /** Returns the precomputed books array for a translation, building + persisting it once. */
 const getPrecomputedBooks = async (id, buildFn) => {
   const fullId = toFullId(id);
@@ -42,8 +60,9 @@ const getPrecomputedBooks = async (id, buildFn) => {
 
   const indexVersion = BOOKS_INDEX_VERSIONS[fullId];
   const fileName = `${fullId}${indexVersion ? `.${indexVersion}` : ''}.books.json`;
-  const filePath = path.join(BOOKS_INDEX_DIR, fileName);
-  const onDisk = readBooksIndexFromDisk(filePath);
+  const generatedPath = path.join(GENERATED_BOOKS_INDEX_DIR, fileName);
+  const committedPath = path.join(COMMITTED_BOOKS_INDEX_DIR, fileName);
+  const onDisk = readBooksIndexFromDisk(committedPath) || readBooksIndexFromDisk(generatedPath);
   if (onDisk) {
     booksIndexLoaded.set(fullId, onDisk);
     return onDisk;
@@ -52,10 +71,7 @@ const getPrecomputedBooks = async (id, buildFn) => {
   const promise = buildFn().then((books) => {
     booksIndexLoaded.set(fullId, books);
     booksIndexPromise.delete(fullId);
-    fs.mkdirSync(BOOKS_INDEX_DIR, { recursive: true });
-    fs.promises.writeFile(filePath, JSON.stringify(books)).catch((err) => {
-      console.error(`[BooksIndex] Failed to persist index for ${fullId}:`, err?.message || err);
-    });
+    void __persistBooksIndex(generatedPath, books);
     return books;
   });
   booksIndexPromise.set(fullId, promise);

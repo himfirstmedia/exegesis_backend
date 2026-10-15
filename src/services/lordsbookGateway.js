@@ -14,18 +14,18 @@ const getConfig = () => ({
   timeoutMs: readPositiveInt("LORDSBOOK_TIMEOUT_MS", 30000),
   retryAttempts: readPositiveInt("LORDSBOOK_RETRY_ATTEMPTS", 3),
   retryDelayMs: readPositiveInt("LORDSBOOK_RETRY_DELAY_MS", 500),
+  textTimeoutMs: readPositiveInt("LORDSBOOK_TEXT_TIMEOUT_MS", 5000),
+  textRetryAttempts: readPositiveInt("LORDSBOOK_TEXT_RETRY_ATTEMPTS", 1),
   ttsTimeoutMs: readPositiveInt("LORDSBOOK_TTS_TIMEOUT_MS", 25000),
   ttsRetryAttempts: readPositiveInt("LORDSBOOK_TTS_RETRY_ATTEMPTS", 1),
 });
 
 const buildHeaders = (accept, hasBody = false) => {
   const { apiKey } = getConfig();
-  // Fallback to provided API key if env is missing
-  const key = apiKey || "3e76bf58-8681-48b1-b140-f8fb43c1d386";
   return {
     Accept: accept,
     ...(hasBody ? { "Content-Type": "application/json" } : {}),
-    ...(key ? { "X-API-Key": key } : {}),
+    ...(apiKey ? { "X-API-Key": apiKey } : {}),
   };
 };
 
@@ -91,6 +91,7 @@ const unwrapJson = async (response) => {
 };
 
 export const translateLordsbookText = async ({ q, source, target, format = "text" }) => {
+  const config = getConfig();
   const response = await request(
     "/translate",
     {
@@ -98,7 +99,8 @@ export const translateLordsbookText = async ({ q, source, target, format = "text
       headers: buildHeaders("application/json", true),
       body: JSON.stringify({ q, source, target, format }),
     },
-    15000,
+    config.textTimeoutMs,
+    config.textRetryAttempts,
   );
   return await unwrapJson(response);
 };

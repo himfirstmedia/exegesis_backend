@@ -1,5 +1,9 @@
 import express from "express";
 import { optionalAuth } from "../../middlewares/auth.middleware.js";
+import {
+  translationCharacterLimiter,
+  translationLimiter,
+} from "../../middlewares/rateLimiter.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import * as translationController from "./controller.js";
 import {
@@ -13,22 +17,28 @@ const router = express.Router();
 router.post(
   "/",
   optionalAuth,
+  translationLimiter,
   validate(translateSchema, "body"),
+  translationCharacterLimiter,
   translationController.translate,
 );
 router.post(
   "/batch",
   optionalAuth,
+  translationLimiter,
   validate(translateBatchSchema, "body"),
+  translationCharacterLimiter,
   translationController.translateBatch,
 );
 router.post(
   "/detect",
   optionalAuth,
+  translationLimiter,
   validate(detectSchema, "body"),
+  translationCharacterLimiter,
   translationController.detect,
 );
-router.get("/languages", optionalAuth, translationController.languages);
-router.get("/status", translationController.status);
+router.get("/languages", optionalAuth, translationLimiter, translationController.languages);
+router.get("/status", optionalAuth, translationLimiter, translationController.status);
 
 export default router;

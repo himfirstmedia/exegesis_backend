@@ -10,9 +10,33 @@ import {
   getChapters,
   getAllTranslations,
   getCatalog,
+  __booksIndexDirectories,
+  __persistBooksIndex,
 } from './service.js';
+import fs from 'fs';
+import path from 'path';
 
 describe('normalizeTranslationId', () => {
+  test('writes generated indexes outside the watched source tree', () => {
+    expect(__booksIndexDirectories.committed).toContain(path.join('src', 'modules'));
+    expect(__booksIndexDirectories.generated).not.toContain(path.join('src', 'modules'));
+    expect(__booksIndexDirectories.generated).toContain(path.join('.cache', 'bible-indexes'));
+  });
+
+  test('treats generated index directory failures as non-fatal', async () => {
+    const mkdir = jest.spyOn(fs.promises, 'mkdir').mockRejectedValueOnce(
+      new Error('read-only filesystem'),
+    );
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(
+      __persistBooksIndex(path.join(__booksIndexDirectories.generated, 'test.json'), []),
+    ).resolves.toBe(false);
+
+    mkdir.mockRestore();
+    consoleError.mockRestore();
+  });
+
   test('resolves the NKJV alias to the canonical NKJ id', () => {
     expect(normalizeTranslationId('NKJV')).toBe('NKJ');
   });
