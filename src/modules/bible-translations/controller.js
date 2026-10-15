@@ -798,12 +798,41 @@ export const downloadTranslation = async (req, res) => {
     }
     const stat = fs.statSync(filePath);
     const fileName = path.basename(filePath);
-    const shortId = path.basename(filePath, '.xml');
     const range = req.headers.range;
     if (range) {
-      const parts = range.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+      const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+      if (!match || (!match[1] && !match[2])) {
+        res.setHeader('Content-Range', `bytes */${stat.size}`);
+        return res.status(416).end();
+      }
+
+      let start;
+      let end;
+      if (!match[1]) {
+        const suffixLength = parseInt(match[2], 10);
+        if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+          res.setHeader('Content-Range', `bytes */${stat.size}`);
+          return res.status(416).end();
+        }
+        start = Math.max(0, stat.size - suffixLength);
+        end = stat.size - 1;
+      } else {
+        start = parseInt(match[1], 10);
+        end = match[2]
+          ? Math.min(parseInt(match[2], 10), stat.size - 1)
+          : stat.size - 1;
+      }
+
+      if (
+        !Number.isFinite(start) ||
+        !Number.isFinite(end) ||
+        start < 0 ||
+        start >= stat.size ||
+        end < start
+      ) {
+        res.setHeader('Content-Range', `bytes */${stat.size}`);
+        return res.status(416).end();
+      }
       const chunkSize = end - start + 1;
       res.status(206);
       res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
@@ -811,7 +840,7 @@ export const downloadTranslation = async (req, res) => {
       res.setHeader('Content-Length', chunkSize);
       res.setHeader('Content-Type', 'application/xml');
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-      res.setHeader('X-Bible-Id', shortId);
+      res.setHeader('X-Bible-Id', translationId);
       res.setHeader('X-Bible-Size', String(stat.size));
       fs.createReadStream(filePath, { start, end }).pipe(res);
       return;
@@ -821,7 +850,7 @@ export const downloadTranslation = async (req, res) => {
     res.setHeader('Content-Type', 'application/xml');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('X-Bible-Id', shortId);
+    res.setHeader('X-Bible-Id', translationId);
     res.setHeader('X-Bible-Size', String(stat.size));
     fs.createReadStream(filePath).pipe(res);
   } catch (error) {
