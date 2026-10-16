@@ -26,7 +26,7 @@ const localizeJournalEntries = async (records, requestedLanguage) => {
   const isList = Array.isArray(records);
   const entries = (isList ? records : [records])
     .filter(Boolean)
-    .map((entry) => ({ ...entry, contentLanguage: language }));
+    .map((entry) => ({ ...entry, contentLanguage: "en" }));
 
   if (language.toLowerCase() !== "en") {
     const values = [];
@@ -40,9 +40,22 @@ const localizeJournalEntries = async (records, requestedLanguage) => {
       });
     });
     if (values.length > 0) {
-      const translated = await translateMany(values, language);
-      fields.forEach(([entry, field], index) => {
-        entry[field] = translated[index];
+      try {
+        const translated = await translateMany(values, language, {
+          throwOnFailure: true,
+        });
+        fields.forEach(([entry, field], index) => {
+          entry[field] = translated[index];
+        });
+        entries.forEach((entry) => {
+          entry.contentLanguage = language;
+        });
+      } catch {
+        // Preserve canonical English content and report its actual language.
+      }
+    } else {
+      entries.forEach((entry) => {
+        entry.contentLanguage = language;
       });
     }
   }

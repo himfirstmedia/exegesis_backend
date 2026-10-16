@@ -984,6 +984,7 @@ export const translateBatch = async ({ q, ...options }) => {
     resolved.get(getTranslationCacheKey({ q: text, ...options })));
   return {
     translations,
+    targetLanguage: options.target,
     itemCount: translations.length,
     characterCount: totalCharacters,
     ...(provider ? { provider } : {}),

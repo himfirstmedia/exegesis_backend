@@ -147,7 +147,7 @@ describe("journal public content translation", () => {
       "Patience matters.",
       "Listen first.",
       "faith,trust",
-    ], "hi");
+    ], "hi", { throwOnFailure: true });
     expect(result.returnData).toMatchObject({
       id: 21,
       title: "hi:A faithful day",
@@ -158,6 +158,24 @@ describe("journal public content translation", () => {
     });
     expect(source.title).toBe("A faithful day");
     expect(source).not.toHaveProperty("contentLanguage");
+  });
+
+  test("reports English when journal localization fails", async () => {
+    cache.getOrSet.mockResolvedValue({
+      id: 23n,
+      title: "Canonical title",
+      content: "Canonical content",
+    });
+    translateMany.mockRejectedValueOnce(new Error("offline"));
+
+    const result = await getJournalEntry({ id: 23, lang: "ru" }, "user-1");
+
+    expect(result.returnData).toMatchObject({
+      id: 23,
+      title: "Canonical title",
+      content: "Canonical content",
+      contentLanguage: "en",
+    });
   });
 
   test("returns canonical journal content to the editor", async () => {

@@ -114,6 +114,7 @@ describe("text-to-text translation service", () => {
     });
 
     expect(result.itemCount).toBe(3);
+    expect(result.targetLanguage).toBe("ar");
     expect(global.fetch).toHaveBeenCalledTimes(1);
     expect(maximumActive).toBeLessThanOrEqual(2);
     expect(result.translations.map((item) => item.translatedText)).toEqual([
