@@ -1,6 +1,10 @@
 import { cache } from "../../services/cacheService.js";
 import { normalizeLanguage, translateMany } from "../../utils/translator.js";
-import { getJournalPrompts, getJournalTemplates } from "./service.js";
+import {
+  getJournalEntry,
+  getJournalPrompts,
+  getJournalTemplates,
+} from "./service.js";
 
 jest.mock("../../config/db.js", () => ({ prisma: {} }));
 
@@ -114,6 +118,65 @@ describe("journal public content translation", () => {
       name: "Canonical template",
       promptsJson: '["Canonical prompt"]',
       prompts: ["Canonical prompt"],
+    });
+  });
+
+  test("localizes journal entry prose without mutating the cached source", async () => {
+    const source = {
+      id: 21n,
+      title: "A faithful day",
+      content: "I learned to trust God.",
+      prayers: "Give me wisdom.",
+      gratitude: null,
+      learnings: "Patience matters.",
+      application: "Listen first.",
+      tags: "faith,trust",
+      category: "reflection",
+      bookName: "John",
+      createdOn: new Date("2026-03-04T00:00:00.000Z"),
+    };
+    cache.getOrSet.mockResolvedValue(source);
+
+    const result = await getJournalEntry({ id: 21, lang: "hi" }, "user-1");
+
+    expect(translateMany).toHaveBeenCalledWith([
+      "A faithful day",
+      "I learned to trust God.",
+      "Give me wisdom.",
+      "Patience matters.",
+      "Listen first.",
+      "faith,trust",
+    ], "hi");
+    expect(result.returnData).toMatchObject({
+      id: 21,
+      title: "hi:A faithful day",
+      content: "hi:I learned to trust God.",
+      contentLanguage: "hi",
+      category: "reflection",
+      bookName: "John",
+    });
+    expect(source.title).toBe("A faithful day");
+    expect(source).not.toHaveProperty("contentLanguage");
+  });
+
+  test("returns canonical journal content to the editor", async () => {
+    const source = {
+      id: 22n,
+      title: "Canonical title",
+      content: "Canonical content",
+    };
+    cache.getOrSet.mockResolvedValue(source);
+
+    const result = await getJournalEntry(
+      { id: 22, lang: "fr", raw: true },
+      "user-1",
+    );
+
+    expect(translateMany).not.toHaveBeenCalled();
+    expect(result.returnData).toEqual({
+      id: 22,
+      title: "Canonical title",
+      content: "Canonical content",
     });
   });
 });

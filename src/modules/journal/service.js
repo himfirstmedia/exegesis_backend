@@ -11,6 +11,45 @@ const moduleFilename = fileURLToPath(import.meta.url);
 const moduleDirname = path.dirname(moduleFilename);
 const LOGO_PATH = path.join(moduleDirname, "../../../src/assets/logo.png");
 
+const JOURNAL_ENTRY_TEXT_FIELDS = [
+  "title",
+  "content",
+  "prayers",
+  "gratitude",
+  "learnings",
+  "application",
+  "tags",
+];
+
+const localizeJournalEntries = async (records, requestedLanguage) => {
+  const language = normalizeLanguage(requestedLanguage ?? "en");
+  const isList = Array.isArray(records);
+  const entries = (isList ? records : [records])
+    .filter(Boolean)
+    .map((entry) => ({ ...entry, contentLanguage: language }));
+
+  if (language.toLowerCase() !== "en") {
+    const values = [];
+    const fields = [];
+    entries.forEach((entry) => {
+      JOURNAL_ENTRY_TEXT_FIELDS.forEach((field) => {
+        if (typeof entry[field] === "string" && entry[field].trim()) {
+          values.push(entry[field]);
+          fields.push([entry, field]);
+        }
+      });
+    });
+    if (values.length > 0) {
+      const translated = await translateMany(values, language);
+      fields.forEach(([entry, field], index) => {
+        entry[field] = translated[index];
+      });
+    }
+  }
+
+  return isList ? entries : entries[0] ?? null;
+};
+
 
 export const createJournalEntry = async (data, userId) => {
   const {
@@ -157,7 +196,7 @@ export const deleteJournalEntry = async (data, userId) => {
 };
 
 export const getJournalEntry = async (data, userId) => {
-  const { id } = data;
+  const { id, lang, raw } = data;
   if (!id) {
     return { returnCode: 400, returnMessage: "Journal entry ID is required" };
   }
@@ -185,7 +224,11 @@ export const getJournalEntry = async (data, userId) => {
   return {
     returnCode: 200,
     returnMessage: "Journal entry fetched successfully",
-    returnData: serializeBigInt(journalEntry),
+    returnData: serializeBigInt(
+      raw === true
+        ? journalEntry
+        : await localizeJournalEntries(journalEntry, lang),
+    ),
   };
 };
 
@@ -202,6 +245,7 @@ export const getAllJournalEntries = async (data, userId) => {
     source,
     page = 1,
     pageSize = 20,
+    lang,
   } = data;
 
   const pageNum = parseInt(page) || 1;
@@ -251,7 +295,7 @@ export const getAllJournalEntries = async (data, userId) => {
     returnCode: 200,
     returnMessage: "Journal entries fetched successfully",
     returnData: serializeBigInt({
-      entries,
+      entries: await localizeJournalEntries(entries, lang),
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,
@@ -263,7 +307,7 @@ export const getAllJournalEntries = async (data, userId) => {
 };
 
 export const getJournalEntriesByVerse = async (data, userId) => {
-  const { bookName, chapter, verseNumber } = data;
+  const { bookName, chapter, verseNumber, lang } = data;
 
   if (!bookName || !chapter || !verseNumber) {
     return { returnCode: 400, returnMessage: "bookName, chapter, and verseNumber are required" };
@@ -282,7 +326,7 @@ export const getJournalEntriesByVerse = async (data, userId) => {
   return {
     returnCode: 200,
     returnMessage: "Journal entries for verse fetched successfully",
-    returnData: serializeBigInt(entries),
+    returnData: serializeBigInt(await localizeJournalEntries(entries, lang)),
   };
 };
 
@@ -312,7 +356,7 @@ export const toggleFavorite = async (data, userId) => {
   };
 };
 
-export const getJournalStats = async (userId) => {
+export const getJournalStats = async (userId, lang = "en") => {
   const stats = await cache.getOrSet(
     'journal',
     `stats:${userId}`,
@@ -379,10 +423,15 @@ export const getJournalStats = async (userId) => {
     60,
   );
 
+  const localizedStats = {
+    ...stats,
+    recentEntries: await localizeJournalEntries(stats.recentEntries, lang),
+  };
+
   return {
     returnCode: 200,
     returnMessage: "Journal stats fetched successfully",
-    returnData: serializeBigInt(stats),
+    returnData: serializeBigInt(localizedStats),
   };
 };
 
@@ -630,7 +679,7 @@ export const deleteJournalTemplate = async (data) => {
 };
 
 export const getUserJournalEntriesForAdmin = async (data, adminId) => {
-  const { userId, search, category, page = 1, pageSize = 20, all = false } = data;
+  const { userId, search, category, page = 1, pageSize = 20, all = false, lang } = data;
 
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = all ? undefined : Math.min(parseInt(pageSize) || 20, 50);
@@ -674,7 +723,7 @@ export const getUserJournalEntriesForAdmin = async (data, adminId) => {
     returnCode: 200,
     returnMessage: "User journal entries fetched successfully",
     returnData: serializeBigInt({
-      entries,
+      entries: await localizeJournalEntries(entries, lang),
       totalCount,
       page: pageNum,
       pageSize: all ? totalCount : pageSizeNum,
@@ -687,7 +736,7 @@ export const getUserJournalEntriesForAdmin = async (data, adminId) => {
 };
 
 export const getJournalEntryForAdmin = async (data, adminId) => {
-  const { id } = data;
+  const { id, lang } = data;
   if (!id) return { returnCode: 400, returnMessage: "Journal entry ID is required" };
 
   const entry = await prisma.journalEntry.findUnique({
@@ -703,7 +752,7 @@ export const getJournalEntryForAdmin = async (data, adminId) => {
   return {
     returnCode: 200,
     returnMessage: "Journal entry fetched successfully",
-    returnData: serializeBigInt(entry),
+    returnData: serializeBigInt(await localizeJournalEntries(entry, lang)),
   };
 };
 
@@ -1427,6 +1476,7 @@ export const getPublicEntries = async (data, userId) => {
     endDate,
     page = 1,
     pageSize = 20,
+    lang,
   } = data;
 
   const pageNum = parseInt(page) || 1;
@@ -1498,7 +1548,7 @@ export const getPublicEntries = async (data, userId) => {
     returnCode: 200,
     returnMessage: "Public entries fetched successfully",
     returnData: serializeBigInt({
-      entries: enriched,
+      entries: await localizeJournalEntries(enriched, lang),
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,
@@ -1509,7 +1559,7 @@ export const getPublicEntries = async (data, userId) => {
 };
 
 export const searchEntriesByStrongs = async (data, userId) => {
-  const { strongsId, page = 1, pageSize = 20 } = data;
+  const { strongsId, page = 1, pageSize = 20, lang } = data;
 
   if (!strongsId) {
     return { returnCode: 400, returnMessage: "strongsId is required" };
@@ -1540,7 +1590,7 @@ export const searchEntriesByStrongs = async (data, userId) => {
   return {
     returnCode: 200,
     returnData: serializeBigInt({
-      entries,
+      entries: await localizeJournalEntries(entries, lang),
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,

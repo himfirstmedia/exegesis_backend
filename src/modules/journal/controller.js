@@ -104,7 +104,7 @@ export const getJournalStats = async (req, res) => {
     if (!userId) {
       return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
     }
-    const result = await journalService.getJournalStats(userId);
+    const result = await journalService.getJournalStats(userId, req.body?.lang);
     return res.status(result.returnCode || 500).json(result);
   } catch (error) {
     console.error("Get journal stats error:", error);
