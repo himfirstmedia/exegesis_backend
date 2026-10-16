@@ -12,6 +12,7 @@ import {
 
 const DEFAULT_LIBRETRANSLATE_URL =
   "https://exegesis-libretranslate-production.up.railway.app";
+const DEFAULT_MYMEMORY_URL = "https://api.mymemory.translated.net/get";
 const TRANSLATION_CACHE_NAMESPACE = "text-translations";
 const RESULT_PROVIDER = Symbol("translationProvider");
 const translationMemoryCache = new Map();
@@ -35,6 +36,11 @@ const getConfig = () => ({
   minDelayMs: readPositiveInt("LIBRETRANSLATE_MIN_DELAY_MS", 300),
   retryAttempts: readPositiveInt("LIBRETRANSLATE_RETRY_ATTEMPTS", 3),
   retryDelayMs: readPositiveInt("LIBRETRANSLATE_RETRY_DELAY_MS", 500),
+  myMemoryUrl: (process.env.MYMEMORY_TRANSLATE_URL || DEFAULT_MYMEMORY_URL).replace(/\/$/, ""),
+  myMemoryTimeoutMs: readPositiveInt("MYMEMORY_TRANSLATE_TIMEOUT_MS", 8000),
+  myMemoryMaxConcurrency: readPositiveInt("MYMEMORY_TRANSLATE_MAX_CONCURRENCY", 2),
+  myMemoryMinDelayMs: readNonNegativeInt("MYMEMORY_TRANSLATE_MIN_DELAY_MS", 250),
+  myMemoryEmail: (process.env.MYMEMORY_TRANSLATE_EMAIL || "").trim(),
   maxTextLength: readPositiveInt("TRANSLATION_MAX_TEXT_LENGTH", 20000),
   chunkSize: readPositiveInt("TRANSLATION_CHUNK_SIZE", 1000),
   maxBatchItems: readPositiveInt("TRANSLATION_MAX_BATCH_ITEMS", 100),
@@ -58,12 +64,22 @@ const getConfig = () => ({
 const isLordsbookTextEnabled = () =>
   (process.env.LORDSBOOK_TEXT_ENABLE || "").trim().toLowerCase() === "true";
 
+const isMyMemoryEnabled = () =>
+  (process.env.MYMEMORY_TRANSLATE_ENABLE ?? "true").trim().toLowerCase() !== "false";
+
 const getTranslationCacheKey = ({ q, source = "auto", target, format = "text", alternatives }) => {
-  const provider = isLordsbookTextEnabled() ? "lordsbook+libre" : "libre";
+  const provider = [
+    ...(isLordsbookTextEnabled() ? ["lordsbook"] : []),
+    "libre",
+    ...(isMyMemoryEnabled() ? ["mymemory"] : []),
+  ].join("+");
   const versions = {
     libre: process.env.LIBRETRANSLATE_MODEL_VERSION || "default",
     ...(isLordsbookTextEnabled()
       ? { lordsbook: process.env.LORDSBOOK_TEXT_MODEL_VERSION || "default" }
+      : {}),
+    ...(isMyMemoryEnabled()
+      ? { mymemory: process.env.MYMEMORY_TRANSLATE_MODEL_VERSION || "default" }
       : {}),
   };
   const digest = createHash("sha256")
@@ -107,10 +123,10 @@ const getCachedTranslation = async (key) => {
     cached?.version === 2 &&
     cached.result?.translatedText &&
     typeof cached.result.translatedText === "string" &&
-    ["lordsbook", "libre"].includes(cached.provider)
+    ["lordsbook", "libre", "mymemory"].includes(cached.provider)
   ) {
     const config = getConfig();
-    const ttl = isLordsbookTextEnabled() && cached.provider === "libre"
+    const ttl = isLordsbookTextEnabled() && cached.provider !== "lordsbook"
       ? config.fallbackCacheTtl
       : config.cacheTtl;
     setMemoryCache(key, cached.result, cached.provider, ttl);
@@ -122,7 +138,7 @@ const getCachedTranslation = async (key) => {
 const cacheTranslation = (key, result) => {
   const config = getConfig();
   const provider = result[RESULT_PROVIDER] || "libre";
-  const ttl = isLordsbookTextEnabled() && provider === "libre"
+  const ttl = isLordsbookTextEnabled() && provider !== "lordsbook"
     ? config.fallbackCacheTtl
     : config.cacheTtl;
   setMemoryCache(key, result, provider, ttl);
@@ -317,23 +333,29 @@ const markLordsbookTargetUnsupported = (target) => {
 const providerLimiters = {
   libre: { active: 0, queue: [], startGate: Promise.resolve(), lastStart: 0 },
   lordsbook: { active: 0, queue: [], startGate: Promise.resolve(), lastStart: 0 },
+  mymemory: { active: 0, queue: [], startGate: Promise.resolve(), lastStart: 0 },
 };
 
 const getProviderLimit = (provider) => {
   const config = getConfig();
-  return provider === "lordsbook"
-    ? {
+  if (provider === "lordsbook") {
+    return {
         maxConcurrency: config.lordsbookMaxConcurrency,
         minDelayMs: config.lordsbookMinDelayMs,
         queueMax: config.lordsbookQueueMax,
         queueWaitMs: config.lordsbookQueueWaitMs,
-      }
-    : {
-        maxConcurrency: config.maxConcurrency,
-        minDelayMs: config.minDelayMs,
-        queueMax: config.providerQueueMax,
-        queueWaitMs: config.providerQueueWaitMs,
-      };
+    };
+  }
+  return {
+    maxConcurrency: provider === "mymemory"
+      ? config.myMemoryMaxConcurrency
+      : config.maxConcurrency,
+    minDelayMs: provider === "mymemory"
+      ? config.myMemoryMinDelayMs
+      : config.minDelayMs,
+    queueMax: config.providerQueueMax,
+    queueWaitMs: config.providerQueueWaitMs,
+  };
 };
 
 const providerQueueError = (message) => {
@@ -470,6 +492,74 @@ const libreRequest = async (path, options = {}) => {
   throw lastError;
 };
 
+const myMemoryRequest = async (q, source, target) => {
+  const config = getConfig();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.myMemoryTimeoutMs);
+  try {
+    const params = new URLSearchParams({
+      q,
+      langpair: `${source === "auto" ? "en" : source}|${target}`,
+      ...(config.myMemoryEmail ? { de: config.myMemoryEmail } : {}),
+    });
+    const response = await fetch(`${config.myMemoryUrl}?${params}`, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    const body = await response.json().catch(() => null);
+    const translatedText = body?.responseData?.translatedText;
+    if (!response.ok || Number(body?.responseStatus || response.status) >= 400) {
+      throw new AppError(502, body?.responseDetails || "Fallback translation provider failed");
+    }
+    if (typeof translatedText !== "string" || !translatedText.trim()) {
+      throw new AppError(502, "Fallback translation provider returned invalid output");
+    }
+    return translatedText;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new AppError(504, "Fallback translation provider timed out");
+    }
+    if (error instanceof AppError) throw error;
+    throw new AppError(502, `Fallback translation provider is unavailable: ${error.message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const translateWithMyMemory = async (item, options) => {
+  if (!isMyMemoryEnabled() || options.format === "html") {
+    throw new ValidationError(
+      `Translation to '${options.target}' is not supported by the configured translation providers`,
+    );
+  }
+  if (!item.value) {
+    return markProvider({
+      translatedText: `${item.leading}${item.trailing}`,
+      source: options.source || "en",
+      target: options.target,
+      characterCount: item.original?.length ?? 0,
+      chunkCount: 0,
+    }, "mymemory");
+  }
+  const chunks = splitText(item.value, 450);
+  const translated = [];
+  for (const chunk of chunks) {
+    translated.push(await withProviderLimit("mymemory", () =>
+      myMemoryRequest(
+        chunk,
+        toLibreLanguageCode(options.source || "en"),
+        toLibreLanguageCode(options.target),
+      )));
+  }
+  return markProvider({
+    translatedText: `${item.leading}${translated.join("")}${item.trailing}`,
+    source: options.source || "en",
+    target: options.target,
+    characterCount: item.original?.length ?? item.value.length,
+    chunkCount: chunks.length,
+  }, "mymemory");
+};
+
 const translateChunk = async (chunk, options) => {
   const { leading, value, trailing } = preserveOuterWhitespace(chunk);
   if (!value) return { translatedText: chunk };
@@ -511,7 +601,15 @@ const translateChunk = async (chunk, options) => {
     }
   }
 
-  await assertSupportedTarget(options.target);
+  try {
+    await assertSupportedTarget(options.target);
+  } catch (error) {
+    if (!(error instanceof ValidationError) || !isMyMemoryEnabled()) throw error;
+    return translateWithMyMemory(
+      { original: chunk, leading, value, trailing },
+      options,
+    );
+  }
   const payload = {
     q: value,
     source: toLibreLanguageCode(options.source),
@@ -562,7 +660,9 @@ const translateTextUncached = async ({ q, source = "auto", target, format = "tex
 
   const provider = results.some((result) => result[RESULT_PROVIDER] === "libre")
     ? "libre"
-    : "lordsbook";
+    : results.some((result) => result[RESULT_PROVIDER] === "mymemory")
+      ? "mymemory"
+      : "lordsbook";
   if (provider === "lordsbook") recordLordsbookTextSuccess();
   return markProvider({
     translatedText: results.map((result) => result.translatedText).join(""),
@@ -673,7 +773,36 @@ const translateBatchUncached = async ({ q, ...options }) => {
   const libreIndexes = prepared
     .map((_, index) => index)
     .filter((index) => !lordsbookResults?.[index]?.result?.translatedText);
-  await assertSupportedTarget(options.target);
+  try {
+    await assertSupportedTarget(options.target);
+  } catch (error) {
+    if (!(error instanceof ValidationError) || !isMyMemoryEnabled()) throw error;
+    const fallbackResults = await mapWithConcurrency(
+      libreIndexes,
+      config.myMemoryMaxConcurrency,
+      (index) => translateWithMyMemory(prepared[index], options),
+    );
+    let fallbackIndex = 0;
+    const translations = prepared.map((item, index) => {
+      const lordsbook = lordsbookResults?.[index]?.result;
+      if (lordsbook?.translatedText) {
+        return markProvider({
+          translatedText: `${item.leading}${lordsbook.translatedText}${item.trailing}`,
+          source: options.source || "auto",
+          target: options.target,
+          characterCount: item.original.length,
+          chunkCount: 1,
+        }, "lordsbook");
+      }
+      return fallbackResults[fallbackIndex++];
+    });
+    return {
+      translations,
+      itemCount: translations.length,
+      characterCount: totalCharacters,
+      provider: "mymemory",
+    };
+  }
   const payload = {
     q: libreIndexes.map((index) => prepared[index].value),
     source: toLibreLanguageCode(options.source || "auto"),

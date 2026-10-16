@@ -570,6 +570,7 @@ describe("capability enforcement (TRANSLATION_ENFORCE_SUPPORTED_LANGS)", () => {
   beforeEach(() => {
     process.env.TRANSLATION_ENFORCE_SUPPORTED_LANGS = "true";
     process.env.LORDSBOOK_TEXT_ENABLE = "false";
+    process.env.MYMEMORY_TRANSLATE_ENABLE = "false";
     __resetTranslationProviderCache();
     cache.get.mockReset().mockResolvedValue(null);
     cache.set.mockReset().mockResolvedValue(undefined);
@@ -595,6 +596,34 @@ describe("capability enforcement (TRANSLATION_ENFORCE_SUPPORTED_LANGS)", () => {
       translateText({ q: "Hello", source: "en", target: "ta" }),
     ).rejects.toMatchObject({ status: 400, message: expect.stringContaining("not supported") });
     expect(translateCalls()).toHaveLength(0);
+  });
+
+  test("falls back to MyMemory when LibreTranslate lacks Malayalam", async () => {
+    process.env.MYMEMORY_TRANSLATE_ENABLE = "true";
+    global.fetch.mockImplementation(async (url) => {
+      if (url.endsWith("/languages")) return jsonResponse(supported);
+      if (url.startsWith("https://api.mymemory.translated.net/get?")) {
+        return jsonResponse({
+          responseStatus: 200,
+          responseData: { translatedText: "Malayalam translation" },
+        });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+
+    const result = await translateBatch({
+      q: ["Verse", "Devotion"],
+      source: "en",
+      target: "ml",
+    });
+
+    expect(result.provider).toBe("mymemory");
+    expect(result.translations.map((item) => item.translatedText)).toEqual([
+      "Malayalam translation",
+      "Malayalam translation",
+    ]);
+    expect(global.fetch.mock.calls.filter(([url]) =>
+      url.startsWith("https://api.mymemory.translated.net/get?"))).toHaveLength(2);
   });
 
   test("maps fil to tl before checking capability", async () => {
