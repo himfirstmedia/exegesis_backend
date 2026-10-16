@@ -106,10 +106,10 @@ const withTimeout = (promise, ms) => {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 };
 
-const translateEntries = async (entries, lang) => {
+const translateEntries = async (entries, lang, timeBudgetMs) => {
   const maxCharacters = getMaxBatchCharacters();
   const maxItems = getMaxBatchItems();
-  const budgetMs = getTranslationTimeBudget();
+  const budgetMs = timeBudgetMs ?? getTranslationTimeBudget();
   const startedAt = Date.now();
   let group = [];
   let characterCount = 0;
@@ -118,14 +118,15 @@ const translateEntries = async (entries, lang) => {
     if (!group.length) return;
     // Keep the budget honest across multiple flushes: remaining budget goes
     // down as time elapses, so a long devotion cannot exceed the cap in total.
-    const remaining = budgetMs - (Date.now() - startedAt);
+    const remaining =
+      budgetMs > 0 ? Math.max(budgetMs - (Date.now() - startedAt), 1) : 0;
     const result = await withTimeout(
       translateMany(
         group.map((entry) => entry.value),
         lang,
         { throwOnFailure: true },
       ),
-      Math.max(remaining, 1),
+      remaining,
     );
     result.forEach((translation, index) => {
       group[index].setValue(translation);
@@ -152,7 +153,7 @@ const translateRecord = async (
   lang,
   fields,
   includeRichFields,
-  { throwOnFailure = false } = {},
+  { throwOnFailure = false, timeBudgetMs } = {},
 ) => {
   const target = normalizeLanguage(lang);
   if (!item || target.toLowerCase() === "en") return item;
@@ -173,7 +174,7 @@ const translateRecord = async (
   if (!entries.length) return { ...translated, contentLanguage: target };
 
   try {
-    await translateEntries(entries, target);
+    await translateEntries(entries, target, timeBudgetMs);
     return { ...translated, contentLanguage: target };
   } catch (error) {
     const warningKey = `${target}:${error.message}`;

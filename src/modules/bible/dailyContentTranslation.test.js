@@ -182,4 +182,31 @@ describe("daily content translation", () => {
     expect(translateMany).toHaveBeenCalled();
     warning.mockRestore();
   });
+
+  test("allows background translation to finish without the presentation budget", async () => {
+    jest.useFakeTimers();
+    process.env.TRANSLATION_TIME_BUDGET_MS = "50";
+    let resolveTranslation;
+    translateMany.mockImplementationOnce(
+      (texts) =>
+        new Promise((resolve) => {
+          resolveTranslation = () =>
+            resolve(texts.map((text) => `HI:${text}`));
+        }),
+    );
+    const item = { title: "Patient title", content: "Patient content" };
+
+    const promise = translateDailyDevotionContent(item, "hi", {
+      throwOnFailure: true,
+      timeBudgetMs: 0,
+    });
+    jest.advanceTimersByTime(51);
+    resolveTranslation();
+
+    await expect(promise).resolves.toEqual({
+      title: "HI:Patient title",
+      content: "HI:Patient content",
+      contentLanguage: "hi",
+    });
+  });
 });

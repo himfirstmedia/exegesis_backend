@@ -756,6 +756,45 @@ const addCrossReferenceDetailsToExplanation = async (resource) => {
 const verseExplanationCacheKey = (bookName, chapter, verseNumber) =>
   `explanation-detailed:v4:${bookName}:${chapter}:${verseNumber}`;
 
+const dailyTranslationInFlight = new Map();
+
+const dailyTranslationSourceKey = (record) => {
+  const updated = record?.updatedOn || record?.displayDate || "unknown";
+  const timestamp = new Date(updated).getTime();
+  return `${record?.id ?? "unknown"}:${Number.isFinite(timestamp) ? timestamp : "unknown"}`;
+};
+
+const getCachedDailyTranslationOrWarm = async ({
+  cacheKey,
+  sourceResult,
+  language,
+  translate,
+}) => {
+  const cached = await cache.get("bible", cacheKey);
+  if (cached) return cached;
+
+  if (!dailyTranslationInFlight.has(cacheKey)) {
+    const operation = (async () => {
+      const translated = {
+        ...sourceResult,
+        data: await translate(sourceResult.data, language, {
+          throwOnFailure: true,
+          timeBudgetMs: 0,
+        }),
+      };
+      await cache.set("bible", cacheKey, translated, 1800);
+    })()
+      .catch(() => {})
+      .finally(() => dailyTranslationInFlight.delete(cacheKey));
+    dailyTranslationInFlight.set(cacheKey, operation);
+  }
+
+  return {
+    ...sourceResult,
+    data: { ...sourceResult.data, contentLanguage: "en" },
+  };
+};
+
 export const getVerseExplanation = async (data) => {
   const { bookName, chapter, verseNumber, lang = "en" } = data;
   const target = normalizeLanguage(lang);
@@ -1506,33 +1545,18 @@ export const getTodaysVerse = async (data = {}) => {
       learnMore: dvLearnMore,
     },
   };
-  // Cache the language-specific (translated) response so every device hitting
-  // the same language/day shares one translation instead of each request paying
-  // the translation latency (which can exceed the app's HTTP timeout when the
-  // translation provider is slow). English is already cached via the base key.
   const normLang = String(lang || "en")
     .trim()
     .toLowerCase();
   if (normLang === "en") return todaysVerseResult;
 
-  try {
-    return await cache.getOrSet(
-      "bible",
-      `todays-verse:v4:translated:${normLang}`,
-      async () => ({
-        ...todaysVerseResult,
-        data: await translateDailyVerseContent(todaysVerseResult.data, normLang, {
-          throwOnFailure: true,
-        }),
-      }),
-      1800,
-    );
-  } catch {
-    return {
-      ...todaysVerseResult,
-      data: { ...todaysVerseResult.data, contentLanguage: "en" },
-    };
-  }
+  const translationKey = `todays-verse:v5:translated:${normLang}:${dailyTranslationSourceKey(dv)}`;
+  return getCachedDailyTranslationOrWarm({
+    cacheKey: translationKey,
+    sourceResult: todaysVerseResult,
+    language: normLang,
+    translate: translateDailyVerseContent,
+  });
 };
 
 export const getDailyVerseByRef = async (data) => {
@@ -1616,31 +1640,18 @@ export const getTodaysDevotion = async (data = {}) => {
     message: "Today's devotion fetched successfully",
     data: dv,
   };
-  // Cache the language-specific (translated) response so all devices sharing a
-  // language/day reuse a single translation instead of each paying the latency.
   const normLang = String(lang || "en")
     .trim()
     .toLowerCase();
   if (normLang === "en") return result;
 
-  try {
-    return await cache.getOrSet(
-      "bible",
-      `todays-devotion:v3:translated:${normLang}`,
-      async () => ({
-        ...result,
-        data: await translateDailyDevotionContent(result.data, normLang, {
-          throwOnFailure: true,
-        }),
-      }),
-      1800,
-    );
-  } catch {
-    return {
-      ...result,
-      data: { ...result.data, contentLanguage: "en" },
-    };
-  }
+  const translationKey = `todays-devotion:v4:translated:${normLang}:${dailyTranslationSourceKey(dv)}`;
+  return getCachedDailyTranslationOrWarm({
+    cacheKey: translationKey,
+    sourceResult: result,
+    language: normLang,
+    translate: translateDailyDevotionContent,
+  });
 };
 
 export const getDevotionByDate = async (data) => {

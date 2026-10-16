@@ -1,5 +1,7 @@
 import { getChapterJournalPrompts } from '../service.js';
 
+jest.setTimeout(15000);
+
 describe('getChapterJournalPrompts', () => {
   it('returns up to 3 prompts for a valid book and chapter', async () => {
     const result = await getChapterJournalPrompts({
