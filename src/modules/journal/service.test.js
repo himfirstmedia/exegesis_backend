@@ -2,6 +2,7 @@ import { cache } from "../../services/cacheService.js";
 import { normalizeLanguage, translateMany } from "../../utils/translator.js";
 import {
   getJournalEntry,
+  getJournalExportCopy,
   getJournalPrompts,
   getJournalTemplates,
 } from "./service.js";
@@ -177,6 +178,31 @@ describe("journal public content translation", () => {
       id: 22,
       title: "Canonical title",
       content: "Canonical content",
+    });
+  });
+
+  test("localizes PDF labels using the requested app language", async () => {
+    const copy = await getJournalExportCopy("hi");
+
+    expect(normalizeLanguage).toHaveBeenCalledWith("hi");
+    expect(translateMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "Legacy Ledger",
+        "Personal Journal",
+        "Generated",
+        "Prayer Requests",
+        "Public",
+        "Private",
+      ]),
+      "hi",
+    );
+    expect(copy).toMatchObject({
+      ledgerTitle: "hi:Legacy Ledger",
+      personalJournal: "hi:Personal Journal",
+      generated: "hi:Generated",
+      prayerRequests: "hi:Prayer Requests",
+      public: "hi:Public",
+      private: "hi:Private",
     });
   });
 });
