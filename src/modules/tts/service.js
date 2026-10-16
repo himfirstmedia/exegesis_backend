@@ -197,56 +197,124 @@ const setRedisTimings = async (key, audioBuffer, wordOffsetsMs) => {
 // ── Edge TTS voices (free, Microsoft Neural) ──────────────────────────────
 // Ryan is deliberately FIRST: it is the app's default reading voice, and any
 // client-side "pick the first voice" fallback must land on it.
+const edgeVoice = (name, voiceId, language) => ({
+  name,
+  voiceId,
+  source: "edge",
+  category: "Neural",
+  language,
+});
+
 const EDGE_VOICES = [
-  {
-    name: "Ryan (Male)",
-    voiceId: "en-GB-RyanNeural",
-    source: "edge",
-    category: "Neural",
-  },
-  {
-    name: "Jenny (Female)",
-    voiceId: "en-US-JennyNeural",
-    source: "edge",
-    category: "Neural",
-  },
-  {
-    name: "Aria (Female)",
-    voiceId: "en-US-AriaNeural",
-    source: "edge",
-    category: "Neural",
-  },
-  {
-    name: "Guy (Male)",
-    voiceId: "en-US-GuyNeural",
-    source: "edge",
-    category: "Neural",
-  },
-  {
-    name: "Christopher (Male)",
-    voiceId: "en-US-ChristopherNeural",
-    source: "edge",
-    category: "Neural",
-  },
-  {
-    name: "Emma (Female)",
-    voiceId: "en-US-EmmaNeural",
-    source: "edge",
-    category: "Neural",
-  },
-  {
-    name: "Brian (Male)",
-    voiceId: "en-US-BrianNeural",
-    source: "edge",
-    category: "Neural",
-  },
-  {
-    name: "Sonia (Female)",
-    voiceId: "en-GB-SoniaNeural",
-    source: "edge",
-    category: "Neural",
-  },
+  // English first: Ryan is the app default and "pick the first voice" must land
+  // on it.
+  edgeVoice("Ryan (Male)", "en-GB-RyanNeural", "en"),
+  edgeVoice("Jenny (Female)", "en-US-JennyNeural", "en"),
+  edgeVoice("Aria (Female)", "en-US-AriaNeural", "en"),
+  edgeVoice("Guy (Male)", "en-US-GuyNeural", "en"),
+  edgeVoice("Christopher (Male)", "en-US-ChristopherNeural", "en"),
+  edgeVoice("Emma (Female)", "en-US-EmmaNeural", "en"),
+  edgeVoice("Brian (Male)", "en-US-BrianNeural", "en"),
+  edgeVoice("Sonia (Female)", "en-GB-SoniaNeural", "en"),
+  // Multilingual Edge neural voices. Edge synthesizes silence when the voice
+  // locale does not match the text, so non-English requests must resolve to a
+  // voice in the same language (see resolveEdgeVoiceForLanguage).
+  edgeVoice("Dmitry (Male)", "ru-RU-DmitryNeural", "ru"),
+  edgeVoice("Svetlana (Female)", "ru-RU-SvetlanaNeural", "ru"),
+  edgeVoice("Alvaro (Male)", "es-ES-AlvaroNeural", "es"),
+  edgeVoice("Elvira (Female)", "es-ES-ElviraNeural", "es"),
+  edgeVoice("Henri (Male)", "fr-FR-HenriNeural", "fr"),
+  edgeVoice("Denise (Female)", "fr-FR-DeniseNeural", "fr"),
+  edgeVoice("Conrad (Male)", "de-DE-ConradNeural", "de"),
+  edgeVoice("Katja (Female)", "de-DE-KatjaNeural", "de"),
+  edgeVoice("Antonio (Male)", "pt-BR-AntonioNeural", "pt"),
+  edgeVoice("Francisca (Female)", "pt-BR-FranciscaNeural", "pt"),
+  edgeVoice("Diego (Male)", "it-IT-DiegoNeural", "it"),
+  edgeVoice("Elsa (Female)", "it-IT-ElsaNeural", "it"),
+  edgeVoice("Hamed (Male)", "ar-SA-HamedNeural", "ar"),
+  edgeVoice("Zariyah (Female)", "ar-SA-ZariyahNeural", "ar"),
+  edgeVoice("Madhur (Male)", "hi-IN-MadhurNeural", "hi"),
+  edgeVoice("Swara (Female)", "hi-IN-SwaraNeural", "hi"),
+  edgeVoice("Bashkar (Male)", "bn-IN-BashkarNeural", "bn"),
+  edgeVoice("Tanishaa (Female)", "bn-IN-TanishaaNeural", "bn"),
+  edgeVoice("Valluvar (Male)", "ta-IN-ValluvarNeural", "ta"),
+  edgeVoice("Pallavi (Female)", "ta-IN-PallaviNeural", "ta"),
+  edgeVoice("Mohan (Male)", "te-IN-MohanNeural", "te"),
+  edgeVoice("Shruti (Female)", "te-IN-ShrutiNeural", "te"),
+  edgeVoice("Manohar (Male)", "mr-IN-ManoharNeural", "mr"),
+  edgeVoice("Aarohi (Female)", "mr-IN-AarohiNeural", "mr"),
+  edgeVoice("Niranjan (Male)", "gu-IN-NiranjanNeural", "gu"),
+  edgeVoice("Dhwani (Female)", "gu-IN-DhwaniNeural", "gu"),
+  edgeVoice("Gagan (Male)", "kn-IN-GaganNeural", "kn"),
+  edgeVoice("Sapna (Female)", "kn-IN-SapnaNeural", "kn"),
+  edgeVoice("Midhun (Male)", "ml-IN-MidhunNeural", "ml"),
+  edgeVoice("Sobhana (Female)", "ml-IN-SobhanaNeural", "ml"),
+  edgeVoice("Ojas (Male)", "pa-IN-OjasNeural", "pa"),
+  edgeVoice("Vaani (Female)", "pa-IN-VaaniNeural", "pa"),
+  edgeVoice("Asad (Male)", "ur-PK-AsadNeural", "ur"),
+  edgeVoice("Uzma (Female)", "ur-PK-UzmaNeural", "ur"),
+  edgeVoice("Sagar (Male)", "ne-NP-SagarNeural", "ne"),
+  edgeVoice("Hemkala (Female)", "ne-NP-HemkalaNeural", "ne"),
+  edgeVoice("Sukant (Male)", "or-IN-SukantNeural", "or"),
+  edgeVoice("Subhasini (Female)", "or-IN-SubhasiniNeural", "or"),
+  edgeVoice("Yunxi (Male)", "zh-CN-YunxiNeural", "zh"),
+  edgeVoice("Xiaoxiao (Female)", "zh-CN-XiaoxiaoNeural", "zh"),
+  edgeVoice("Keita (Male)", "ja-JP-KeitaNeural", "ja"),
+  edgeVoice("Nanami (Female)", "ja-JP-NanamiNeural", "ja"),
+  edgeVoice("InJoon (Male)", "ko-KR-InJoonNeural", "ko"),
+  edgeVoice("SunHi (Female)", "ko-KR-SunHiNeural", "ko"),
+  edgeVoice("Ardi (Male)", "id-ID-ArdiNeural", "id"),
+  edgeVoice("Gadis (Female)", "id-ID-GadisNeural", "id"),
+  edgeVoice("Ahmet (Male)", "tr-TR-AhmetNeural", "tr"),
+  edgeVoice("Emel (Female)", "tr-TR-EmelNeural", "tr"),
+  edgeVoice("Marek (Male)", "pl-PL-MarekNeural", "pl"),
+  edgeVoice("Zofia (Female)", "pl-PL-ZofiaNeural", "pl"),
+  edgeVoice("Ostap (Male)", "uk-UA-OstapNeural", "uk"),
+  edgeVoice("Polina (Female)", "uk-UA-PolinaNeural", "uk"),
+  edgeVoice("Emil (Male)", "ro-RO-EmilNeural", "ro"),
+  edgeVoice("Alina (Female)", "ro-RO-AlinaNeural", "ro"),
+  edgeVoice("Nestoras (Male)", "el-GR-NestorasNeural", "el"),
+  edgeVoice("Athina (Female)", "el-GR-AthinaNeural", "el"),
+  edgeVoice("Rafiki (Male)", "sw-KE-RafikiNeural", "sw"),
+  edgeVoice("Zuri (Female)", "sw-KE-ZuriNeural", "sw"),
+  edgeVoice("Angelo (Male)", "fil-PH-AngeloNeural", "fil"),
+  edgeVoice("Blessica (Female)", "fil-PH-BlessicaNeural", "fil"),
 ];
+
+// Default narrator per BCP-47 primary language for the app's supported locales.
+const EDGE_DEFAULT_VOICE_BY_LANGUAGE = {
+  en: "en-GB-RyanNeural",
+  ru: "ru-RU-DmitryNeural",
+  es: "es-ES-AlvaroNeural",
+  fr: "fr-FR-HenriNeural",
+  de: "de-DE-ConradNeural",
+  pt: "pt-BR-AntonioNeural",
+  it: "it-IT-DiegoNeural",
+  ar: "ar-SA-HamedNeural",
+  hi: "hi-IN-MadhurNeural",
+  bn: "bn-IN-BashkarNeural",
+  ta: "ta-IN-ValluvarNeural",
+  te: "te-IN-MohanNeural",
+  mr: "mr-IN-ManoharNeural",
+  gu: "gu-IN-NiranjanNeural",
+  kn: "kn-IN-GaganNeural",
+  ml: "ml-IN-MidhunNeural",
+  pa: "pa-IN-OjasNeural",
+  ur: "ur-PK-AsadNeural",
+  ne: "ne-NP-SagarNeural",
+  or: "or-IN-SukantNeural",
+  zh: "zh-CN-YunxiNeural",
+  ja: "ja-JP-KeitaNeural",
+  ko: "ko-KR-InJoonNeural",
+  id: "id-ID-ArdiNeural",
+  tr: "tr-TR-AhmetNeural",
+  pl: "pl-PL-MarekNeural",
+  uk: "uk-UA-OstapNeural",
+  ro: "ro-RO-EmilNeural",
+  el: "el-GR-NestorasNeural",
+  sw: "sw-KE-RafikiNeural",
+  fil: "fil-PH-AngeloNeural",
+};
 
 const LORDSBOOK_VOICE_PREFIXES = {
   af: { locale: "American English", gender: "Female" },
@@ -690,6 +758,35 @@ const edgeVoiceFromRequest = (voiceId) => {
   return LORDSBOOK_TO_LEGACY_VOICES[voiceId] || DEFAULT_EDGE_VOICE;
 };
 
+// Normalize a requested language ("ru", "ru-RU", "RU_ru") to the primary
+// subtag when Edge has a narrator for it, else null.
+const normalizeTtsLanguage = (language) => {
+  if (typeof language !== "string") return null;
+  const primary = language.trim().toLowerCase().split(/[-_]/)[0];
+  return EDGE_DEFAULT_VOICE_BY_LANGUAGE[primary] ? primary : null;
+};
+
+const edgeVoiceLanguage = (voiceId) =>
+  EDGE_VOICES.find((voice) => voice.voiceId === voiceId)?.language || null;
+
+export const defaultEdgeVoiceForLanguage = (language) => {
+  const primary = normalizeTtsLanguage(language);
+  return (primary && EDGE_DEFAULT_VOICE_BY_LANGUAGE[primary]) || DEFAULT_EDGE_VOICE;
+};
+
+// Edge synthesizes silence when the narrator locale does not match the text.
+// Keep an explicit voice only when it is already in the requested language;
+// otherwise resolve to that language's default narrator (or the app default
+// when Edge has no voice for the language at all).
+export const resolveEdgeVoiceForLanguage = (voiceId, language) => {
+  const primary = normalizeTtsLanguage(language);
+  if (!primary) return edgeVoiceFromRequest(voiceId);
+  if (isEdgeVoice(voiceId) && edgeVoiceLanguage(voiceId) === primary) {
+    return voiceId;
+  }
+  return EDGE_DEFAULT_VOICE_BY_LANGUAGE[primary];
+};
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -871,6 +968,7 @@ const synthesizeEdge = async (
   text,
   voiceId = DEFAULT_EDGE_VOICE,
   speed = DEFAULT_TTS_SPEED,
+  fallbackVoice = DEFAULT_EDGE_VOICE,
 ) => {
   const cacheKey = getCacheKey(text, voiceId, speed, "edge-mp3");
   const cached = getFromCache(cacheKey);
@@ -934,9 +1032,9 @@ const synthesizeEdge = async (
     // The pool drops any broken socket; retry once with the default voice.
     console.warn(`[TTS] Edge TTS failed for voice "${voiceId}":`, err.message);
 
-    if (voiceId !== DEFAULT_EDGE_VOICE) {
-      console.warn(`[TTS] Retrying with default voice "${DEFAULT_EDGE_VOICE}"`);
-      return synthesizeEdge(text, DEFAULT_EDGE_VOICE, speed);
+    if (voiceId !== fallbackVoice) {
+      console.warn(`[TTS] Retrying with voice "${fallbackVoice}"`);
+      return synthesizeEdge(text, fallbackVoice, speed, fallbackVoice);
     }
     throw err;
   }
@@ -948,6 +1046,7 @@ export const synthesizeWithTimings = async (
   speed = DEFAULT_TTS_SPEED,
   priority = "low",
   providerLock = null,
+  language = null,
 ) => {
   const requestedProvider =
     providerLock === "lordsbook" || providerLock === "edge"
@@ -973,21 +1072,22 @@ export const synthesizeWithTimings = async (
     }
   }
 
-  const candidates = [edgeVoiceFromRequest(voiceId), DEFAULT_EDGE_VOICE];
-  for (const candidate of candidates) {
-    const edgeVoice = edgeVoiceFromRequest(candidate);
+  const primaryVoice = resolveEdgeVoiceForLanguage(voiceId, language);
+  const fallbackVoice = defaultEdgeVoiceForLanguage(language);
+  const candidates = [...new Set([primaryVoice, fallbackVoice])];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const edgeVoice = candidates[i];
     try {
       return {
         ...(await synthesizeWithTimingsOnce(text, edgeVoice, speed, priority)),
         provider: "edge",
       };
     } catch (err) {
-      if (edgeVoice === DEFAULT_EDGE_VOICE) throw err;
+      if (i === candidates.length - 1) throw err;
       console.warn(
         `[TTS] Timed Edge TTS failed for voice "${edgeVoice}":`,
         err.message,
       );
-      console.warn(`[TTS] Retrying with default voice "${DEFAULT_EDGE_VOICE}"`);
     }
   }
   throw new Error("Timed Edge TTS synthesis failed");
@@ -1092,6 +1192,7 @@ export const synthesize = async (
   voiceId,
   speed = DEFAULT_TTS_SPEED,
   providerLock = null,
+  language = null,
 ) => {
   const requestedProvider =
     providerLock === "lordsbook" || providerLock === "edge"
@@ -1115,9 +1216,14 @@ export const synthesize = async (
     }
   }
 
-  const edgeVoice = edgeVoiceFromRequest(voiceId);
+  const edgeVoice = resolveEdgeVoiceForLanguage(voiceId, language);
   return {
-    audioBuffer: await synthesizeEdge(text, edgeVoice, speed),
+    audioBuffer: await synthesizeEdge(
+      text,
+      edgeVoice,
+      speed,
+      defaultEdgeVoiceForLanguage(language),
+    ),
     provider: "edge",
   };
 };

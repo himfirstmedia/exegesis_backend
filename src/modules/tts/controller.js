@@ -3,7 +3,7 @@ import { formatApiResponse } from "../../utils/helpers.js";
 
 export const speak = async (req, res) => {
   try {
-    const { text, voiceId, speed, provider } = req.body;
+    const { text, voiceId, speed, provider, lang, language } = req.body;
     if (!text || !text.trim()) {
       return res.status(400).json(formatApiResponse({ status: 400, message: "Text is required" }));
     }
@@ -12,6 +12,7 @@ export const speak = async (req, res) => {
       voiceId,
       speed,
       provider,
+      lang || language,
     );
     const audioBuffer = Buffer.isBuffer(result) ? result : result.audioBuffer;
     res.set({
@@ -38,6 +39,7 @@ export const speakWithTimings = async (req, res) => {
       speed,
       req.body.priority === "high" ? "high" : "low",
       req.body.provider,
+      req.body.lang || req.body.language,
     );
     return res.status(200).json({
       audioBase64: result.audioBuffer.toString("base64"),

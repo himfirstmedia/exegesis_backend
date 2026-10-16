@@ -31,6 +31,8 @@ import {
   synthesize,
   synthesizeWithTimings,
   resetLordsbookBreaker,
+  resolveEdgeVoiceForLanguage,
+  defaultEdgeVoiceForLanguage,
 } from "./service.js";
 
 describe("TTS voice defaults", () => {
@@ -65,6 +67,45 @@ describe("TTS voice defaults", () => {
     expect(voices[0].voiceId).toBe("en-GB-RyanNeural");
     expect(voices[0].name).toContain("Ryan");
     expect(voices.some((v) => v.voiceId === "en-GB-RyanNeural")).toBe(true);
+  });
+
+  test("getVoices exposes multilingual Edge narrators", async () => {
+    const voices = await getVoices();
+    const ru = voices.find((v) => v.voiceId === "ru-RU-DmitryNeural");
+    expect(ru).toBeDefined();
+    expect(ru.language).toBe("ru");
+  });
+
+  test("resolves a language-appropriate Edge voice so non-English text is not silent", () => {
+    // A stale English narrator must not be used for Cyrillic text.
+    expect(resolveEdgeVoiceForLanguage("en-US-ChristopherNeural", "ru")).toBe(
+      "ru-RU-DmitryNeural",
+    );
+    // An explicit voice already in the requested language is preserved.
+    expect(resolveEdgeVoiceForLanguage("ru-RU-SvetlanaNeural", "ru")).toBe(
+      "ru-RU-SvetlanaNeural",
+    );
+    expect(resolveEdgeVoiceForLanguage("en-GB-RyanNeural", "en")).toBe(
+      "en-GB-RyanNeural",
+    );
+    // Accepts region-tagged codes.
+    expect(resolveEdgeVoiceForLanguage("en-GB-RyanNeural", "ru-RU")).toBe(
+      "ru-RU-DmitryNeural",
+    );
+    // No language (or an unsupported one) keeps the old resolution behavior.
+    expect(resolveEdgeVoiceForLanguage("en-GB-RyanNeural", null)).toBe(
+      "en-GB-RyanNeural",
+    );
+    expect(resolveEdgeVoiceForLanguage("en-GB-RyanNeural", "xx")).toBe(
+      "en-GB-RyanNeural",
+    );
+  });
+
+  test("defaultEdgeVoiceForLanguage maps supported languages", () => {
+    expect(defaultEdgeVoiceForLanguage("ru")).toBe("ru-RU-DmitryNeural");
+    expect(defaultEdgeVoiceForLanguage("hi")).toBe("hi-IN-MadhurNeural");
+    expect(defaultEdgeVoiceForLanguage("xx")).toBe(DEFAULT_EDGE_VOICE);
+    expect(defaultEdgeVoiceForLanguage(null)).toBe(DEFAULT_EDGE_VOICE);
   });
 
   test("getStatus reports TTS enabled", () => {
