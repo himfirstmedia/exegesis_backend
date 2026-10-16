@@ -231,16 +231,16 @@ describe("TTS voice defaults", () => {
     expect(result.audioBuffer.length).toBeGreaterThanOrEqual(1_000);
   });
 
-  test("timed synthesis honors a locked disabled provider", async () => {
-    await expect(
-      synthesizeWithTimings(
-        "In the beginning",
-        "af_alloy",
-        DEFAULT_TTS_SPEED,
-        "high",
-        "lordsbook",
-      ),
-    ).rejects.toThrow("Lordsbook is disabled");
+  test("a locked but disabled Lordsbook provider degrades to Edge", async () => {
+    const result = await synthesizeWithTimings(
+      "In the beginning",
+      "af_alloy",
+      DEFAULT_TTS_SPEED,
+      "high",
+      "lordsbook",
+    );
+    expect(result.provider).toBe("edge");
+    expect(result.audioBuffer.length).toBeGreaterThanOrEqual(1_000);
   });
 
   test("timed synthesis rejects a stalled Edge stream", async () => {

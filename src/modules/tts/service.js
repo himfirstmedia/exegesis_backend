@@ -50,6 +50,19 @@ const getTtsProvider = () => {
 const getDefaultLordsbookVoice = () =>
   process.env.LORDSBOOK_DEFAULT_VOICE || DEFAULT_LORDSBOOK_VOICE;
 
+// The app may still hold a persisted "lordsbook" provider lock after the
+// server switches it off. Fall back to Edge (don't fail the verse) and warn
+// once a minute instead of on every request.
+let lastLordsbookDisabledWarnAt = 0;
+const warnLordsbookDisabled = () => {
+  const now = Date.now();
+  if (now - lastLordsbookDisabledWarnAt < 60_000) return;
+  lastLordsbookDisabledWarnAt = now;
+  console.warn(
+    "[TTS] Lordsbook requested but disabled on this server; using Edge TTS",
+  );
+};
+
 // ── In-memory TTS cache ────────────────────────────────────────────────────
 const TTS_CACHE = new Map();
 const CACHE_MAX = 50;
@@ -1142,19 +1155,27 @@ export const synthesizeWithTimings = async (
 
   if (provider === "lordsbook") {
     if (getTtsProvider() !== "lordsbook") {
-      throw new Error("Lordsbook is disabled on this server");
-    }
-    try {
-      return {
-        audioBuffer: await synthesizeLordsbook(text, voiceId, speed, priority),
-        wordOffsetsMs: [],
-        provider: "lordsbook",
-      };
-    } catch (error) {
-      if (requestedProvider) throw error;
-      console.warn(
-        `[TTS] Lordsbook timed synthesis failed; using Edge fallback: ${error.message}`,
-      );
+      // Requested by a stale client lock but disabled here — degrade to Edge
+      // instead of failing every verse.
+      warnLordsbookDisabled();
+    } else {
+      try {
+        return {
+          audioBuffer: await synthesizeLordsbook(
+            text,
+            voiceId,
+            speed,
+            priority,
+          ),
+          wordOffsetsMs: [],
+          provider: "lordsbook",
+        };
+      } catch (error) {
+        if (requestedProvider) throw error;
+        console.warn(
+          `[TTS] Lordsbook timed synthesis failed; using Edge fallback: ${error.message}`,
+        );
+      }
     }
   }
 
@@ -1291,18 +1312,20 @@ export const synthesize = async (
   const provider = requestedProvider || getEffectiveTtsProvider();
   if (provider === "lordsbook") {
     if (getTtsProvider() !== "lordsbook") {
-      throw new Error("Lordsbook is disabled on this server");
-    }
-    try {
-      return {
-        audioBuffer: await synthesizeLordsbook(text, voiceId, speed, "high"),
-        provider: "lordsbook",
-      };
-    } catch (error) {
-      if (requestedProvider) throw error;
-      console.warn(
-        `[TTS] Lordsbook synthesis failed; using Edge fallback: ${error.message}`,
-      );
+      // Stale client lock — degrade to Edge rather than failing the request.
+      warnLordsbookDisabled();
+    } else {
+      try {
+        return {
+          audioBuffer: await synthesizeLordsbook(text, voiceId, speed, "high"),
+          provider: "lordsbook",
+        };
+      } catch (error) {
+        if (requestedProvider) throw error;
+        console.warn(
+          `[TTS] Lordsbook synthesis failed; using Edge fallback: ${error.message}`,
+        );
+      }
     }
   }
 
