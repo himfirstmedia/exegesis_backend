@@ -1,13 +1,22 @@
 import { cache } from "../../services/cacheService.js";
+import { prisma } from "../../config/db.js";
 import { normalizeLanguage, translateMany } from "../../utils/translator.js";
 import {
+  getAllJournalEntries,
   getJournalEntry,
   getJournalExportCopy,
   getJournalPrompts,
   getJournalTemplates,
 } from "./service.js";
 
-jest.mock("../../config/db.js", () => ({ prisma: {} }));
+jest.mock("../../config/db.js", () => ({
+  prisma: {
+    journalEntry: {
+      findMany: jest.fn(),
+      count: jest.fn(),
+    },
+  },
+}));
 
 jest.mock("url", () => ({ fileURLToPath: jest.fn((value) => value) }));
 
@@ -158,6 +167,38 @@ describe("journal public content translation", () => {
     });
     expect(source.title).toBe("A faithful day");
     expect(source).not.toHaveProperty("contentLanguage");
+  });
+
+  test("translates only card copy when listing journal entries", async () => {
+    prisma.journalEntry.findMany.mockResolvedValue([{
+      id: 31n,
+      title: "A faithful day",
+      content: "I learned to trust God.",
+      prayers: "Give me wisdom.",
+      gratitude: "Thank you.",
+      learnings: "Patience matters.",
+      application: "Listen first.",
+      tags: "faith,trust",
+      createdOn: new Date("2026-03-04T00:00:00.000Z"),
+    }]);
+    prisma.journalEntry.count.mockResolvedValue(1);
+
+    const result = await getAllJournalEntries(
+      { page: 1, pageSize: 20, lang: "fr" },
+      "user-1",
+    );
+
+    expect(translateMany).toHaveBeenCalledWith(
+      ["A faithful day", "I learned to trust God."],
+      "fr",
+      { throwOnFailure: true },
+    );
+    expect(result.returnData.entries[0]).toMatchObject({
+      title: "fr:A faithful day",
+      content: "fr:I learned to trust God.",
+      prayers: "Give me wisdom.",
+      contentLanguage: "fr",
+    });
   });
 
   test("reports English when journal localization fails", async () => {

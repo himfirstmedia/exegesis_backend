@@ -20,8 +20,13 @@ const JOURNAL_ENTRY_TEXT_FIELDS = [
   "application",
   "tags",
 ];
+const JOURNAL_LIST_TEXT_FIELDS = ["title", "content"];
 
-const localizeJournalEntries = async (records, requestedLanguage) => {
+const localizeJournalEntries = async (
+  records,
+  requestedLanguage,
+  textFields = JOURNAL_ENTRY_TEXT_FIELDS,
+) => {
   const language = normalizeLanguage(requestedLanguage ?? "en");
   const isList = Array.isArray(records);
   const entries = (isList ? records : [records])
@@ -32,7 +37,7 @@ const localizeJournalEntries = async (records, requestedLanguage) => {
     const values = [];
     const fields = [];
     entries.forEach((entry) => {
-      JOURNAL_ENTRY_TEXT_FIELDS.forEach((field) => {
+      textFields.forEach((field) => {
         if (typeof entry[field] === "string" && entry[field].trim()) {
           values.push(entry[field]);
           fields.push([entry, field]);
@@ -308,7 +313,11 @@ export const getAllJournalEntries = async (data, userId) => {
     returnCode: 200,
     returnMessage: "Journal entries fetched successfully",
     returnData: serializeBigInt({
-      entries: await localizeJournalEntries(entries, lang),
+      entries: await localizeJournalEntries(
+        entries,
+        lang,
+        JOURNAL_LIST_TEXT_FIELDS,
+      ),
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,
@@ -1713,7 +1722,11 @@ export const getPublicEntries = async (data, userId) => {
     returnCode: 200,
     returnMessage: "Public entries fetched successfully",
     returnData: serializeBigInt({
-      entries: await localizeJournalEntries(enriched, lang),
+      entries: await localizeJournalEntries(
+        enriched,
+        lang,
+        JOURNAL_LIST_TEXT_FIELDS,
+      ),
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,
