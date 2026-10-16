@@ -554,6 +554,82 @@ const EDGE_SYNTHESIS_TIMEOUT_MS = Math.max(
   Number(process.env.TTS_EDGE_SYNTHESIS_TIMEOUT_MS) || 45_000,
 );
 
+// Microsoft's public Edge Read Aloud endpoint throttles aggressively (HTTP
+// 429) and occasionally drops the WebSocket handshake (ETIMEDOUT). Retrying
+// immediately makes the throttling worse: it burns the pool's sockets and
+// spams the logs. After a rate-limit we park Edge for a short cooldown so
+// follow-up requests fail fast and the app can fall back to device TTS.
+const EDGE_RATE_LIMIT_COOLDOWN_MS = Math.max(
+  5_000,
+  Number(process.env.TTS_EDGE_RATE_LIMIT_COOLDOWN_MS) || 30_000,
+);
+let edgeCooldownUntil = 0;
+
+/**
+ * Classify an Edge TTS failure into a stable code so callers (and logs) can
+ * tell expected upstream throttling/network blips from real bugs instead of
+ * printing an opaque stack trace on every retry.
+ */
+export const classifyEdgeError = (error) => {
+  const message = String(error?.message || error || "");
+  const cause = error?.cause || {};
+  const status = cause?.status ?? cause?.statusCode ?? error?.status;
+  if (status === 429 || /\b429\b/.test(message)) {
+    return { code: "rate_limited", retryable: true };
+  }
+  if (
+    cause?.code === "ETIMEDOUT" ||
+    /ETIMEDOUT|ETIMEOUT|timed out|timeout/i.test(message)
+  ) {
+    return { code: "timeout", retryable: true };
+  }
+  if (
+    /ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang up/i.test(
+      message,
+    ) ||
+    /^E[A-Z]+$/.test(String(cause?.code || ""))
+  ) {
+    return { code: "network", retryable: true };
+  }
+  if (/Silent audio|Empty audio/i.test(message)) {
+    return { code: "silent_audio", retryable: false };
+  }
+  return { code: "unknown", retryable: false };
+};
+
+export const getEdgeCooldown = () => ({
+  until: edgeCooldownUntil,
+  remainingMs: Math.max(0, edgeCooldownUntil - Date.now()),
+});
+
+/** Test-only: clear the rate-limit cooldown between cases. */
+export const resetEdgeCooldown = () => {
+  edgeCooldownUntil = 0;
+};
+
+// Records a failure's classification and opens the cooldown for rate limits.
+const noteEdgeFailure = (error) => {
+  const info = classifyEdgeError(error);
+  if (info.code === "rate_limited") {
+    edgeCooldownUntil = Date.now() + EDGE_RATE_LIMIT_COOLDOWN_MS;
+  }
+  return info;
+};
+
+// Fail fast (HTTP 503) while Edge is cooling down so we stop hammering it.
+const assertEdgeNotCoolingDown = () => {
+  const remainingMs = edgeCooldownUntil - Date.now();
+  if (remainingMs <= 0) return;
+  const error = new Error(
+    "Speech is temporarily unavailable (Edge TTS rate-limited); please retry shortly",
+  );
+  error.code = "TTS_EDGE_COOLDOWN";
+  error.statusCode = 503;
+  error.retryable = true;
+  error.retryAfterMs = remainingMs;
+  throw error;
+};
+
 let _express = null; // { client, busy, voice } — high-priority only
 let _workPool = []; // up to WORK_POOL_SIZE background clients
 let _queue = []; // { voice, high, job, resolve, reject }
@@ -987,6 +1063,8 @@ const synthesizeEdge = async (
   // Compress sentence-boundary pauses before synthesis (see helper comment)
   const transformedText = transformTextForEdge(text);
 
+  assertEdgeNotCoolingDown();
+
   try {
     const buffer = await acquireTimedClient(voiceId, false, async (tts) => {
       const { audioStream, metadataStream } = tts.toStream(transformedText, {
@@ -1029,8 +1107,16 @@ const synthesizeEdge = async (
     setRedisAudio(cacheKey, buffer);
     return buffer;
   } catch (err) {
-    // The pool drops any broken socket; retry once with the default voice.
-    console.warn(`[TTS] Edge TTS failed for voice "${voiceId}":`, err.message);
+    // The pool drops any broken socket; retry once with the fallback voice.
+    const { code, retryable } = noteEdgeFailure(err);
+    console.warn(
+      `[TTS] Edge TTS failed for voice "${voiceId}" (${code}${
+        retryable ? ", retryable" : ""
+      }): ${err.message}`,
+    );
+
+    // A rate limit will reject the fallback voice too — stop immediately.
+    if (code === "rate_limited") throw err;
 
     if (voiceId !== fallbackVoice) {
       console.warn(`[TTS] Retrying with voice "${fallbackVoice}"`);
@@ -1083,9 +1169,11 @@ export const synthesizeWithTimings = async (
         provider: "edge",
       };
     } catch (err) {
-      if (i === candidates.length - 1) throw err;
+      const { code } = noteEdgeFailure(err);
+      // 429 rejects every voice; the next candidate would fail the same way.
+      if (code === "rate_limited" || i === candidates.length - 1) throw err;
       console.warn(
-        `[TTS] Timed Edge TTS failed for voice "${edgeVoice}":`,
+        `[TTS] Timed Edge TTS failed for voice "${edgeVoice}" (${code}):`,
         err.message,
       );
     }
@@ -1110,6 +1198,8 @@ const synthesizeWithTimingsOnce = async (
     setTimingsInCache(cacheKey, redis.audioBuffer, redis.wordOffsetsMs);
     return redis;
   }
+
+  assertEdgeNotCoolingDown();
 
   const ratePercent = Math.round((speed - 1) * 100);
   const rate =

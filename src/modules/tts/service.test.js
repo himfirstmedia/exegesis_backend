@@ -10,6 +10,13 @@ jest.mock("msedge-tts", () => {
           metadataStream: Readable.from([]),
         };
       }
+      if (text === "rate limited") {
+        const error = new Error(
+          "Edge TTS WebSocket error: Unexpected server response: 429",
+        );
+        error.cause = { status: 429 };
+        throw error;
+      }
       return {
         audioStream: Readable.from([Buffer.alloc(2000, 1)]),
         metadataStream: Readable.from([]),
@@ -33,6 +40,9 @@ import {
   resetLordsbookBreaker,
   resolveEdgeVoiceForLanguage,
   defaultEdgeVoiceForLanguage,
+  classifyEdgeError,
+  getEdgeCooldown,
+  resetEdgeCooldown,
 } from "./service.js";
 
 describe("TTS voice defaults", () => {
@@ -43,6 +53,7 @@ describe("TTS voice defaults", () => {
     process.env.TTS_PROVIDER = "edge";
     process.env.LORDSBOOK_TTS_ENABLE = "false";
     resetLordsbookBreaker();
+    resetEdgeCooldown();
   });
 
   afterAll(() => {
@@ -126,6 +137,85 @@ describe("TTS voice defaults", () => {
   test("disabled Lordsbook flag keeps Edge even when legacy provider says Lordsbook", () => {
     process.env.TTS_PROVIDER = "lordsbook";
     expect(getStatus().provider).toBe("edge");
+  });
+
+  test("classifies Edge failures into stable, actionable codes", () => {
+    const rateLimited = new Error(
+      "Edge TTS WebSocket error: Unexpected server response: 429",
+    );
+    rateLimited.cause = { status: 429 };
+    expect(classifyEdgeError(rateLimited)).toEqual({
+      code: "rate_limited",
+      retryable: true,
+    });
+
+    const timedOut = new Error("Edge TTS WebSocket error: (code=ETIMEDOUT)");
+    timedOut.cause = { code: "ETIMEDOUT" };
+    expect(classifyEdgeError(timedOut)).toEqual({
+      code: "timeout",
+      retryable: true,
+    });
+
+    expect(
+      classifyEdgeError(new Error("Silent audio received from Edge TTS")),
+    ).toEqual({ code: "silent_audio", retryable: false });
+  });
+
+  test("a rate limit opens a cooldown so Edge is not hammered", async () => {
+    await expect(
+      synthesizeWithTimings(
+        "rate limited",
+        DEFAULT_EDGE_VOICE,
+        DEFAULT_TTS_SPEED,
+        "high",
+        "edge",
+      ),
+    ).rejects.toMatchObject({ cause: { status: 429 } });
+
+    expect(getEdgeCooldown().remainingMs).toBeGreaterThan(0);
+
+    // A follow-up request fails fast (503) instead of retrying the endpoint.
+    await expect(
+      synthesizeWithTimings(
+        "In the beginning",
+        DEFAULT_EDGE_VOICE,
+        DEFAULT_TTS_SPEED,
+        "high",
+        "edge",
+      ),
+    ).rejects.toMatchObject({ code: "TTS_EDGE_COOLDOWN", statusCode: 503 });
+  });
+
+  test("cached audio is still served while Edge is cooling down", async () => {
+    // Populate the cache, then trip the cooldown; the cached track must play.
+    const first = await synthesizeWithTimings(
+      "cached verse",
+      DEFAULT_EDGE_VOICE,
+      DEFAULT_TTS_SPEED,
+      "high",
+      "edge",
+    );
+    expect(first.audioBuffer.length).toBeGreaterThanOrEqual(1_000);
+
+    await expect(
+      synthesizeWithTimings(
+        "rate limited",
+        DEFAULT_EDGE_VOICE,
+        DEFAULT_TTS_SPEED,
+        "high",
+        "edge",
+      ),
+    ).rejects.toMatchObject({ cause: { status: 429 } });
+
+    await expect(
+      synthesizeWithTimings(
+        "cached verse",
+        DEFAULT_EDGE_VOICE,
+        DEFAULT_TTS_SPEED,
+        "high",
+        "edge",
+      ),
+    ).resolves.toMatchObject({ provider: "edge" });
   });
 
   test("timed synthesis reports the provider used", async () => {

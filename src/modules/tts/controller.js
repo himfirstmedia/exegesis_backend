@@ -22,8 +22,11 @@ export const speak = async (req, res) => {
     });
     res.send(audioBuffer);
   } catch (error) {
-    console.error("TTS speak error:", error);
-    return res.status(500).json(formatApiResponse({ status: 500, message: "TTS synthesis failed: " + error.message }));
+    const status = error?.statusCode || 500;
+    console.warn(
+      `[TTS] speak failed (${error?.code || "error"}): ${error.message}`,
+    );
+    return res.status(status).json(formatApiResponse({ status, message: "TTS synthesis failed: " + error.message }));
   }
 };
 
@@ -47,8 +50,13 @@ export const speakWithTimings = async (req, res) => {
       provider: result.provider,
     });
   } catch (error) {
-    console.error("Timed TTS speak error:", error);
-    const status = req.body.provider ? 503 : 500;
+    // Retryable upstream failures (Edge rate limit / network timeout) surface
+    // as 503 so the client can fall back to device TTS instead of treating it
+    // as a hard error. Expected failures log one concise line, not a stack.
+    const status = error?.statusCode || (req.body.provider ? 503 : 500);
+    console.warn(
+      `[TTS] timed speak failed (${error?.code || "error"}): ${error.message}`,
+    );
     return res.status(status).json(formatApiResponse({ status, message: "Timed TTS synthesis failed: " + error.message }));
   }
 };
