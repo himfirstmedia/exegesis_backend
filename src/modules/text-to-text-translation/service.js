@@ -508,8 +508,14 @@ const myMemoryRequest = async (q, source, target) => {
     });
     const body = await response.json().catch(() => null);
     const translatedText = body?.responseData?.translatedText;
-    if (!response.ok || Number(body?.responseStatus || response.status) >= 400) {
-      throw new AppError(502, body?.responseDetails || "Fallback translation provider failed");
+    const details = String(body?.responseDetails || "");
+    if (
+      !response.ok ||
+      Number(body?.responseStatus || response.status) >= 400 ||
+      body?.quotaFinished ||
+      /MYMEMORY WARNING|QUOTA|INVALID (SOURCE|TARGET|LANGUAGE)/i.test(details)
+    ) {
+      throw new AppError(502, details || "Fallback translation provider failed");
     }
     if (typeof translatedText !== "string" || !translatedText.trim()) {
       throw new AppError(502, "Fallback translation provider returned invalid output");
@@ -526,8 +532,14 @@ const myMemoryRequest = async (q, source, target) => {
   }
 };
 
+// The public fallback only handles plain text and never re-translates English.
+const canUseMyMemory = (options) =>
+  isMyMemoryEnabled() &&
+  options?.format !== "html" &&
+  String(options?.target || "").toLowerCase() !== "en";
+
 const translateWithMyMemory = async (item, options) => {
-  if (!isMyMemoryEnabled() || options.format === "html") {
+  if (!canUseMyMemory(options)) {
     throw new ValidationError(
       `Translation to '${options.target}' is not supported by the configured translation providers`,
     );
@@ -541,7 +553,7 @@ const translateWithMyMemory = async (item, options) => {
       chunkCount: 0,
     }, "mymemory");
   }
-  const chunks = splitText(item.value, 450);
+  const chunks = splitText(item.value, 400);
   const translated = [];
   for (const chunk of chunks) {
     translated.push(await withProviderLimit("mymemory", () =>
@@ -601,47 +613,52 @@ const translateChunk = async (chunk, options) => {
     }
   }
 
-  try {
+  const item = { original: chunk, leading, value, trailing };
+  const translateWithLibre = async () => {
     await assertSupportedTarget(options.target);
-  } catch (error) {
-    if (!(error instanceof ValidationError) || !isMyMemoryEnabled()) throw error;
-    return translateWithMyMemory(
-      { original: chunk, leading, value, trailing },
-      options,
-    );
-  }
-  const payload = {
-    q: value,
-    source: toLibreLanguageCode(options.source),
-    target: toLibreLanguageCode(options.target),
-    format: options.format,
-    ...(options.alternatives ? { alternatives: options.alternatives } : {}),
-    ...(config.apiKey ? { api_key: config.apiKey } : {}),
-  };
-  let result;
-  for (let attempt = 1; attempt <= config.retryAttempts; attempt += 1) {
-    result = await withProviderLimit("libre", () =>
-      libreRequest("/translate", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      }),
-    );
-    const translated = result?.translatedText;
-    if (typeof translated === "string" && translated.trim()) break;
-    result = null;
-    if (attempt < config.retryAttempts) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, config.retryDelayMs * attempt),
+    const payload = {
+      q: value,
+      source: toLibreLanguageCode(options.source),
+      target: toLibreLanguageCode(options.target),
+      format: options.format,
+      ...(options.alternatives ? { alternatives: options.alternatives } : {}),
+      ...(config.apiKey ? { api_key: config.apiKey } : {}),
+    };
+    let result;
+    for (let attempt = 1; attempt <= config.retryAttempts; attempt += 1) {
+      result = await withProviderLimit("libre", () =>
+        libreRequest("/translate", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }),
       );
+      const translated = result?.translatedText;
+      if (typeof translated === "string" && translated.trim()) break;
+      result = null;
+      if (attempt < config.retryAttempts) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, config.retryDelayMs * attempt),
+        );
+      }
     }
+    if (!result) {
+      throw new AppError(502, "Translation provider returned untranslated text");
+    }
+    return markProvider({
+      ...result,
+      translatedText: `${leading}${result.translatedText}${trailing}`,
+    }, "libre");
+  };
+
+  try {
+    return await translateWithLibre();
+  } catch (error) {
+    if (!canUseMyMemory(options) || error?.providerQueueOverload) throw error;
+    console.warn(
+      `[Translation] LibreTranslate failed for ${options.target}; using MyMemory fallback: ${error.message}`,
+    );
+    return translateWithMyMemory(item, options);
   }
-  if (!result) {
-    throw new AppError(502, "Translation provider returned untranslated text");
-  }
-  return markProvider({
-    ...result,
-    translatedText: `${leading}${result.translatedText}${trailing}`,
-  }, "libre");
 };
 
 const translateTextUncached = async ({ q, source = "auto", target, format = "text", alternatives }) => {
@@ -773,10 +790,79 @@ const translateBatchUncached = async ({ q, ...options }) => {
   const libreIndexes = prepared
     .map((_, index) => index)
     .filter((index) => !lordsbookResults?.[index]?.result?.translatedText);
-  try {
+  const translateWithLibre = async () => {
     await assertSupportedTarget(options.target);
+    const payload = {
+      q: libreIndexes.map((index) => prepared[index].value),
+      source: toLibreLanguageCode(options.source || "auto"),
+      target: toLibreLanguageCode(options.target),
+      format: options.format || "text",
+      ...(options.alternatives
+        ? { alternatives: options.alternatives }
+        : {}),
+      ...(config.apiKey ? { api_key: config.apiKey } : {}),
+    };
+    const result = await withProviderLimit("libre", () =>
+      libreRequest("/translate", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    );
+    const translatedTexts = result?.translatedText;
+    if (
+      !Array.isArray(translatedTexts) ||
+      translatedTexts.length !== libreIndexes.length ||
+      translatedTexts.some((text) => typeof text !== "string" || !text.trim())
+    ) {
+      throw new AppError(502, "Translation provider returned an incomplete batch");
+    }
+
+    const detectedLanguages = Array.isArray(result.detectedLanguage)
+      ? result.detectedLanguage
+      : null;
+    const alternativeGroups = Array.isArray(result.alternatives?.[0])
+      ? result.alternatives
+      : null;
+    let libreIndex = 0;
+    const translations = prepared.map((item, index) => {
+      const lordsbook = lordsbookResults?.[index]?.result;
+      if (lordsbook?.translatedText) {
+        return markProvider({
+          translatedText: `${item.leading}${lordsbook.translatedText}${item.trailing}`,
+          ...(lordsbook.detectedLanguage ? { detectedLanguage: lordsbook.detectedLanguage } : {}),
+          source: options.source || "auto",
+          target: options.target,
+          characterCount: item.original.length,
+          chunkCount: 1,
+        }, "lordsbook");
+      }
+      const resultIndex = libreIndex++;
+      return markProvider({
+        translatedText: `${item.leading}${translatedTexts[resultIndex]}${item.trailing}`,
+        ...(detectedLanguages?.[resultIndex]
+          ? { detectedLanguage: detectedLanguages[resultIndex] }
+          : result.detectedLanguage
+            ? { detectedLanguage: result.detectedLanguage }
+            : {}),
+        ...(alternativeGroups?.[resultIndex]
+          ? { alternatives: alternativeGroups[resultIndex] }
+          : {}),
+        source: options.source || "auto",
+        target: options.target,
+        characterCount: item.original.length,
+        chunkCount: 1,
+      }, "libre");
+    });
+    return { translations, itemCount: translations.length, characterCount: totalCharacters };
+  };
+
+  try {
+    return await translateWithLibre();
   } catch (error) {
-    if (!(error instanceof ValidationError) || !isMyMemoryEnabled()) throw error;
+    if (!canUseMyMemory(options) || error?.providerQueueOverload) throw error;
+    console.warn(
+      `[Translation] LibreTranslate batch failed for ${options.target}; using MyMemory fallback: ${error.message}`,
+    );
     const fallbackResults = await mapWithConcurrency(
       libreIndexes,
       config.myMemoryMaxConcurrency,
@@ -803,68 +889,6 @@ const translateBatchUncached = async ({ q, ...options }) => {
       provider: "mymemory",
     };
   }
-  const payload = {
-    q: libreIndexes.map((index) => prepared[index].value),
-    source: toLibreLanguageCode(options.source || "auto"),
-    target: toLibreLanguageCode(options.target),
-    format: options.format || "text",
-    ...(options.alternatives
-      ? { alternatives: options.alternatives }
-      : {}),
-    ...(config.apiKey ? { api_key: config.apiKey } : {}),
-  };
-  const result = await withProviderLimit("libre", () =>
-    libreRequest("/translate", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-  );
-  const translatedTexts = result?.translatedText;
-  if (
-    !Array.isArray(translatedTexts) ||
-    translatedTexts.length !== libreIndexes.length ||
-    translatedTexts.some((text) => typeof text !== "string" || !text.trim())
-  ) {
-    throw new AppError(502, "Translation provider returned an incomplete batch");
-  }
-
-  const detectedLanguages = Array.isArray(result.detectedLanguage)
-    ? result.detectedLanguage
-    : null;
-  const alternativeGroups = Array.isArray(result.alternatives?.[0])
-    ? result.alternatives
-    : null;
-  let libreIndex = 0;
-  const translations = prepared.map((item, index) => {
-    const lordsbook = lordsbookResults?.[index]?.result;
-    if (lordsbook?.translatedText) {
-      return markProvider({
-        translatedText: `${item.leading}${lordsbook.translatedText}${item.trailing}`,
-        ...(lordsbook.detectedLanguage ? { detectedLanguage: lordsbook.detectedLanguage } : {}),
-        source: options.source || "auto",
-        target: options.target,
-        characterCount: item.original.length,
-        chunkCount: 1,
-      }, "lordsbook");
-    }
-    const resultIndex = libreIndex++;
-    return markProvider({
-      translatedText: `${item.leading}${translatedTexts[resultIndex]}${item.trailing}`,
-      ...(detectedLanguages?.[resultIndex]
-        ? { detectedLanguage: detectedLanguages[resultIndex] }
-        : result.detectedLanguage
-          ? { detectedLanguage: result.detectedLanguage }
-          : {}),
-      ...(alternativeGroups?.[resultIndex]
-        ? { alternatives: alternativeGroups[resultIndex] }
-        : {}),
-      source: options.source || "auto",
-      target: options.target,
-      characterCount: item.original.length,
-      chunkCount: 1,
-    }, "libre");
-  });
-  return { translations, itemCount: translations.length, characterCount: totalCharacters };
 };
 
 export const translateText = async (request) => {

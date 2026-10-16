@@ -42,6 +42,7 @@ describe("text-to-text translation service", () => {
       LORDSBOOK_TEXT_ENABLE: "false",
       LORDSBOOK_TEXT_RETRY_ATTEMPTS: "1",
       LORDSBOOK_GATEWAY_URL: "https://lordsbook.test",
+      MYMEMORY_TRANSLATE_ENABLE: "false",
     };
     __resetTranslationProviderCache();
     cache.get.mockReset().mockResolvedValue(null);
@@ -624,6 +625,46 @@ describe("capability enforcement (TRANSLATION_ENFORCE_SUPPORTED_LANGS)", () => {
     ]);
     expect(global.fetch.mock.calls.filter(([url]) =>
       url.startsWith("https://api.mymemory.translated.net/get?"))).toHaveLength(2);
+  });
+
+  test("falls back to MyMemory when a supported LibreTranslate target fails", async () => {
+    process.env.MYMEMORY_TRANSLATE_ENABLE = "true";
+    global.fetch.mockImplementation(async (url) => {
+      if (url.endsWith("/languages")) return jsonResponse(supported);
+      if (url.endsWith("/translate")) return jsonResponse({ error: "down" }, 500);
+      if (url.startsWith("https://api.mymemory.translated.net/get?")) {
+        return jsonResponse({
+          responseStatus: 200,
+          responseData: { translatedText: "Respaldo" },
+        });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+
+    const result = await translateText({ q: "Hello", source: "en", target: "es" });
+
+    expect(result.translatedText).toBe("Respaldo");
+    expect(result.target).toBe("es");
+  });
+
+  test("reports failure when the MyMemory response is a quota warning", async () => {
+    process.env.MYMEMORY_TRANSLATE_ENABLE = "true";
+    global.fetch.mockImplementation(async (url) => {
+      if (url.endsWith("/languages")) return jsonResponse(supported);
+      if (url.startsWith("https://api.mymemory.translated.net/get?")) {
+        return jsonResponse({
+          responseStatus: 403,
+          quotaFinished: true,
+          responseDetails: "MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS",
+          responseData: { translatedText: "" },
+        });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+
+    await expect(
+      translateText({ q: "Hello", source: "en", target: "ta" }),
+    ).rejects.toMatchObject({ status: 502 });
   });
 
   test("maps fil to tl before checking capability", async () => {
