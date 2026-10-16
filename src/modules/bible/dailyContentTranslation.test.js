@@ -127,6 +127,25 @@ describe("daily content translation", () => {
     warning.mockRestore();
   });
 
+  test("surfaces provider failures when strict translation is requested", async () => {
+    const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
+    translateMany.mockRejectedValueOnce(new Error("offline"));
+
+    await expect(
+      translateDailyDevotionContent(
+        { title: "Original", content: "Original content" },
+        "pt",
+        { throwOnFailure: true },
+      ),
+    ).rejects.toThrow("offline");
+    expect(translateMany).toHaveBeenCalledWith(
+      ["Original", "Original content"],
+      "pt",
+      { throwOnFailure: true },
+    );
+    warning.mockRestore();
+  });
+
   test("fully translates large records across multiple bounded batches", async () => {
     process.env.TRANSLATION_MAX_TEXT_LENGTH = "20";
     process.env.TRANSLATION_TIME_BUDGET_MS = "1000";

@@ -116,6 +116,32 @@ describe("LibreTranslate compatibility adapter", () => {
     warning.mockRestore();
   });
 
+  test("keeps strict and fail-soft behavior separate for shared batch work", async () => {
+    const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
+    let rejectProvider;
+    let markStarted;
+    const started = new Promise((resolve) => {
+      markStarted = resolve;
+    });
+    translateBatchWithLibre.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectProvider = reject;
+          markStarted();
+        }),
+    );
+    const texts = ["Shared purpose", "Shared summary"];
+
+    const failSoft = translateMany(texts, "pt");
+    await started;
+    const strict = translateMany(texts, "pt", { throwOnFailure: true });
+    rejectProvider(new Error("offline"));
+
+    await expect(failSoft).resolves.toEqual(texts);
+    await expect(strict).rejects.toThrow("offline");
+    warning.mockRestore();
+  });
+
   test("splits text over the configured service limit", async () => {
     const previousLimit = process.env.TRANSLATION_MAX_TEXT_LENGTH;
     process.env.TRANSLATION_MAX_TEXT_LENGTH = "20";

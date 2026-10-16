@@ -753,6 +753,9 @@ const addCrossReferenceDetailsToExplanation = async (resource) => {
   };
 };
 
+const verseExplanationCacheKey = (bookName, chapter, verseNumber) =>
+  `explanation-detailed:v4:${bookName}:${chapter}:${verseNumber}`;
+
 export const getVerseExplanation = async (data) => {
   const { bookName, chapter, verseNumber, lang = "en" } = data;
   const target = normalizeLanguage(lang);
@@ -765,7 +768,7 @@ export const getVerseExplanation = async (data) => {
 
   const record = await cache.getOrSet(
     "bible",
-    `explanation-detailed:v4:${bookName}:${chapter}:${verseNumber}`,
+    verseExplanationCacheKey(bookName, chapter, verseNumber),
     async () => {
       return prisma.verseExplanation.findUnique({
         where: {
@@ -1112,7 +1115,7 @@ export const addVerseExplanation = async (data, userId) => {
 
     await cache.del(
       "bible",
-      `explanation-detailed:${bookName}:${chapter}:${verseNumber}`,
+      verseExplanationCacheKey(bookName, chapter, verseNumber),
     );
 
     const serializedResult = withLegacyVerseExplanationFields(
@@ -1512,17 +1515,24 @@ export const getTodaysVerse = async (data = {}) => {
     .toLowerCase();
   if (normLang === "en") return todaysVerseResult;
 
-  const translatedTodaysVerse = await cache.getOrSet(
-    "bible",
-    `todays-verse:v3:translated:${normLang}`,
-    async () => ({
+  try {
+    return await cache.getOrSet(
+      "bible",
+      `todays-verse:v4:translated:${normLang}`,
+      async () => ({
+        ...todaysVerseResult,
+        data: await translateDailyVerseContent(todaysVerseResult.data, normLang, {
+          throwOnFailure: true,
+        }),
+      }),
+      1800,
+    );
+  } catch {
+    return {
       ...todaysVerseResult,
-      data: await translateDailyVerseContent(todaysVerseResult.data, normLang),
-    }),
-    1800,
-  );
-
-  return translatedTodaysVerse;
+      data: { ...todaysVerseResult.data, contentLanguage: "en" },
+    };
+  }
 };
 
 export const getDailyVerseByRef = async (data) => {
@@ -1613,17 +1623,24 @@ export const getTodaysDevotion = async (data = {}) => {
     .toLowerCase();
   if (normLang === "en") return result;
 
-  const translatedDevotion = await cache.getOrSet(
-    "bible",
-    `todays-devotion:v2:translated:${normLang}`,
-    async () => ({
+  try {
+    return await cache.getOrSet(
+      "bible",
+      `todays-devotion:v3:translated:${normLang}`,
+      async () => ({
+        ...result,
+        data: await translateDailyDevotionContent(result.data, normLang, {
+          throwOnFailure: true,
+        }),
+      }),
+      1800,
+    );
+  } catch {
+    return {
       ...result,
-      data: await translateDailyDevotionContent(result.data, normLang),
-    }),
-    1800,
-  );
-
-  return translatedDevotion;
+      data: { ...result.data, contentLanguage: "en" },
+    };
+  }
 };
 
 export const getDevotionByDate = async (data) => {
@@ -2173,7 +2190,11 @@ export const deleteVerseExplanation = async (data, userId) => {
   if (existing) {
     await cache.del(
       "bible",
-      `explanation:${existing.bookName}:${existing.chapter}:${existing.verseNumber}`,
+      verseExplanationCacheKey(
+        existing.bookName,
+        existing.chapter,
+        existing.verseNumber,
+      ),
     );
   }
   return { status: 200, message: "Verse explanation deleted successfully" };

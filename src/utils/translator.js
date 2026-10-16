@@ -53,46 +53,63 @@ const warnProviderFailure = (lang, message) => {
   console.warn(`[translator] LibreTranslate temporarily failed for ${lang}:`, message);
 };
 
-const translateChunk = async (text, lang) => {
+const resolveProviderPromise = async (
+  promise,
+  sourceText,
+  lang,
+  throwOnFailure,
+) => {
+  try {
+    return await promise;
+  } catch (error) {
+    warnProviderFailure(lang, error.message);
+    if (throwOnFailure) throw error;
+    return sourceText;
+  }
+};
+
+const translateChunk = async (text, lang, { throwOnFailure = false } = {}) => {
   const cacheKey = getCacheKey(text, lang);
   if (memoryCache.has(cacheKey)) return memoryCache.get(cacheKey);
-  if (inFlight.has(cacheKey)) return inFlight.get(cacheKey);
+  if (inFlight.has(cacheKey)) {
+    return resolveProviderPromise(
+      inFlight.get(cacheKey),
+      text,
+      lang,
+      throwOnFailure,
+    );
+  }
 
   const promise = (async () => {
-    try {
-      const cached = await cache.get("translations", cacheKey);
-      if (typeof cached === "string") {
-        setMemoryCache(cacheKey, cached);
-        return cached;
-      }
-
-      const result = await translateWithLibre({
-        q: text,
-        source: "en",
-        target: lang,
-      });
-      const translated = result.translatedText || text;
-      setMemoryCache(cacheKey, translated);
-      void cache.set("translations", cacheKey, translated, CACHE_TTL);
-      return translated;
-    } catch (error) {
-      warnProviderFailure(lang, error.message);
-      return text;
+    const cached = await cache.get("translations", cacheKey);
+    if (typeof cached === "string") {
+      setMemoryCache(cacheKey, cached);
+      return cached;
     }
+
+    const result = await translateWithLibre({
+      q: text,
+      source: "en",
+      target: lang,
+    });
+    const translated = result.translatedText || text;
+    setMemoryCache(cacheKey, translated);
+    void cache.set("translations", cacheKey, translated, CACHE_TTL);
+    return translated;
   })().finally(() => inFlight.delete(cacheKey));
 
   inFlight.set(cacheKey, promise);
-  return promise;
+  return resolveProviderPromise(promise, text, lang, throwOnFailure);
 };
 
-export const translateText = async (text, lang = "en") => {
+export const translateText = async (text, lang = "en", options = {}) => {
   const target = normalizeLanguage(lang);
   if (!text || target.toLowerCase() === "en") return text;
-  if (text.length > getMaxTextLength()) return translateLongText(text, target);
-  return translateChunk(text, target);
+  if (text.length > getMaxTextLength()) return translateLongText(text, target, options);
+  return translateChunk(text, target, options);
 };
 
-export const translateMany = async (texts = [], lang = "en") => {
+export const translateMany = async (texts = [], lang = "en", options = {}) => {
   const target = normalizeLanguage(lang);
   if (target.toLowerCase() === "en") return texts;
 
@@ -108,7 +125,9 @@ export const translateMany = async (texts = [], lang = "en") => {
       batch.some((text) => typeof text === "string" && text.length > getMaxTextLength())
     ) {
       results.push(
-        ...(await Promise.all(batch.map((text) => translateText(text, target)))),
+        ...(await Promise.all(
+          batch.map((text) => translateText(text, target, options)),
+        )),
       );
       continue;
     }
@@ -127,7 +146,12 @@ export const translateMany = async (texts = [], lang = "en") => {
           return;
         }
         if (inFlight.has(cacheKey)) {
-          translated[batchIndex] = await inFlight.get(cacheKey);
+          translated[batchIndex] = await resolveProviderPromise(
+            inFlight.get(cacheKey),
+            text,
+            target,
+            options.throwOnFailure,
+          );
           return;
         }
         const cached = await cache.get("translations", cacheKey);
@@ -141,39 +165,40 @@ export const translateMany = async (texts = [], lang = "en") => {
     );
 
     if (missing.length > 0) {
-      const providerPromise = (async () => {
-        try {
-          const response = await translateBatchWithLibre({
-            q: missing.map((item) => item.text),
-            source: "en",
-            target,
-            format: "text",
-          });
-          return {
-            success: true,
-            values: response.translations.map(
-              (item, itemIndex) =>
-                item.translatedText || missing[itemIndex].text,
-            ),
-          };
-        } catch (error) {
-          warnProviderFailure(target, error.message);
-          return { success: false, values: missing.map((item) => item.text) };
-        }
-      })();
+      const providerPromise = translateBatchWithLibre({
+        q: missing.map((item) => item.text),
+        source: "en",
+        target,
+        format: "text",
+      }).then((response) =>
+        response.translations.map(
+          (item, itemIndex) =>
+            item.translatedText || missing[itemIndex].text,
+        ),
+      );
 
-      missing.forEach((item, itemIndex) => {
+      const itemPromises = missing.map((item, itemIndex) => {
         const itemPromise = providerPromise
-          .then((outcome) => outcome.values[itemIndex])
+          .then((values) => values[itemIndex])
           .finally(() => inFlight.delete(item.cacheKey));
         inFlight.set(item.cacheKey, itemPromise);
+        return itemPromise;
       });
 
-      const outcome = await providerPromise;
+      let values;
+      let success = true;
+      try {
+        values = await Promise.all(itemPromises);
+      } catch (error) {
+        warnProviderFailure(target, error.message);
+        if (options.throwOnFailure) throw error;
+        success = false;
+        values = missing.map((item) => item.text);
+      }
       missing.forEach((item, itemIndex) => {
-        const value = outcome.values[itemIndex];
+        const value = values[itemIndex];
         translated[item.batchIndex] = value;
-        if (outcome.success) {
+        if (success) {
           setMemoryCache(item.cacheKey, value);
           void cache.set("translations", item.cacheKey, value, CACHE_TTL);
         }
@@ -185,14 +210,18 @@ export const translateMany = async (texts = [], lang = "en") => {
   return results;
 };
 
-export const translateLongText = async (text, lang = "en") => {
+export const translateLongText = async (text, lang = "en", options = {}) => {
   const target = normalizeLanguage(lang);
   if (!text || target.toLowerCase() === "en") return text;
   const chunks = splitText(text, getMaxTextLength());
   const translated = [];
   for (let index = 0; index < chunks.length; index += BATCH_SIZE) {
     const batch = chunks.slice(index, index + BATCH_SIZE);
-    translated.push(...(await Promise.all(batch.map((chunk) => translateChunk(chunk, target)))));
+    translated.push(
+      ...(await Promise.all(
+        batch.map((chunk) => translateChunk(chunk, target, options)),
+      )),
+    );
   }
   return translated.join("");
 };

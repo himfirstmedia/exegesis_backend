@@ -123,6 +123,7 @@ const translateEntries = async (entries, lang) => {
       translateMany(
         group.map((entry) => entry.value),
         lang,
+        { throwOnFailure: true },
       ),
       Math.max(remaining, 1),
     );
@@ -146,7 +147,13 @@ const translateEntries = async (entries, lang) => {
   await flush();
 };
 
-const translateRecord = async (item, lang, fields, includeRichFields) => {
+const translateRecord = async (
+  item,
+  lang,
+  fields,
+  includeRichFields,
+  { throwOnFailure = false } = {},
+) => {
   const target = normalizeLanguage(lang);
   if (!item || target.toLowerCase() === "en") return item;
 
@@ -178,15 +185,16 @@ const translateRecord = async (item, lang, fields, includeRichFields) => {
         error.message,
       );
     }
+    if (throwOnFailure) throw error;
     return item;
   }
 };
 
-export const translateDailyVerseContent = (item, lang) =>
-  translateRecord(item, lang, VERSE_FIELDS, true);
+export const translateDailyVerseContent = (item, lang, options) =>
+  translateRecord(item, lang, VERSE_FIELDS, true, options);
 
-export const translateDailyDevotionContent = (item, lang) =>
-  translateRecord(item, lang, DEVOTION_FIELDS, true);
+export const translateDailyDevotionContent = (item, lang, options) =>
+  translateRecord(item, lang, DEVOTION_FIELDS, true, options);
 
 export const translateDailyExegesisContent = (item, lang) =>
   translateRecord(item, lang, EXEGESIS_FIELDS, false);

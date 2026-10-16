@@ -222,6 +222,23 @@ describe("text-to-text translation service", () => {
     clock.mockRestore();
   });
 
+  test("accepts a direct translation response from the gateway", async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = "true";
+    global.fetch.mockResolvedValue(
+      jsonResponse({ translatedText: "Direto do gateway" }),
+    );
+
+    await expect(
+      translateText({ q: "direct response", source: "en", target: "pt" }),
+    ).resolves.toMatchObject({
+      translatedText: "Direto do gateway",
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toBe(
+      "https://lordsbook.test/translate",
+    );
+  });
+
   test("deduplicates concurrent requests for the same text", async () => {
     let release;
     let markStarted;
