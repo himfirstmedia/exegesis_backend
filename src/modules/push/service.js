@@ -29,30 +29,49 @@ function initFirebaseAdmin() {
 
   try {
     if (getApps().length > 0) {
+      const projectId = getApps()[0].options.projectId;
+      const expectedProjectId = process.env.FIREBASE_PROJECT_ID?.trim();
+      if (expectedProjectId && projectId && expectedProjectId !== projectId) {
+        throw new Error(`Firebase project mismatch: expected ${expectedProjectId}, initialized app uses ${projectId}`);
+      }
       messagingEnabled = true;
+      console.log(`[push] firebase-admin already initialized (project: ${projectId || "auto-detected"})`);
       return true;
     }
 
+    const expectedProjectId = process.env.FIREBASE_PROJECT_ID?.trim();
     const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
     if (json) {
-      initializeApp({ credential: cert(JSON.parse(json)) });
+      const serviceAccount = JSON.parse(json);
+      const credentialProjectId = serviceAccount.project_id || serviceAccount.projectId;
+      if (expectedProjectId && credentialProjectId && expectedProjectId !== credentialProjectId) {
+        throw new Error(`Firebase project mismatch: expected ${expectedProjectId}, credentials use ${credentialProjectId}`);
+      }
+      const projectId = expectedProjectId || credentialProjectId;
+      initializeApp({ credential: cert(serviceAccount), ...(projectId && { projectId }) });
       messagingEnabled = true;
-      console.log("[push] firebase-admin initialized from FIREBASE_SERVICE_ACCOUNT_JSON");
+      console.log(`[push] firebase-admin initialized from FIREBASE_SERVICE_ACCOUNT_JSON (project: ${projectId || "auto-detected"})`);
       return true;
     }
 
     const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
     if (credPath) {
-      initializeApp({ credential: cert(readFileSync(credPath, "utf8")) });
+      const serviceAccount = JSON.parse(readFileSync(credPath, "utf8"));
+      const credentialProjectId = serviceAccount.project_id || serviceAccount.projectId;
+      if (expectedProjectId && credentialProjectId && expectedProjectId !== credentialProjectId) {
+        throw new Error(`Firebase project mismatch: expected ${expectedProjectId}, credentials use ${credentialProjectId}`);
+      }
+      const projectId = expectedProjectId || credentialProjectId;
+      initializeApp({ credential: cert(serviceAccount), ...(projectId && { projectId }) });
       messagingEnabled = true;
-      console.log("[push] firebase-admin initialized from GOOGLE_APPLICATION_CREDENTIALS");
+      console.log(`[push] firebase-admin initialized from GOOGLE_APPLICATION_CREDENTIALS (project: ${projectId || "auto-detected"})`);
       return true;
     }
 
     // Last resort: application-default credentials (may work on GCP infra).
-    initializeApp();
+    initializeApp(expectedProjectId ? { projectId: expectedProjectId } : undefined);
     messagingEnabled = true;
-    console.log("[push] firebase-admin initialized with application-default credentials");
+    console.log(`[push] firebase-admin initialized with application-default credentials (project: ${expectedProjectId || "auto-detected"})`);
     return true;
   } catch (error) {
     messagingEnabled = false;
@@ -80,9 +99,11 @@ export const registerToken = async (userId, token, platform = "web") => {
 };
 
 /** Remove a token (logout / permission revoked / token rotated). */
-export const unregisterToken = async (token) => {
-  await prisma.pushToken.deleteMany({ where: { token } });
+export const unregisterToken = async (userId, token) => {
+  await prisma.pushToken.deleteMany({ where: { userId, token } });
 };
+
+export const initializePushService = () => initFirebaseAdmin();
 
 // ── Per-user settings ────────────────────────────────────────────────────────
 
@@ -144,7 +165,7 @@ export const sendToUsers = async (userIds, { title, body, data = {} }) => {
   for (let i = 0; i < tokenList.length; i += MAX_TOKENS_PER_BATCH) {
     const batch = tokenList.slice(i, i + MAX_TOKENS_PER_BATCH);
     try {
-      const response = await getMessaging().sendEachForWebPush(
+      const response = await getMessaging().sendEach(
         batch.map((token) => ({
           token,
           notification: { title, body },
@@ -166,7 +187,8 @@ export const sendToUsers = async (userIds, { title, body, data = {} }) => {
           if (
             code === "messaging/registration-token-not-registered" ||
             code === "messaging/invalid-registration-token" ||
-            code === "messaging/invalid-argument"
+            code === "messaging/mismatched-credential" ||
+            code === "messaging/sender-id-mismatch"
           ) {
             dead.push(batch[idx]);
           }

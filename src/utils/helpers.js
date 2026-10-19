@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import { prisma } from "../config/db.js";
 
 const getJwtSecret = () => {
@@ -31,6 +32,37 @@ export const verifyToken = (token) => {
   try {
     return jwt.verify(token, getJwtSecret());
   } catch (error) {
+    return null;
+  }
+};
+
+const getGoogleRegistrationProofSecret = () =>
+  crypto
+    .createHmac("sha256", getJwtSecret())
+    .update("exegesis-google-registration-proof-v1")
+    .digest();
+
+export const generateGoogleRegistrationProof = (identity) =>
+  jwt.sign(
+    { ...identity, purpose: "google-registration" },
+    getGoogleRegistrationProofSecret(),
+    {
+      algorithm: "HS256",
+      audience: "google-registration",
+      issuer: "exegesis-api",
+      expiresIn: "10m",
+    },
+  );
+
+export const verifyGoogleRegistrationProof = (token) => {
+  try {
+    const decoded = jwt.verify(token, getGoogleRegistrationProofSecret(), {
+      algorithms: ["HS256"],
+      audience: "google-registration",
+      issuer: "exegesis-api",
+    });
+    return decoded?.purpose === "google-registration" ? decoded : null;
+  } catch {
     return null;
   }
 };

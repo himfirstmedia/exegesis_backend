@@ -43,7 +43,7 @@ export const unregisterPushToken = async (req, res) => {
     if (!token) {
       return res.status(400).json(format({ status: 400, message: "Token is required" }));
     }
-    await unregisterToken(token);
+    await unregisterToken(req.user.id, token);
     return ok(res, "Push token removed");
   } catch (error) {
     console.error("[push] unregister-token error:", error.message);

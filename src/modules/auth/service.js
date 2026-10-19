@@ -3,7 +3,14 @@ import { withDbRetry } from "../../utils/dbRetry.js";
 import bcrypt from "bcryptjs";
 import Stripe from "stripe";
 import crypto from "crypto";
-import { generateToken, verifyToken, generateSixDigitCode, serializeBigInt } from "../../utils/helpers.js";
+import {
+  generateToken,
+  verifyToken,
+  generateGoogleRegistrationProof,
+  verifyGoogleRegistrationProof,
+  generateSixDigitCode,
+  serializeBigInt,
+} from "../../utils/helpers.js";
 import { hashCode, codeMatches } from "../../utils/codes.js";
 import { validatePassword, PASSWORD_REQUIREMENTS_MESSAGE } from "../../utils/passwordPolicy.js";
 import { emailTemplates } from "../../utils/emailTemplates.js";
@@ -19,17 +26,53 @@ import {
 
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const googleOAuthClient = new OAuth2Client();
+
+const getGoogleOAuthAudiences = () => {
+  const configured = [
+    process.env.GOOGLE_OAUTH_CLIENT_IDS,
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_WEB_CLIENT_ID,
+  ];
+  return [...new Set(
+    configured
+      .flatMap((value) => String(value || "").split(","))
+      .map((value) => value.trim())
+      .filter(Boolean),
+  )];
+};
 
 export const googleLogin = async (data, deviceInfo = null) => {
-  const { idToken, email, firstName, lastName, photoUrl } = data;
+  const { idToken } = data;
+  if (!idToken) return { status: 400, message: "Google ID token is required" };
 
+  const audiences = getGoogleOAuthAudiences();
+  if (!audiences.length) {
+    console.error("[Auth] Google OAuth has no configured client ID audience");
+    return { status: 500, message: "Google login is not configured" };
+  }
 
+  let payload;
+  try {
+    const ticket = await googleOAuthClient.verifyIdToken({
+      idToken,
+      audience: audiences,
+    });
+    payload = ticket.getPayload();
+  } catch {
+    return { status: 401, message: "Invalid Google ID token" };
+  }
 
-  const googleId = idToken;
-  const googleEmail =  email;
-  const googleFirstName = firstName || "Google";
-  const googleLastName = lastName || "User";
-  const googlePhoto =  photoUrl || null;
+  if (!payload?.sub) return { status: 401, message: "Invalid Google identity" };
+  if (!payload.email || payload.email_verified !== true) {
+    return { status: 401, message: "Google email is not verified" };
+  }
+
+  const googleSubject = payload.sub;
+  const googleEmail = payload.email.toLowerCase();
+  const googleFirstName = payload.given_name || "Google";
+  const googleLastName = payload.family_name || "User";
+  const googlePhoto = payload.picture || null;
 
   const existingUser = await prisma.systemUser.findFirst({
     where: { email: googleEmail.toLowerCase() },
@@ -75,13 +118,24 @@ export const googleLogin = async (data, deviceInfo = null) => {
     };
   }
 
+  const registrationProof = generateGoogleRegistrationProof({
+    googleSubject,
+    email: googleEmail,
+    firstName: googleFirstName,
+    lastName: googleLastName,
+    photoUrl: googlePhoto,
+  });
+
   return {
     status: 201,
     message: "New Google user - please complete registration",
     data: {
       needsRegistration: true,
-      googleId,
-      email: googleEmail.toLowerCase(),
+      registrationProof,
+      // Released clients submit this field back unchanged. It is now the
+      // short-lived proof, never the raw Google token.
+      googleId: registrationProof,
+      email: googleEmail,
       firstName: googleFirstName,
       lastName: googleLastName,
       photoUrl: googlePhoto,
@@ -90,10 +144,11 @@ export const googleLogin = async (data, deviceInfo = null) => {
 };
 
 export const completeGoogleRegistration = async (data, deviceInfo = null) => {
-  const { googleId, username, password, firstName, lastName, phoneNumber, gender, email, photoUrl } = data;
+  const { registrationProof, googleId, username, password, phoneNumber, gender } = data;
 
-  if (!googleId) {
-    return { status: 400, message: "Google ID is required" };
+  const registrationCredential = registrationProof || googleId;
+  if (!registrationCredential) {
+    return { status: 400, message: "Google registration proof is required" };
   }
   if (!username) {
     return { status: 400, message: "Username is required" };
@@ -101,6 +156,39 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
   if (!password) {
     return { status: 400, message: "Password is required" };
   }
+
+  let identity = verifyGoogleRegistrationProof(registrationCredential);
+  // A user can cross the deployment boundary between the two registration
+  // requests. Verify a legacy raw Google token rather than trusting its fields.
+  if (!identity && googleId) {
+    try {
+      const ticket = await googleOAuthClient.verifyIdToken({
+        idToken: googleId,
+        audience: getGoogleOAuthAudiences(),
+      });
+      const payload = ticket.getPayload();
+      if (payload?.sub && payload.email && payload.email_verified === true) {
+        identity = {
+          googleSubject: payload.sub,
+          email: payload.email.toLowerCase(),
+          firstName: payload.given_name || "Google",
+          lastName: payload.family_name || "User",
+          photoUrl: payload.picture || null,
+        };
+      }
+    } catch {
+      // The common invalid-proof response below intentionally hides details.
+    }
+  }
+  if (!identity?.googleSubject || !identity.email) {
+    return { status: 401, message: "Invalid or expired Google registration proof" };
+  }
+  const {
+    email: verifiedEmail,
+    firstName: verifiedFirstName,
+    lastName: verifiedLastName,
+    photoUrl: verifiedPhotoUrl,
+  } = identity;
 
   const googlePasswordError = validatePassword(password);
   if (googlePasswordError) {
@@ -112,7 +200,7 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
     return { status: 401, message: "Username already exists, try another one" };
   }
 
-  const userEmail = email ? email.toLowerCase() : `${googleId}@google.com`;
+  const userEmail = verifiedEmail.toLowerCase();
   
   const existingEmail = await prisma.systemUser.findFirst({ where: { email: userEmail } });
   if (existingEmail) {
@@ -121,9 +209,9 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
         where: { id: existingEmail.id },
         data: {
           username: username.toLowerCase(),
-          firstName: firstName || existingEmail.firstName,
-          lastName: lastName || existingEmail.lastName,
-          profilePhotoUrl: photoUrl || existingEmail.profilePhotoUrl,
+          firstName: verifiedFirstName || existingEmail.firstName,
+          lastName: verifiedLastName || existingEmail.lastName,
+          profilePhotoUrl: verifiedPhotoUrl || existingEmail.profilePhotoUrl,
         },
       });
       
@@ -162,17 +250,17 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
   const user = await prisma.systemUser.create({
     data: {
       username: username.toLowerCase(),
-      email: email.toLowerCase(),
+      email: userEmail,
       password: hashedPassword,
-      firstName: firstName || "Google",
-      lastName: lastName || "User",
+      firstName: verifiedFirstName || "Google",
+      lastName: verifiedLastName || "User",
       phoneNumber: phoneNumber || "",
       gender: gender || "Not specified",
       userRole: 2n,
       emailVerified: true,
       status: true,
       loginCount: 0n,
-      profilePhotoUrl: photoUrl || null,
+      profilePhotoUrl: verifiedPhotoUrl || null,
       subscriptionTier: "free",
     },
   });

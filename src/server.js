@@ -30,6 +30,7 @@ import popularSearchesRouter from "./modules/popular-searches/route.js";
 import aiRouter from "./modules/ai/route.js";
 import textToTextTranslationRouter from "./modules/text-to-text-translation/route.js";
 import pushRouter from "./modules/push/route.js";
+import { initializePushService } from "./modules/push/service.js";
 import landingRouter from "./modules/landing/route.js";
 import supportRouter from "./modules/support/route.js";
 import { handleStripeWebhook } from "./modules/subscriptions/webhook.js";
@@ -55,6 +56,8 @@ try {
   console.error(`FATAL: ${error.message}`);
   process.exit(1);
 }
+
+initializePushService();
 
 connectDB();
 
