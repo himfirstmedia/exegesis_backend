@@ -5,6 +5,7 @@ Shared Express/Prisma/PostgreSQL API for the Exegesis mobile and web application
 ## Documentation
 
 - [Complete backend and integrations manual](docs/PLATFORM_GUIDE.md).
+- [Support notification setup, delivery diagnostics and acceptance tests](docs/support-push.md).
 - [R2 account migration and verification](docs/R2_ACCOUNT_MIGRATION.md).
 - [Existing API reference](docs/API.md); verify endpoint details against current routers.
 - [Cross-platform documentation and PDF export instructions](../PROJECT_DOCUMENTATION.md).
@@ -12,6 +13,13 @@ Shared Express/Prisma/PostgreSQL API for the Exegesis mobile and web application
 The platform manual covers Google/JWT authentication, Scripture catalogues,
 user data, study resources, plans, Lab, journal/export, trivia, support/realtime,
 Cloudflare R2, Firebase push, Stripe, email, translation and narration.
+
+Support pushes require Firebase Admin credentials on the backend handling the
+admin reply. Run `node scripts/check-push-config.js`, then authenticated
+`POST /push/test` for the intended reader. Message persistence, live sockets,
+Firebase acceptance and actual phone display are separate outcomes. A working
+native Daily Verse alarm does not verify server push. Keep Admin keys in ignored
+local configuration or deployment secrets, never in Git or Docker images.
 
 ## Development
 

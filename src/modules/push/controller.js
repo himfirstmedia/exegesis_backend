@@ -77,10 +77,15 @@ export const updatePushSettings = async (req, res) => {
 
 export const sendTestPush = async (req, res) => {
   try {
+    const platform = req.body?.platform;
+    if (platform !== undefined && !['web', 'android', 'ios'].includes(platform)) {
+      return res.status(400).json(format({ status: 400, message: 'Invalid push test platform' }));
+    }
     const result = await sendToUsers([req.user.id], {
       title: "Exegesis",
       body: "Test push notification — device push delivery is working.",
       data: { kind: "test", link: "/" },
+      ...(platform && { platforms: [platform] }),
     });
     if (result.disabled) {
       return res.status(503).json(format({ status: 503,
@@ -88,7 +93,9 @@ export const sendTestPush = async (req, res) => {
     }
     if (!result.sent) {
       return res.status(result.noTokens ? 409 : 502).json(format({ status: result.noTokens ? 409 : 502,
-        message: result.noTokens ? 'No registered device token. Open the app, sign in and enable notifications.' : 'Firebase did not accept the test push. Check backend push delivery errors.', data: result }));
+        message: result.noTokens
+          ? platform === 'web' ? 'No registered browser token. Sign in and enable browser alerts first.' : 'No registered device token. Open the app, sign in and enable notifications.'
+          : 'Firebase did not accept the test push. Check backend push delivery errors.', data: result }));
     }
     return ok(res, `Test push sent to ${result.sent} device(s)`, result);
   } catch (error) {

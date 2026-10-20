@@ -330,6 +330,15 @@ project's service account. The backend checks explicit project mismatch during
 initialization. Mobile/web OAuth configuration and push sender must agree with
 their intended project, but backend audience allowlisting is a separate setting.
 
+SDK initialization alone is not proof that application-default credentials are
+available on a host. Startup/send credential verification requests an access
+token; unavailable credentials disable sending with an explicit diagnostic.
+From `backend/`, run `node scripts/check-push-config.js` without printing private
+keys or OAuth/device tokens. Restart the backend after changing its environment.
+The Android `google-services.json`, enabled FCM V1 console setting and browser
+VAPID public key do not replace the server's Admin credential. Configure that
+credential on each actual deployment, not just in a developer's `.env`.
+
 ## Token lifecycle and delivery
 
 Authenticated `/push/register-token` binds a platform/token to the current user
@@ -344,6 +353,20 @@ copied unchanged between Firebase senders. Payloads are sent high-priority with
 Android channel/sound, APNs alert priority and a webpush urgency header; `data`
 values are stringified and external links are rewritten to the `CLIENT_URL`
 origin so a push cannot redirect a browser to an attacker-controlled host.
+
+Authenticated `POST /push/test` targets the calling account's registered devices:
+
+| Result | Meaning |
+| --- | --- |
+| HTTP 200 with `sent > 0` | Firebase accepted at least one token's send; not proof of phone display/read |
+| HTTP 503 / disabled | Firebase Admin configuration or credential availability failed |
+| HTTP 409 / no tokens | The account has no registered device token |
+| HTTP 502 / rejected send | No token's send was accepted; inspect returned `errorCodes` and server logs |
+
+This endpoint does not bypass account authentication or send to a caller-supplied
+arbitrary token. The credential check script does not send a notification.
+An optional `platform` (`web`, `android`, `ios`) scopes the test to that device
+class; invalid values return HTTP 400. Browser controls use `platform: "web"`.
 
 ## Web daily-verse scheduler
 
@@ -372,14 +395,31 @@ to each device.
 Replying to a support ticket fans out a `support-message` push: a user reply
 notifies active admins, and an admin reply notifies the ticket owner. The sender
 is always excluded, so a user never pushes to themselves. The payload carries
-`kind: "support-message"`, `audience`, `ticketId`, `messageId` and a deep link
-(`/support?ticketId=...` or `/admin/support?ticketId=...`). Push failures are
-logged but never affect the already-persisted message or the realtime event.
+`kind: "support-message"`, `audience`, `screen`, `ticketId`, `messageId`, a
+per-message `notificationId`, notification title/body and a native `deepLink`
+(`exegesis://support/<ticketId>?messageId=<messageId>`). The separate `link`
+field points to `/support?ticketId=...` or `/admin/support?ticketId=...` on the
+browser origin. Supported image payloads can carry an image URL; configure a
+reachable `BACKEND_URL` for relative backend media and public/proxy access.
+
+Push failures are logged but never undo the already-persisted message or the
+realtime event. Admin reply data includes `pushDelivery.sent` and a status:
+`accepted`, `unavailable`, `no_devices` or `failed`. The web inbox distinguishes
+"reply saved" from "phone notification accepted by Firebase"; acceptance is not
+an OS delivery/read receipt. Do not retry the message itself merely because push
+failed, as that would create duplicate chat content. No durable per-support-push
+retry queue is provided; reconnect recovery retrieves persisted messages.
+
+FCM support delivery is independent of the daily-verse cron sweep and must not
+be restricted to web tokens. Native daily reminders use local alarms, so a
+successful Daily Verse alarm is not an Admin-credential test. See the detailed
+[support push runbook](support-push.md) for environment alignment and live tests.
 
 Web additionally needs a VAPID public key and supported worker/permission setup.
-iOS needs APNs configuration. Android needs matching application/configuration,
-`POST_NOTIFICATIONS`, and the user-granted `SCHEDULE_EXACT_ALARM` permission for
-precise offline reminders.
+iOS needs APNs configuration. Android support push needs matching application
+configuration, notification permission and the `exegesis-default` channel. The
+separate user-granted `SCHEDULE_EXACT_ALARM` permission is for precise offline
+reminders; it is not a permission requirement for remote support push.
 
 # Text translation and narration
 
@@ -862,8 +902,28 @@ Client-supplied topics cannot grant access to another user's room.
 
 Support messages carry delivered/read timestamps. Connection-time delivery
 updates and feature events notify appropriate users/admins. Authentication
-identity changes require a fresh connection. Realtime transport supplements
-durable ticket/message APIs; disconnected clients can refetch server state.
+identity changes require a fresh connection. The principal events are:
+
+| Event | Purpose |
+| --- | --- |
+| `support:message` | New message plus ticket summary for direct state updates |
+| `support:ticket:updated` / `support:unread` | Status, summary and unread reconciliation |
+| `support:receipt` | Changed `messageIds`, `ticketIds`, and delivered/read timestamps sent back to the opposite party |
+| `support:presence` | App-wide user/admin socket connection state; independent of opening a support screen |
+| `support:sync` (client with acknowledgement) | Authorized durable conversation snapshot, optional read operation and connection-presence snapshot |
+
+`support:sync` accepts a positive `ticketId` and boolean `markRead`. It dispatches
+to the reader ownership-checked or current-role admin service, not to a user ID
+chosen by the client. It responds with the service status/data and presence only
+on success. Clients use snapshots on reconnect/foreground and periodic active
+recovery; there is no promise that Socket.IO replays disconnected events.
+
+The receipt fields record backend delivery/read semantics, not FCM transport
+acknowledgements. Presence reports connected authenticated sockets, not physical
+internet availability or whether the person is currently reading a bubble.
+Socket rooms/presence are process-local in the current default adapter. Separate
+backend deployments sharing PostgreSQL do not share these socket rooms or their
+Firebase configuration; production scaling needs explicit adapter/routing design.
 
 # Email, caching and background processing
 
