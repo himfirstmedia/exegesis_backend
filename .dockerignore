@@ -4,4 +4,8 @@ node_modules
 docs
 .env
 .env.example
+exegesis-bd116-*.json
+**/*firebase-adminsdk*.json
+firebase-admin.json
+.secrets
 *.md

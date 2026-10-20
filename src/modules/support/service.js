@@ -123,7 +123,7 @@ const getAdminContacts = async () => {
   return { ids, emails: [...emails] };
 };
 
-const notifySupportMessage = async (ticket, message, audience) => {
+export const notifySupportMessage = async (ticket, message, audience) => {
   try {
     const ids = audience === "admin"
       ? (await getAdminContacts()).ids.filter(id => id !== message.senderId)
@@ -151,6 +151,7 @@ const notifySupportMessage = async (ticket, message, audience) => {
         screen: audience === "admin" ? "AdminSupport" : "SupportThread",
         ticketId: String(ticket.id),
         messageId: String(message.id),
+        deepLink: `exegesis://support/${ticket.id}?messageId=${message.id}`,
         notificationId: `support-message-${message.id}`,
         ...(/\.(png|jpe?g|webp)(?:\?|$)/i.test(message.attachment || '') && { imageUrl: imageUrl || message.attachment }),
         link: `${path}?ticketId=${ticket.id}`,
@@ -158,6 +159,7 @@ const notifySupportMessage = async (ticket, message, audience) => {
     });
     console.info('[support:push]', { ticketId: String(ticket.id), messageId: String(message.id), audience,
       sent: result?.sent ?? 0, disabled: result?.disabled === true });
+    return result;
   } catch (error) {
     // The message is already persisted; a notification outage cannot turn a
     // successful send into a retry that would duplicate the support message.
@@ -897,11 +899,17 @@ export const adminReply = async (data, adminId) => {
   } catch (error) {
     console.warn("[support] Realtime emit failed for admin reply:", error.message);
   }
-  await notifySupportMessage(updated, createdMessage, "user");
+  const delivery = await notifySupportMessage(updated, createdMessage, "user");
+  const pushDelivery = {
+    sent: delivery?.sent ?? 0,
+    status: delivery?.sent > 0 ? 'accepted'
+      : delivery?.disabled || !delivery ? 'unavailable'
+      : delivery?.noTokens ? 'no_devices' : 'failed',
+  };
   return {
     status: 200,
     message: "Reply sent to the user",
-    data: serializeTicketDetail(updated),
+    data: { ...serializeTicketDetail(updated), pushDelivery },
   };
 };
 

@@ -79,14 +79,16 @@ export const sendTestPush = async (req, res) => {
   try {
     const result = await sendToUsers([req.user.id], {
       title: "Exegesis",
-      body: "Test push notification — if you can read this, web push works! 🎉",
+      body: "Test push notification — device push delivery is working.",
       data: { kind: "test", link: "/" },
     });
     if (result.disabled) {
-      return ok(res, "Push is not configured on the server (missing Firebase credentials)", {
-        sent: 0,
-        disabled: true,
-      });
+      return res.status(503).json(format({ status: 503,
+        message: 'Push is unavailable: configure Firebase Admin credentials on the backend for this app project.', data: result }));
+    }
+    if (!result.sent) {
+      return res.status(result.noTokens ? 409 : 502).json(format({ status: result.noTokens ? 409 : 502,
+        message: result.noTokens ? 'No registered device token. Open the app, sign in and enable notifications.' : 'Firebase did not accept the test push. Check backend push delivery errors.', data: result }));
     }
     return ok(res, `Test push sent to ${result.sent} device(s)`, result);
   } catch (error) {

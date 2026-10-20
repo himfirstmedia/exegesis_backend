@@ -4,6 +4,12 @@ node_modules
 # Keep environment variables out of version control
 .env
 
+# Firebase Admin private keys must never enter source control.
+/exegesis-bd116-*.json
+*firebase-adminsdk*.json
+/firebase-admin.json
+/.secrets/
+
 /src/generated/prisma
 .yarn.lock
 .yarn/*

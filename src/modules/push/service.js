@@ -23,6 +23,27 @@ import { dueReminder, isValidTimeZone } from "./reminderTime.js";
 // ── Firebase Admin init (lazy, once) ─────────────────────────────────────────
 let messagingEnabled = false;
 let initAttempted = false;
+let credentialCheck;
+
+// Initializing firebase-admin does not validate ADC. On a non-GCP host it can
+// appear configured even though every actual send fails for missing credentials.
+export const verifyPushCredentials = async () => {
+  if (!initFirebaseAdmin()) return false;
+  if (!credentialCheck) {
+    credentialCheck = (async () => {
+      try {
+        const credential = getMessaging().app?.options?.credential;
+        if (credential?.getAccessToken) await credential.getAccessToken();
+        return true;
+      } catch (error) {
+        messagingEnabled = false;
+        console.error('[push] Firebase credentials unavailable. Configure FIREBASE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS for FIREBASE_PROJECT_ID. No push was sent.', error.message);
+        return false;
+      }
+    })();
+  }
+  return credentialCheck;
+};
 
 function initFirebaseAdmin() {
   if (initAttempted) return messagingEnabled;
@@ -109,7 +130,7 @@ export const unregisterToken = async (userId, token) => {
   await prisma.pushToken.deleteMany({ where: { userId, token } });
 };
 
-export const initializePushService = () => initFirebaseAdmin();
+export const initializePushService = () => verifyPushCredentials();
 
 // ── Per-user settings ────────────────────────────────────────────────────────
 
@@ -156,7 +177,7 @@ const MAX_TOKENS_PER_BATCH = 500;
  * Returns { sent, pruned } — counts only (never throws).
  */
 export const sendToUsers = async (userIds, { title, body, imageUrl, data = {}, platforms, ttlSeconds = 86400 }) => {
-  if (!initFirebaseAdmin()) {
+  if (!(await verifyPushCredentials())) {
     return { sent: 0, pruned: 0, acceptedUserIds: [], disabled: true };
   }
   if (!userIds?.length) return { sent: 0, pruned: 0, acceptedUserIds: [] };
@@ -165,7 +186,7 @@ export const sendToUsers = async (userIds, { title, body, imageUrl, data = {}, p
     where: { userId: { in: userIds }, ...(platforms && { platform: { in: platforms } }) },
     select: { token: true, userId: true },
   });
-  if (!tokens.length) return { sent: 0, pruned: 0, acceptedUserIds: [] };
+  if (!tokens.length) return { sent: 0, pruned: 0, acceptedUserIds: [], noTokens: true };
 
   const baseUrl = process.env.CLIENT_URL || "https://app.exegesisproject.org";
   const base = new URL(baseUrl);
@@ -177,6 +198,7 @@ export const sendToUsers = async (userIds, { title, body, imageUrl, data = {}, p
   const acceptedUserIds = new Set();
   let sent = 0;
   let pruned = 0;
+  const errorCodes = new Set();
 
   for (let i = 0; i < tokens.length; i += MAX_TOKENS_PER_BATCH) {
     const batch = tokens.slice(i, i + MAX_TOKENS_PER_BATCH);
@@ -210,6 +232,8 @@ export const sendToUsers = async (userIds, { title, body, imageUrl, data = {}, p
         if (r.success && batch[idx].userId) acceptedUserIds.add(batch[idx].userId);
         if (!r.success) {
           const code = r.error?.code ?? "";
+          errorCodes.add(code || 'messaging/unknown-error');
+          console.warn('[push] Device delivery rejected:', code || 'messaging/unknown-error');
           if (
             code === "messaging/registration-token-not-registered" ||
             code === "messaging/invalid-registration-token" ||
@@ -225,11 +249,12 @@ export const sendToUsers = async (userIds, { title, body, imageUrl, data = {}, p
         pruned += dead.length;
       }
     } catch (error) {
+      errorCodes.add(error.code || 'messaging/send-failed');
       console.error("[push] batch send failed:", error.message);
     }
   }
 
-  return { sent, pruned, acceptedUserIds: [...acceptedUserIds] };
+  return { sent, pruned, acceptedUserIds: [...acceptedUserIds], ...(errorCodes.size && { errorCodes: [...errorCodes] }) };
 };
 
 /**

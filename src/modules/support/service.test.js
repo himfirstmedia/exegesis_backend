@@ -321,6 +321,20 @@ describe('replyToTicket', () => {
 });
 
 describe('adminReply', () => {
+  it.each([
+    [{ sent: 1 }, 'accepted'],
+    [{ sent: 0, disabled: true }, 'unavailable'],
+    [{ sent: 0, noTokens: true }, 'no_devices'],
+    [{ sent: 0, errorCodes: ['messaging/authentication-error'] }, 'failed'],
+  ])('reports phone push status without treating a saved chat message as delivery: %j', async (delivery, status) => {
+    prisma.supportTicket.findUnique.mockResolvedValue(makeTicket());
+    prisma.supportMessage.create.mockResolvedValue({ id: 22, senderId: ADMIN_ID, body: 'Delivery status test' });
+    prisma.supportTicket.update.mockResolvedValue({});
+    sendToUsers.mockResolvedValueOnce(delivery);
+    const result = await adminReply({ ticketId: 7, message: 'Delivery status test' }, ADMIN_ID);
+    expect(result.status).toBe(200);
+    expect(result.data.pushDelivery).toEqual({ sent: delivery.sent, status });
+  });
   it('moves an open ticket to in_progress and flags it for the user', async () => {
     prisma.supportTicket.findUnique
       .mockResolvedValueOnce(makeTicket({ status: 'open' }))
