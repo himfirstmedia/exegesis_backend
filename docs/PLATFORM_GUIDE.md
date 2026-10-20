@@ -332,32 +332,54 @@ their intended project, but backend audience allowlisting is a separate setting.
 
 ## Token lifecycle and delivery
 
-Authenticated `/push/register-token` binds a platform/token to the current user.
-`/unregister-token` removes only that user's matching registration. Settings,
-updates and `/push/test` are authenticated. Clients register after login/restore,
-refresh rotated tokens and unregister on logout/disable.
+Authenticated `/push/register-token` binds a platform/token to the current user
+and accepts `platform` (`web`/`android`/`ios`) plus an optional IANA `timezone`.
+`/unregister-token` removes only that user's matching registration. Settings and
+updates are authenticated; invalid timezones return HTTP 400. Clients register
+after login/restore, refresh rotated tokens and unregister on logout/disable.
 
 Firebase Admin sends with `sendEach()`. Invalid or mismatched-sender tokens are
 pruned according to send results. Tokens are project-specific; they cannot be
-copied unchanged between Firebase senders.
+copied unchanged between Firebase senders. Payloads are sent high-priority with
+Android channel/sound, APNs alert priority and a webpush urgency header; `data`
+values are stringified and external links are rewritten to the `CLIENT_URL`
+origin so a push cannot redirect a browser to an attacker-controlled host.
 
-The daily-verse scheduler runs every minute:
+## Web daily-verse scheduler
 
-1. Select enabled settings not recorded as sent for the current UTC day.
-2. Match the saved reminder time in the user's IANA timezone.
-3. Resolve the current daily verse.
-4. Send a `daily-verse` payload with a route link.
-5. Update delivery bookkeeping when the batch has successful sends.
+The backend scheduler delivers **browser** reminders only. Native apps schedule
+their own local notifications (see the app guide), so the server never duplicates
+or reschedules a device alarm. The sweep runs every minute and:
 
-Timezone matching and UTC-day bookkeeping have different boundaries. The current
-batch-level success update is not a per-device exactly-once delivery guarantee.
-The overlap guard is process-local, so multiple backend replicas need coordinated
-scheduler operation to avoid duplicate jobs. No separate automated plan-reminder
-scheduler is established by this daily-verse implementation.
+1. Selects enabled `PushSetting` rows (all platforms considered, `web` tokens
+   targeted at send time).
+2. Computes each user's local clock in their stored IANA timezone.
+3. Fires only within a 5-minute grace window after the saved `reminderTime`, so a
+   briefly missed cron tick is recovered but a stale reminder hours later is not.
+4. Deduplicates on the recipient's **local calendar day** (`lastPushedOn`
+   compared in their timezone), not UTC midnight.
+5. Claims the send with a compare-and-set `updateMany` over the exact setting
+   row, which also prevents two backend replicas from sending the same user/day.
+6. Releases the claim when no device accepted the notification, so the next tick
+   can retry.
+
+A user with no valid timezone or a malformed `reminderTime` is skipped. No
+separate automated plan-reminder sweep exists; reading-plan reminders are local
+to each device.
+
+## Support-message push
+
+Replying to a support ticket fans out a `support-message` push: a user reply
+notifies active admins, and an admin reply notifies the ticket owner. The sender
+is always excluded, so a user never pushes to themselves. The payload carries
+`kind: "support-message"`, `audience`, `ticketId`, `messageId` and a deep link
+(`/support?ticketId=...` or `/admin/support?ticketId=...`). Push failures are
+logged but never affect the already-persisted message or the realtime event.
 
 Web additionally needs a VAPID public key and supported worker/permission setup.
-iOS needs APNs configuration. Android needs matching application/configuration
-and notification permission for applicable OS versions.
+iOS needs APNs configuration. Android needs matching application/configuration,
+`POST_NOTIFICATIONS`, and the user-granted `SCHEDULE_EXACT_ALARM` permission for
+precise offline reminders.
 
 # Text translation and narration
 

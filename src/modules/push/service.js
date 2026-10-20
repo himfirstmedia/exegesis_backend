@@ -18,6 +18,7 @@ import { initializeApp, getApps, cert } from "firebase-admin/app";
 import { getMessaging } from "firebase-admin/messaging";
 import { prisma } from "../../config/db.js";
 import { formatApiResponse } from "../../utils/helpers.js";
+import { dueReminder, isValidTimeZone } from "./reminderTime.js";
 
 // ── Firebase Admin init (lazy, once) ─────────────────────────────────────────
 let messagingEnabled = false;
@@ -90,12 +91,17 @@ function initFirebaseAdmin() {
  * Idempotent: re-registering the same token re-points it at the current user
  * (handles shared devices where one browser logs into different accounts).
  */
-export const registerToken = async (userId, token, platform = "web") => {
+export const registerToken = async (userId, token, platform = "web", timezone) => {
   await prisma.pushToken.upsert({
     where: { token },
     create: { userId, token, platform },
     update: { userId, platform, lastSeenAt: new Date() },
   });
+  if (isValidTimeZone(timezone)) {
+    await prisma.pushSetting.upsert({
+      where: { userId }, create: { userId, timezone }, update: {},
+    });
+  }
 };
 
 /** Remove a token (logout / permission revoked / token rotated). */
@@ -125,7 +131,10 @@ export const updateSettings = async (userId, patch) => {
   if (typeof patch.reminderTime === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(patch.reminderTime)) {
     allowed.reminderTime = patch.reminderTime;
   }
-  if (typeof patch.timezone === "string" && patch.timezone.length <= 64) {
+  if (patch.timezone !== undefined && !isValidTimeZone(patch.timezone)) {
+    throw Object.assign(new Error("A valid IANA timezone is required"), { statusCode: 400 });
+  }
+  if (typeof patch.timezone === "string") {
     allowed.timezone = patch.timezone;
   }
 
@@ -146,35 +155,50 @@ const MAX_TOKENS_PER_BATCH = 500;
  * Prunes tokens that FCM reports as invalid/unregistered.
  * Returns { sent, pruned } — counts only (never throws).
  */
-export const sendToUsers = async (userIds, { title, body, data = {} }) => {
+export const sendToUsers = async (userIds, { title, body, data = {}, platforms, ttlSeconds = 86400 }) => {
   if (!initFirebaseAdmin()) {
-    return { sent: 0, pruned: 0, disabled: true };
+    return { sent: 0, pruned: 0, acceptedUserIds: [], disabled: true };
   }
-  if (!userIds?.length) return { sent: 0, pruned: 0 };
+  if (!userIds?.length) return { sent: 0, pruned: 0, acceptedUserIds: [] };
 
   const tokens = await prisma.pushToken.findMany({
-    where: { userId: { in: userIds } },
-    select: { token: true },
+    where: { userId: { in: userIds }, ...(platforms && { platform: { in: platforms } }) },
+    select: { token: true, userId: true },
   });
-  if (!tokens.length) return { sent: 0, pruned: 0 };
+  if (!tokens.length) return { sent: 0, pruned: 0, acceptedUserIds: [] };
 
-  const tokenList = tokens.map((t) => t.token);
+  const baseUrl = process.env.CLIENT_URL || "https://app.exegesisproject.org";
+  const base = new URL(baseUrl);
+  const target = new URL(data.link || "/", base);
+  const link = target.origin === base.origin ? target.href : base.href;
+  const payload = Object.fromEntries(Object.entries({ ...data, link, sentAt: new Date().toISOString() })
+    .map(([k, v]) => [k, String(v ?? "")]));
+  const tag = payload.notificationId || payload.kind || "exegesis-push";
+  const acceptedUserIds = new Set();
   let sent = 0;
   let pruned = 0;
 
-  for (let i = 0; i < tokenList.length; i += MAX_TOKENS_PER_BATCH) {
-    const batch = tokenList.slice(i, i + MAX_TOKENS_PER_BATCH);
+  for (let i = 0; i < tokens.length; i += MAX_TOKENS_PER_BATCH) {
+    const batch = tokens.slice(i, i + MAX_TOKENS_PER_BATCH);
     try {
       const response = await getMessaging().sendEach(
-        batch.map((token) => ({
+        batch.map(({ token }) => ({
           token,
           notification: { title, body },
-          webpush: {
-            fcmOptions: { link: data.link || `${process.env.CLIENT_URL || "https://exegesisproject.org"}/` },
+          android: {
+            priority: "high", ttl: ttlSeconds * 1000,
+            notification: { channelId: "exegesis-default", sound: "default", tag },
           },
-          data: Object.fromEntries(
-            Object.entries(data).map(([k, v]) => [k, String(v ?? "")]),
-          ),
+          apns: {
+            headers: { "apns-priority": "10", "apns-push-type": "alert", "apns-expiration": String(Math.floor(Date.now() / 1000) + ttlSeconds) },
+            payload: { aps: { sound: "default" } },
+          },
+          webpush: {
+            headers: { Urgency: "high", TTL: String(ttlSeconds) },
+            notification: { tag, data: payload },
+            fcmOptions: { link },
+          },
+          data: payload,
         })),
       );
       sent += response.successCount;
@@ -182,6 +206,7 @@ export const sendToUsers = async (userIds, { title, body, data = {} }) => {
       // Prune dead tokens so the registry stays clean.
       const dead = [];
       response.responses.forEach((r, idx) => {
+        if (r.success && batch[idx].userId) acceptedUserIds.add(batch[idx].userId);
         if (!r.success) {
           const code = r.error?.code ?? "";
           if (
@@ -190,7 +215,7 @@ export const sendToUsers = async (userIds, { title, body, data = {} }) => {
             code === "messaging/mismatched-credential" ||
             code === "messaging/sender-id-mismatch"
           ) {
-            dead.push(batch[idx]);
+            dead.push(batch[idx].token);
           }
         }
       });
@@ -203,7 +228,7 @@ export const sendToUsers = async (userIds, { title, body, data = {} }) => {
     }
   }
 
-  return { sent, pruned };
+  return { sent, pruned, acceptedUserIds: [...acceptedUserIds] };
 };
 
 /**
@@ -213,39 +238,28 @@ export const sendToUsers = async (userIds, { title, body, data = {} }) => {
 export const getUsersDueForReminder = async (utcNow = new Date()) => {
   const settings = await prisma.pushSetting.findMany({
     where: { dailyVerseReminder: true },
-    select: { userId: true, reminderTime: true, timezone: true },
+    select: { userId: true, dailyVerseReminder: true, reminderTime: true, timezone: true, lastPushedOn: true },
   });
   if (!settings.length) return [];
 
   const due = [];
   for (const s of settings) {
-    try {
-      const formatter = new Intl.DateTimeFormat("en-GB", {
-        timeZone: s.timezone || "UTC",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      });
-      const [hour, minute] = formatter.format(utcNow).split(":");
-      const local = `${hour}:${minute}`;
-      if (local === s.reminderTime) due.push(s.userId);
-    } catch {
-      // Invalid timezone stored — skip this user rather than fail the sweep.
-    }
+    if (dueReminder(s, utcNow)) due.push(s.userId);
   }
   return due;
 };
 
 /** Fetch today's daily verse (published) — mirrors getTodaysVerse's core query. */
-export const getTodaysVerseForPush = async () => {
-  const utcToday = new Date(new Date().toISOString().slice(0, 10));
+export const getTodaysVerseForPush = async (day = new Date().toISOString().slice(0, 10)) => {
+  const start = new Date(`${day}T00:00:00.000Z`);
+  const end = new Date(start.getTime() + 86400000);
   let dv = await prisma.dailyVerse.findFirst({
-    where: { displayDate: { gte: utcToday }, isPublished: true },
+    where: { displayDate: { gte: start, lt: end }, isPublished: true },
     orderBy: { displayDate: "asc" },
   });
   if (!dv) {
     dv = await prisma.dailyVerse.findFirst({
-      where: { isPublished: true },
+      where: { isPublished: true, displayDate: { lt: end } },
       orderBy: { displayDate: "desc" },
     });
   }

@@ -23,13 +23,16 @@ import { formatApiResponse as format } from "../../utils/helpers.js";
 
 export const registerPushToken = async (req, res) => {
   try {
-    const { token, platform = "web" } = req.body || {};
+    const { token, platform = "web", timezone } = req.body || {};
     if (!token || typeof token !== "string" || token.length < 16) {
       return res.status(400).json(
         format({ status: 400, message: "A valid push token is required" }),
       );
     }
-    await registerToken(req.user.id, token, platform);
+    if (!["web", "android", "ios"].includes(platform)) {
+      return res.status(400).json(format({ status: 400, message: "Invalid push platform" }));
+    }
+    await registerToken(req.user.id, token, platform, timezone);
     return ok(res, "Push token registered");
   } catch (error) {
     console.error("[push] register-token error:", error.message);
@@ -67,7 +70,8 @@ export const updatePushSettings = async (req, res) => {
     return ok(res, "Push settings updated", settings);
   } catch (error) {
     console.error("[push] update-settings error:", error.message);
-    return res.status(500).json(format({ status: 500, message: "Failed to update push settings" }));
+    const status = error.statusCode || 500;
+    return res.status(status).json(format({ status, message: status === 400 ? error.message : "Failed to update push settings" }));
   }
 };
 

@@ -249,6 +249,30 @@ describe('replyToTicket', () => {
       data: { userUnread: false },
     });
   });
+
+  it('pushes a support-message notification to admins on a user reply', async () => {
+    prisma.systemUser.findMany.mockResolvedValue([{ id: ADMIN_ID, email: 'admin@test.local' }]);
+    prisma.supportMessage.create.mockResolvedValue({ id: 22, senderId: USER_ID });
+    prisma.supportTicket.update.mockResolvedValue({});
+    prisma.supportTicket.findUnique
+      .mockResolvedValueOnce(makeTicket({ status: 'open' }))
+      .mockResolvedValueOnce(makeTicket({ status: 'open' }));
+
+    await replyToTicket({ ticketId: 7, message: 'Any update?' }, USER_ID);
+
+    expect(sendToUsers).toHaveBeenCalledWith(
+      [ADMIN_ID],
+      expect.objectContaining({
+        data: expect.objectContaining({
+          kind: 'support-message',
+          audience: 'admin',
+          ticketId: '7',
+          messageId: '22',
+          link: '/admin/support?ticketId=7',
+        }),
+      }),
+    );
+  });
 });
 
 describe('adminReply', () => {
@@ -286,6 +310,42 @@ describe('adminReply', () => {
       },
     });
     expect(result.data.status).toBe('in_progress');
+  });
+
+  it('pushes a support-message notification to the ticket owner on an admin reply', async () => {
+    prisma.supportMessage.create.mockResolvedValue({ id: 33 });
+    prisma.supportTicket.update.mockResolvedValue({});
+    prisma.supportTicket.findUnique
+      .mockResolvedValueOnce(makeTicket({ status: 'open' }))
+      .mockResolvedValueOnce(makeTicket({ status: 'in_progress', userUnread: true }));
+
+    await adminReply({ ticketId: 7, message: 'Fixed in the next build.' }, ADMIN_ID);
+
+    expect(sendToUsers).toHaveBeenCalledWith(
+      [USER_ID],
+      expect.objectContaining({
+        data: expect.objectContaining({
+          kind: 'support-message',
+          audience: 'user',
+          ticketId: '7',
+          messageId: '33',
+          link: '/support?ticketId=7',
+        }),
+      }),
+    );
+  });
+
+  it('does not notify the user when the admin replies to their own ticket', async () => {
+    // An admin who owns the ticket should not push to themselves.
+    prisma.supportMessage.create.mockResolvedValue({ id: 34, senderId: ADMIN_ID });
+    prisma.supportTicket.update.mockResolvedValue({});
+    prisma.supportTicket.findUnique
+      .mockResolvedValueOnce(makeTicket({ status: 'open', userId: ADMIN_ID }))
+      .mockResolvedValueOnce(makeTicket({ status: 'in_progress', userUnread: true, userId: ADMIN_ID }));
+
+    await adminReply({ ticketId: 7, message: 'Note to self.' }, ADMIN_ID);
+
+    expect(sendToUsers).not.toHaveBeenCalled();
   });
 });
 

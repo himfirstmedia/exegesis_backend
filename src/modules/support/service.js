@@ -121,6 +121,29 @@ const getAdminContacts = async () => {
   return { ids, emails: [...emails] };
 };
 
+const notifySupportMessage = async (ticket, message, audience) => {
+  try {
+    const ids = audience === "admin"
+      ? (await getAdminContacts()).ids.filter(id => id !== message.senderId)
+      : [ticket.userId].filter(id => id !== message.senderId);
+    if (!ids.length) return;
+    const path = audience === "admin" ? "/admin/support" : "/support";
+    await sendToUsers(ids, {
+      title: audience === "admin" ? `Support: ${ticket.subject}`.slice(0, 120) : "Exegesis Support replied",
+      body: "You have a new support message. Tap to open the conversation.",
+      data: {
+        kind: "support-message", audience, ticketId: String(ticket.id),
+        messageId: String(message.id), notificationId: `support-message-${message.id}`,
+        link: `${path}?ticketId=${ticket.id}`,
+      },
+    });
+  } catch (error) {
+    // The message is already persisted; a notification outage cannot turn a
+    // successful send into a retry that would duplicate the support message.
+    console.error("[Support] Message push failed:", error.message);
+  }
+};
+
 export const notifyAdminsOfNewTicket = async (ticket) => {
   try {
     const { ids, emails } = await getAdminContacts();
@@ -149,16 +172,11 @@ export const notifyAdminsOfNewTicket = async (ticket) => {
       );
     }
 
-    if (ids.length > 0) {
-      await sendToUsers(ids, {
-        title: `Support: ${ticket.subject}`.slice(0, 120),
-        body: String(ticket.messages?.[0]?.body || "").slice(0, 180),
-        data: { link: adminUrl, ticketId: String(ticket.id) },
-      });
-    }
   } catch (error) {
     console.error("[Support] Failed to notify admins:", error.message);
   }
+  const message = ticket.messages?.[0];
+  if (message) await notifySupportMessage(ticket, message, "admin");
 };
 
 const serializeTicketSummary = (ticket) => {
@@ -654,6 +672,7 @@ export const replyToTicket = async (data, userId) => {
   } catch (error) {
     console.warn("[support] Realtime emit failed for user reply:", error.message);
   }
+  await notifySupportMessage(updated, createdMessage, "admin");
   return {
     status: 200,
     message: "Reply sent",
@@ -814,6 +833,7 @@ export const adminReply = async (data, adminId) => {
   } catch (error) {
     console.warn("[support] Realtime emit failed for admin reply:", error.message);
   }
+  await notifySupportMessage(updated, createdMessage, "user");
   return {
     status: 200,
     message: "Reply sent to the user",

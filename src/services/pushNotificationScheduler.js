@@ -1,92 +1,75 @@
-/**
- * pushNotificationScheduler.js — Daily-verse push sweep
- * ─────────────────────────────────────────────────────────────────────────────
- * Runs every minute. Finds users whose local time matches their saved
- * reminderTime ("HH:MM" in their timezone) and sends the daily verse.
- *
- * De-dup: PushSetting.lastPushedOn stores the UTC day of the last successful
- * send. A user is only re-sent if lastPushedOn is before today — so a user
- * is notified at most once per local reminder occurrence per day, and the
- * sweep stays idempotent across restarts/redeploys.
- */
-
+// Browser daily reminders. Native devices use their local alarm so FCM cannot
+// duplicate an offline-capable reminder or change its requested wall-clock time.
 import cron from "node-cron";
 import { prisma } from "../config/db.js";
-import { getUsersDueForReminder, getTodaysVerseForPush, sendToUsers } from "../modules/push/service.js";
+import { getTodaysVerseForPush, sendToUsers } from "../modules/push/service.js";
+import { dueReminder } from "../modules/push/reminderTime.js";
 
-const CRON_INTERVAL = "* * * * *"; // every minute
 let isRunning = false;
 
-/** UTC-midnight timestamp for the day containing `date`. */
-const utcDayStart = (date = new Date()) => {
-  const d = new Date(date);
-  d.setUTCHours(0, 0, 0, 0);
-  return d;
+export const runPushSweep = async (now = new Date()) => {
+  if (isRunning) return;
+  isRunning = true;
+  const startedAt = Date.now();
+  try {
+    const settings = await prisma.pushSetting.findMany({ where: { dailyVerseReminder: true } });
+    const due = settings.map(setting => ({ setting, occurrence: dueReminder(setting, now) }))
+      .filter(item => item.occurrence);
+    const verses = new Map();
+    let next = 0;
+    const worker = async () => {
+      while (next < due.length) {
+        const { setting, occurrence } = due[next++];
+        let claimed = false;
+        let accepted = false;
+        try {
+          if (!verses.has(occurrence.day)) verses.set(occurrence.day, getTodaysVerseForPush(occurrence.day));
+          const verse = await verses.get(occurrence.day);
+          if (!verse) continue;
+          if (!dueReminder(setting, new Date(now.getTime() + Date.now() - startedAt))) continue;
+          // Compare-and-set also prevents two backend instances sending the
+          // same user/day simultaneously. Failed sends release this claim.
+          const claim = await prisma.pushSetting.updateMany({
+            where: { userId: setting.userId, lastPushedOn: setting.lastPushedOn,
+              reminderTime: setting.reminderTime, timezone: setting.timezone, dailyVerseReminder: true },
+            data: { lastPushedOn: now },
+          });
+          if (!claim.count) continue;
+          claimed = true;
+          const result = await sendToUsers([setting.userId], {
+            title: `Daily Verse — ${verse.reference}`,
+            body: verse.text || "Read today's daily verse.",
+            platforms: ["web"], ttlSeconds: 300,
+            data: { kind: "daily-verse", link: "/daily-verse", localDate: occurrence.day,
+              scheduledTime: setting.reminderTime, timezone: setting.timezone,
+              notificationId: `daily-verse-${occurrence.day}` },
+          });
+          accepted = result.acceptedUserIds?.includes(setting.userId) === true;
+          console.log("[PushScheduler]", JSON.stringify({ userId: setting.userId,
+            localDate: occurrence.day, timezone: setting.timezone, scheduledTime: setting.reminderTime,
+            delayMinutes: occurrence.delayMinutes, sentAt: now.toISOString(), accepted, sent: result.sent }));
+        } catch (error) {
+          console.error("[PushScheduler] reminder failed:", error.message);
+        } finally {
+          if (claimed && !accepted) {
+            await prisma.pushSetting.updateMany({
+              where: { userId: setting.userId, lastPushedOn: now },
+              data: { lastPushedOn: setting.lastPushedOn },
+            }).catch(error => console.error("[PushScheduler] claim release failed:", error.message));
+          }
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, due.length) }, worker));
+  } finally {
+    isRunning = false;
+  }
 };
 
 export const startPushScheduler = () => {
-  console.log("[PushScheduler] Daily-verse push sweep started (every minute)");
-  cron.schedule(CRON_INTERVAL, async () => {
-    if (isRunning) return;
-    isRunning = true;
-    try {
-      const now = new Date();
-      const today = utcDayStart(now);
-
-      const settings = await prisma.pushSetting.findMany({
-        where: {
-          dailyVerseReminder: true,
-          OR: [{ lastPushedOn: null }, { lastPushedOn: { lt: today } }],
-        },
-        select: { userId: true, reminderTime: true, timezone: true },
-      });
-      if (!settings.length) return;
-
-      // Keep only users whose LOCAL clock currently matches their reminder time.
-      const due = [];
-      for (const s of settings) {
-        try {
-          const formatter = new Intl.DateTimeFormat("en-GB", {
-            timeZone: s.timezone || "UTC",
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-          });
-          const [hour, minute] = formatter.format(now).split(":");
-          if (`${hour}:${minute}` === s.reminderTime) due.push(s);
-        } catch {
-          // Invalid timezone stored — skip rather than fail the whole sweep.
-        }
-      }
-      if (!due.length) return;
-
-      const verse = await getTodaysVerseForPush();
-      if (!verse) return;
-
-      const title = `Daily Verse — ${verse.reference}`;
-      const body = verse.text || "Read today's daily verse.";
-      const userIds = due.map((s) => s.userId);
-      const result = await sendToUsers(userIds, {
-        title,
-        body,
-        data: { kind: "daily-verse", link: "/daily-verse" },
-      });
-
-      // Mark only users with at least one delivered push as done for today.
-      if (result.sent > 0) {
-        await prisma.pushSetting.updateMany({
-          where: { userId: { in: userIds } },
-          data: { lastPushedOn: now },
-        });
-      }
-      console.log(
-        `[PushScheduler] ${result.disabled ? "Push disabled" : `Sent to ${result.sent} device(s)`}` +
-          ` for ${userIds.length} due user(s)`,
-      );
-    } catch (error) {
-      console.error("[PushScheduler] sweep error:", error.message);
-    } finally {
-      isRunning = false;
-    }
-  });
+  const run = () => runPushSweep().catch(error => console.error("[PushScheduler] sweep error:", error.message));
+  const task = cron.schedule("* * * * *", run);
+  void run();
+  console.log("[PushScheduler] Browser daily-verse sweep started (local calendar day, 5-minute catch-up)");
+  return task;
 };
