@@ -18,6 +18,8 @@ import { sendToUsers } from "../push/service.js";
 import { decodeAttachmentUpload, safeAttachmentName } from "./attachmentUpload.js";
 import {
   REALTIME_EVENTS,
+  emitToAdmins,
+  emitToUser,
   hasConnectedAdmins,
   hasConnectedUser,
   publishSupportEvent,
@@ -128,15 +130,34 @@ const notifySupportMessage = async (ticket, message, audience) => {
       : [ticket.userId].filter(id => id !== message.senderId);
     if (!ids.length) return;
     const path = audience === "admin" ? "/admin/support" : "/support";
-    await sendToUsers(ids, {
-      title: audience === "admin" ? `Support: ${ticket.subject}`.slice(0, 120) : "Exegesis Support replied",
-      body: "You have a new support message. Tap to open the conversation.",
+    const preview = String(message.body || "").replace(/\s+/g, " ").trim().slice(0, 140);
+    let imageUrl;
+    if (/\.(png|jpe?g|webp)(?:\?|$)/i.test(message.attachment || '')) {
+      try { imageUrl = new URL(message.attachment, process.env.BACKEND_URL || undefined).href; } catch { /* Client resolves relative media URLs. */ }
+    }
+    const title = audience === "admin"
+        ? `Support: ${ticket.subject}`.slice(0, 120)
+        : "Exegesis Support replied";
+    const body = preview || (message.attachment ? 'New attachment. Tap to view it.' : "You have a new support message. Tap to open the conversation.");
+    const result = await sendToUsers(ids, {
+      imageUrl,
+      title,
+      body,
       data: {
-        kind: "support-message", audience, ticketId: String(ticket.id),
-        messageId: String(message.id), notificationId: `support-message-${message.id}`,
+        kind: "support-message",
+        notificationTitle: title,
+        notificationBody: body,
+        audience,
+        screen: audience === "admin" ? "AdminSupport" : "SupportThread",
+        ticketId: String(ticket.id),
+        messageId: String(message.id),
+        notificationId: `support-message-${message.id}`,
+        ...(/\.(png|jpe?g|webp)(?:\?|$)/i.test(message.attachment || '') && { imageUrl: imageUrl || message.attachment }),
         link: `${path}?ticketId=${ticket.id}`,
       },
     });
+    console.info('[support:push]', { ticketId: String(ticket.id), messageId: String(message.id), audience,
+      sent: result?.sent ?? 0, disabled: result?.disabled === true });
   } catch (error) {
     // The message is already persisted; a notification outage cannot turn a
     // successful send into a retry that would duplicate the support message.
@@ -329,6 +350,29 @@ const emitTicketUpdate = (ticket) => {
   });
 };
 
+/**
+ * Tell the *sender* that their messages were delivered/read. `recipientRole`
+ * is the side that just opened the conversation, so the receipt always goes to
+ * the opposite room and its `messageIds` only contain the sender's messages.
+ */
+const emitSupportReceipt = (ticket, recipientRole, receipts) => {
+  if (!receipts?.changed || receipts.messageIds.length === 0) return;
+  const payload = {
+    ticketIds: [String(ticket.id)],
+    messageIds: receipts.messageIds.map(String),
+    ...(receipts.deliveredAt && {
+      deliveredAt: receipts.deliveredAt.toISOString(),
+    }),
+    ...(receipts.readAt && { readAt: receipts.readAt.toISOString() }),
+    at: new Date().toISOString(),
+  };
+  if (recipientRole === "user") {
+    emitToAdmins(REALTIME_EVENTS.supportReceipt, payload);
+  } else {
+    emitToUser(ticket.userId, REALTIME_EVENTS.supportReceipt, payload);
+  }
+};
+
 const userSelect = {
   id: true,
   firstName: true,
@@ -358,7 +402,14 @@ const markMessagesReceived = async (ticket, recipientRole, markRead) => {
   const messageIds = ticket.messages
     .filter((message) => message.senderRole === senderRole)
     .map((message) => message.id);
-  if (messageIds.length === 0) return false;
+  if (messageIds.length === 0) {
+    return {
+      changed: false,
+      messageIds: [],
+      deliveredAt: null,
+      readAt: null,
+    };
+  }
 
   const now = new Date();
   const delivered = await withDbRetry(() =>
@@ -381,16 +432,23 @@ const markMessagesReceived = async (ticket, recipientRole, markRead) => {
       )
     : [];
 
+  const deliveredIds = new Set(delivered.map((message) => String(message.id)));
+  const readIds = new Set(read.map((message) => String(message.id)));
   if (delivered.length > 0 || read.length > 0) {
-    const deliveredIds = new Set(delivered.map((message) => String(message.id)));
-    const readIds = new Set(read.map((message) => String(message.id)));
     for (const message of ticket.messages) {
       if (message.senderRole !== senderRole) continue;
       if (deliveredIds.has(String(message.id))) message.deliveredAt = now;
       if (readIds.has(String(message.id))) message.readAt = now;
     }
   }
-  return delivered.length > 0 || read.length > 0;
+
+  const changedIds = new Set([...deliveredIds, ...readIds]);
+  return {
+    changed: changedIds.size > 0,
+    messageIds: messageIds.filter((id) => changedIds.has(String(id))),
+    deliveredAt: delivered.length > 0 ? now : null,
+    readAt: read.length > 0 ? now : null,
+  };
 };
 
 // ─── Attachments ─────────────────────────────────────────────────────────────
@@ -567,7 +625,7 @@ export const getTicket = async (data, userId) => {
   }
 
   const markRead = data?.markRead !== false;
-  const receiptsChanged = await markMessagesReceived(ticket, "user", markRead);
+  const receipts = await markMessagesReceived(ticket, "user", markRead);
   let unreadChanged = false;
   if (ticket.userUnread && markRead) {
     const result = await withDbRetry(() =>
@@ -586,7 +644,10 @@ export const getTicket = async (data, userId) => {
     }
   }
   const currentTicket = await findTicketOrFail(ticket.id) ?? ticket;
-  if (receiptsChanged || unreadChanged) emitTicketUpdate(currentTicket);
+  if (receipts.changed || unreadChanged) {
+    emitSupportReceipt(currentTicket, "user", receipts);
+    emitTicketUpdate(currentTicket);
+  }
 
   return {
     status: 200,
@@ -739,7 +800,7 @@ export const getAdminTicket = async (data) => {
   if (!ticket) return { status: 404, message: "Conversation not found" };
 
   const markRead = data?.markRead !== false;
-  const receiptsChanged = await markMessagesReceived(ticket, "admin", markRead);
+  const receipts = await markMessagesReceived(ticket, "admin", markRead);
   let unreadChanged = false;
   if (ticket.adminUnread && markRead) {
     const result = await withDbRetry(() =>
@@ -758,7 +819,10 @@ export const getAdminTicket = async (data) => {
     }
   }
   const currentTicket = await findTicketOrFail(ticket.id) ?? ticket;
-  if (receiptsChanged || unreadChanged) emitTicketUpdate(currentTicket);
+  if (receipts.changed || unreadChanged) {
+    emitSupportReceipt(currentTicket, "admin", receipts);
+    emitTicketUpdate(currentTicket);
+  }
 
   return {
     status: 200,

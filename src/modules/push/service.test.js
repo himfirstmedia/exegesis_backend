@@ -128,6 +128,19 @@ describe("push sending", () => {
     );
   });
 
+  test('includes a support image in native notification payloads', async () => {
+    prisma.pushToken.findMany.mockResolvedValue([{ token: 'device', userId: 'user-1' }]);
+    mockSendEach.mockResolvedValue({ successCount: 1, responses: [{ success: true }] });
+    const imageUrl = 'https://api.example.test/media/support/image.jpg';
+    await sendToUsers(['user-1'], { title: 'Support', body: 'Photo', imageUrl,
+      data: { kind: 'support-message', ticketId: '7', imageUrl } });
+    const payload = mockSendEach.mock.calls[0][0][0];
+    expect(payload.notification.imageUrl).toBe(imageUrl);
+    expect(payload.apns.fcmOptions.imageUrl).toBe(imageUrl);
+    expect(payload.apns.payload.aps.mutableContent).toBe(true);
+    expect(payload.data.ticketId).toBe('7');
+  });
+
   test("no-ops for empty user lists without touching FCM", async () => {
     const result = await sendToUsers([], { title: "x", body: "y" });
     expect(result).toEqual({ sent: 0, pruned: 0, acceptedUserIds: [] });

@@ -155,7 +155,7 @@ const MAX_TOKENS_PER_BATCH = 500;
  * Prunes tokens that FCM reports as invalid/unregistered.
  * Returns { sent, pruned } — counts only (never throws).
  */
-export const sendToUsers = async (userIds, { title, body, data = {}, platforms, ttlSeconds = 86400 }) => {
+export const sendToUsers = async (userIds, { title, body, imageUrl, data = {}, platforms, ttlSeconds = 86400 }) => {
   if (!initFirebaseAdmin()) {
     return { sent: 0, pruned: 0, acceptedUserIds: [], disabled: true };
   }
@@ -184,14 +184,15 @@ export const sendToUsers = async (userIds, { title, body, data = {}, platforms, 
       const response = await getMessaging().sendEach(
         batch.map(({ token }) => ({
           token,
-          notification: { title, body },
+          notification: { title, body, ...(imageUrl && { imageUrl }) },
           android: {
             priority: "high", ttl: ttlSeconds * 1000,
             notification: { channelId: "exegesis-default", sound: "default", tag },
           },
           apns: {
             headers: { "apns-priority": "10", "apns-push-type": "alert", "apns-expiration": String(Math.floor(Date.now() / 1000) + ttlSeconds) },
-            payload: { aps: { sound: "default" } },
+            payload: { aps: { sound: "default", ...(imageUrl && { mutableContent: true }) } },
+            ...(imageUrl && { fcmOptions: { imageUrl } }),
           },
           webpush: {
             headers: { Urgency: "high", TTL: String(ttlSeconds) },

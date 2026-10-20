@@ -9,6 +9,7 @@ export const REALTIME_EVENTS = {
   // Server → client
   supportMessage: "support:message",
   supportReceipt: "support:receipt",
+  supportPresence: "support:presence",
   supportTicketUpdated: "support:ticket:updated",
   supportUnread: "support:unread",
   // Existing generic channel kept for the app's notification bridge.

@@ -3,6 +3,12 @@ import jwt from "jsonwebtoken";
 import { io as connectClient } from "socket.io-client";
 import { prisma } from "../config/db.js";
 import { emitToUser, getIO, initRealtime } from "./index.js";
+import { getTicket, getAdminTicket } from '../modules/support/service.js';
+
+jest.mock('../modules/support/service.js', () => ({
+  getTicket: jest.fn(),
+  getAdminTicket: jest.fn(),
+}));
 
 jest.mock("../config/db.js", () => ({
   prisma: {
@@ -112,5 +118,61 @@ describe("realtime socket authentication", () => {
     });
     reader.disconnect();
     admin.disconnect();
+  });
+
+  it('syncs a reader snapshot and attachments using the authenticated identity', async () => {
+    prisma.systemUser.findUnique.mockResolvedValue({ status: true, accountStatus: 'active', userRole: 2 });
+    getTicket.mockResolvedValue({ status: 200, data: {
+      id: '7', userId: 'reader-sync', messages: [{ id: '8', attachment: '/media/support/photo.jpg' }],
+    } });
+    const client = await connect(tokenFor({ id: 'reader-sync', userRole: 1 }));
+    try {
+      const result = await new Promise(resolve => client.emit('support:sync', { ticketId: 7, markRead: true, userId: 'someone-else' }, resolve));
+      expect(getTicket).toHaveBeenCalledWith({ ticketId: '7', markRead: true }, 'reader-sync');
+      expect(result).toMatchObject({ status: 200, presence: { userOnline: true }, data: { messages: [{ attachment: '/media/support/photo.jpg' }] } });
+    } finally { client.disconnect(); }
+  });
+
+  it('reports app-wide reader presence without opening a support thread', async () => {
+    prisma.systemUser.findUnique.mockResolvedValue({ status: true, accountStatus: 'active', userRole: 1 });
+    const admin = await connect(tokenFor({ id: 'presence-admin' }));
+    const waitForReader = (isOnline) => new Promise(resolve => {
+      const listener = payload => {
+        if (payload.userId !== 'presence-reader' || payload.userOnline !== isOnline) return;
+        admin.off('support:presence', listener);
+        resolve(payload);
+      };
+      admin.on('support:presence', listener);
+    });
+    try {
+      prisma.systemUser.findUnique.mockResolvedValue({ status: true, accountStatus: 'active', userRole: 2 });
+      const online = waitForReader(true);
+      const reader = await connect(tokenFor({ id: 'presence-reader' }));
+      await expect(online).resolves.toMatchObject({ userId: 'presence-reader', userOnline: true });
+      const offline = waitForReader(false);
+      reader.disconnect();
+      await expect(offline).resolves.toMatchObject({ userId: 'presence-reader', userOnline: false });
+    } finally { admin.disconnect(); }
+  });
+
+  it('returns access denial without disclosing presence for another ticket', async () => {
+    prisma.systemUser.findUnique.mockResolvedValue({ status: true, accountStatus: 'active', userRole: 2 });
+    getTicket.mockResolvedValue({ status: 404, message: 'Conversation not found' });
+    const client = await connect(tokenFor({ id: 'reader-private' }));
+    try {
+      const result = await new Promise(resolve => client.emit('support:sync', { ticketId: 9 }, resolve));
+      expect(result).toEqual({ status: 404, message: 'Conversation not found' });
+    } finally { client.disconnect(); }
+  });
+
+  it('uses the admin service only for a current database admin', async () => {
+    prisma.systemUser.findUnique.mockResolvedValue({ status: true, accountStatus: 'active', userRole: 1 });
+    getAdminTicket.mockResolvedValue({ status: 200, data: { id: '7', userId: 'reader-sync', messages: [] } });
+    const client = await connect(tokenFor({ id: 'admin-sync' }));
+    try {
+      const result = await new Promise(resolve => client.emit('support:sync', { ticketId: 7, markRead: true }, resolve));
+      expect(getAdminTicket).toHaveBeenCalledWith({ ticketId: '7', markRead: true });
+      expect(result).toMatchObject({ status: 200, presence: { adminOnline: true } });
+    } finally { client.disconnect(); }
   });
 });

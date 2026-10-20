@@ -140,6 +140,44 @@ export const initRealtime = (httpServer) => {
   io.on("connection", (socket) => {
     const user = socket.data.user;
     joinRooms(socket, user);
+    // App-wide connectivity, not whether the Support screen is open.
+    const publishPresence = () => {
+      emitToAdmins(REALTIME_EVENTS.supportPresence, {
+        userId: String(user.id), userOnline: hasConnectedUser(user.id),
+      });
+      if (Number(user.userRole) === 1) {
+        io.emit(REALTIME_EVENTS.supportPresence, { adminOnline: hasConnectedAdmins() });
+      }
+    };
+    publishPresence();
+    socket.emit(REALTIME_EVENTS.supportPresence, { adminOnline: hasConnectedAdmins() });
+    // Reuse the same ownership checks and receipt writes as REST. A reconnect
+    // fetches a durable snapshot, rather than assuming socket events replay.
+    socket.on("support:sync", async (payload, acknowledge) => {
+      if (typeof acknowledge !== "function") return;
+      try {
+        const ticketId = String(payload?.ticketId ?? "");
+        if (!/^[1-9]\d*$/.test(ticketId)) {
+          acknowledge({ status: 400, message: "Invalid conversation" });
+          return;
+        }
+        const { getTicket, getAdminTicket } = await import("../modules/support/service.js");
+        const data = { ticketId, markRead: payload?.markRead === true };
+        const result = Number(user.userRole) === 1
+          ? await getAdminTicket(data)
+          : await getTicket(data, user.id);
+        if (result.status === 200) {
+          result.presence = {
+            userOnline: hasConnectedUser(result.data.userId),
+            adminOnline: hasConnectedAdmins(),
+          };
+        }
+        acknowledge(result);
+      } catch (error) {
+        console.warn("[realtime] Support sync failed:", error.message);
+        acknowledge({ status: 503, message: "Conversation sync unavailable" });
+      }
+    });
     markWaitingMessagesDelivered(user).catch((error) => {
       console.warn("[realtime] Failed to update support delivery receipts:", error.message);
     });
@@ -167,7 +205,7 @@ export const initRealtime = (httpServer) => {
     });
 
     socket.on("client:unsubscribe", () => {});
-    socket.on("disconnect", () => {});
+    socket.on("disconnect", publishPresence);
   });
 
   console.log("[realtime] Socket.IO server ready on /socket.io");

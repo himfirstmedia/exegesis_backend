@@ -1,6 +1,7 @@
 import { prisma } from '../../config/db.js';
 import { uploadObject } from '../../services/objectStorage.js';
 import { sendToUsers } from '../push/service.js';
+import { emitToAdmins, emitToUser } from '../../realtime/index.js';
 import {
   adminReply,
   createTicket,
@@ -52,6 +53,20 @@ jest.mock('../../services/objectStorage.js', () => ({
 
 jest.mock('../push/service.js', () => ({
   sendToUsers: jest.fn().mockResolvedValue({ sent: 0, pruned: 0 }),
+}));
+
+jest.mock('../../realtime/index.js', () => ({
+  REALTIME_EVENTS: {
+    supportMessage: 'support:message',
+    supportReceipt: 'support:receipt',
+    supportTicketUpdated: 'support:ticket:updated',
+    supportUnread: 'support:unread',
+  },
+  emitToAdmins: jest.fn(),
+  emitToUser: jest.fn(),
+  hasConnectedAdmins: jest.fn(() => false),
+  hasConnectedUser: jest.fn(() => false),
+  publishSupportEvent: jest.fn(),
 }));
 
 // 1x1 transparent PNG — a real image body so the magic-byte check passes.
@@ -205,6 +220,30 @@ describe('getTicket', () => {
       select: { id: true },
     });
   });
+
+  it('pushes read receipts back to the admin room when the user opens a thread', async () => {
+    prisma.supportTicket.findUnique.mockResolvedValue(makeTicket({
+      messages: [{
+        ...makeTicket().messages[0],
+        id: 2,
+        senderId: ADMIN_ID,
+        senderRole: 'admin',
+      }],
+    }));
+    prisma.supportMessage.updateManyAndReturn.mockResolvedValue([{ id: 2 }]);
+
+    await getTicket({ ticketId: 7 }, USER_ID);
+
+    expect(emitToAdmins).toHaveBeenCalledWith(
+      'support:receipt',
+      expect.objectContaining({
+        messageIds: ['2'],
+        ticketIds: ['7'],
+        deliveredAt: expect.any(String),
+        readAt: expect.any(String),
+      }),
+    );
+  });
 });
 
 describe('replyToTicket', () => {
@@ -252,7 +291,11 @@ describe('replyToTicket', () => {
 
   it('pushes a support-message notification to admins on a user reply', async () => {
     prisma.systemUser.findMany.mockResolvedValue([{ id: ADMIN_ID, email: 'admin@test.local' }]);
-    prisma.supportMessage.create.mockResolvedValue({ id: 22, senderId: USER_ID });
+    prisma.supportMessage.create.mockResolvedValue({
+      id: 22,
+      senderId: USER_ID,
+      body: 'Any update?',
+    });
     prisma.supportTicket.update.mockResolvedValue({});
     prisma.supportTicket.findUnique
       .mockResolvedValueOnce(makeTicket({ status: 'open' }))
@@ -263,9 +306,11 @@ describe('replyToTicket', () => {
     expect(sendToUsers).toHaveBeenCalledWith(
       [ADMIN_ID],
       expect.objectContaining({
+        body: 'Any update?',
         data: expect.objectContaining({
           kind: 'support-message',
           audience: 'admin',
+          screen: 'AdminSupport',
           ticketId: '7',
           messageId: '22',
           link: '/admin/support?ticketId=7',
@@ -623,6 +668,24 @@ describe('getAdminTicket', () => {
     });
     expect(result.data.messages[0].deliveredAt).toBe(deliveredAt.toISOString());
     expect(result.data.messages[0].readAt).toEqual(expect.any(String));
+  });
+
+  it('pushes read receipts to the ticket owner when an admin opens the thread', async () => {
+    prisma.supportTicket.findUnique.mockResolvedValue(makeTicket({ adminUnread: false }));
+    prisma.supportMessage.updateManyAndReturn.mockResolvedValue([{ id: 1 }]);
+
+    await getAdminTicket({ ticketId: 7 });
+
+    expect(emitToUser).toHaveBeenCalledWith(
+      USER_ID,
+      'support:receipt',
+      expect.objectContaining({
+        messageIds: ['1'],
+        ticketIds: ['7'],
+        deliveredAt: expect.any(String),
+        readAt: expect.any(String),
+      }),
+    );
   });
 });
 

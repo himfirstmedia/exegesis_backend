@@ -10,7 +10,6 @@ let isRunning = false;
 export const runPushSweep = async (now = new Date()) => {
   if (isRunning) return;
   isRunning = true;
-  const startedAt = Date.now();
   try {
     const settings = await prisma.pushSetting.findMany({ where: { dailyVerseReminder: true } });
     const due = settings.map(setting => ({ setting, occurrence: dueReminder(setting, now) }))
@@ -26,7 +25,9 @@ export const runPushSweep = async (now = new Date()) => {
           if (!verses.has(occurrence.day)) verses.set(occurrence.day, getTodaysVerseForPush(occurrence.day));
           const verse = await verses.get(occurrence.day);
           if (!verse) continue;
-          if (!dueReminder(setting, new Date(now.getTime() + Date.now() - startedAt))) continue;
+          // Do not re-evaluate against wall-clock drift: `set` was already
+          // derived from the sweep time and the compare-and-set below is the
+          // authority for exactly-one-send across instances.
           // Compare-and-set also prevents two backend instances sending the
           // same user/day simultaneously. Failed sends release this claim.
           const claim = await prisma.pushSetting.updateMany({
