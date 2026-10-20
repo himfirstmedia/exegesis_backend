@@ -1,0 +1,29 @@
+# Exegesis Backend
+
+Shared Express/Prisma/PostgreSQL API for the Exegesis mobile and web applications.
+
+## Documentation
+
+- [Complete backend and integrations manual](docs/PLATFORM_GUIDE.md).
+- [R2 account migration and verification](docs/R2_ACCOUNT_MIGRATION.md).
+- [Existing API reference](docs/API.md); verify endpoint details against current routers.
+- [Cross-platform documentation and PDF export instructions](../PROJECT_DOCUMENTATION.md).
+
+The platform manual covers Google/JWT authentication, Scripture catalogues,
+user data, study resources, plans, Lab, journal/export, trivia, support/realtime,
+Cloudflare R2, Firebase push, Stripe, email, translation and narration.
+
+## Development
+
+Configure a local ignored `.env` using `.env.example` and provision the database
+and required content. From this directory:
+
+```bash
+npm install
+npx prisma generate
+npm run dev
+```
+
+Tests: `npm test`. The production `npm start` script currently applies
+`prisma db push` before starting the service; review the platform manual before
+using that startup behavior against a production database.
