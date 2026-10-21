@@ -1,7 +1,7 @@
 import { serializeBigInt } from '../../utils/helpers.js';
 import { prisma } from '../../config/db.js';
 import { cache } from '../../services/cacheService.js';
-import { getVerse } from '../bible-translations/service.js';
+import { getVerse, getCatalog } from '../bible-translations/service.js';
 import { normalizeLanguage, translateMany, translateResult } from '../../utils/translator.js';
 
 const CACHE_TTL = 86400;
@@ -866,6 +866,17 @@ async function countAvailableTranslations(bookName, chapter, verseNumber) {
   return found.filter(Boolean).length;
 }
 
+/**
+ * Compare the same verse across the available Bible translations.
+ *
+ * The comparison is drawn from the real catalogue rather than a fixed list,
+ * so the reader sees the passage in every language the app ships. Each entry
+ * carries its language so the app can group the list by language and open
+ * one group at a time.
+ *
+ * Translations whose verse cannot be read are skipped: a catalogue entry can
+ * exist while its XML is missing a particular book.
+ */
 export const compareTranslations = async (data) => {
   try {
     const { bookName, chapter, verseNumber, lang = 'en' } = data;
@@ -873,22 +884,29 @@ export const compareTranslations = async (data) => {
       return { status: 400, message: 'bookName, chapter, and verseNumber are required' };
     }
 
-    const translations = [{"id":"KJV","name":"King James Version","abbr":"KJV"},{"id":"NIV","name":"New International Version","abbr":"NIV"},{"id":"ESV","name":"English Standard Version","abbr":"ESV"},{"id":"NASB","name":"New American Standard Bible","abbr":"NASB"},{"id":"NLT","name":"New Living Translation","abbr":"NLT"},{"id":"BSB","name":"Berean Study Bible","abbr":"BSB"},{"id":"NKJ","name":"New King James Version","abbr":"NKJV"},{"id":"CSB","name":"Christian Standard Bible","abbr":"CSB"},{"id":"ASV","name":"American Standard Version","abbr":"ASV"},{"id":"YLT","name":"Young's Literal Translation","abbr":"YLT"}];
+    const catalog = getCatalog();
     const results = [];
 
-    for (const t of translations) {
+    for (const entry of catalog) {
       try {
-        const verse = await getVerse(t.id, bookName, Number(chapter), Number(verseNumber));
+        const verse = await getVerse(
+          entry.id,
+          bookName,
+          Number(chapter),
+          Number(verseNumber),
+        );
         if (verse) {
           results.push({
-            version: t.name,
-            abbreviation: t.abbr,
-            id: t.id,
+            version: entry.name,
+            abbreviation: entry.abbreviation,
+            id: entry.id,
+            language: entry.language,
+            languageName: entry.languageName,
             text: verse.text || '',
           });
         }
       } catch (err) {
-        // Translation not available, skip silently
+        // Translation not available for this verse, skip silently.
       }
     }
 
