@@ -1,4 +1,7 @@
 import { normalizeLanguage, translateMany } from '../../utils/translator.js';
+import {
+  withContentLanguage,
+} from '../../utils/contentLanguage.js';
 
 const STRONGS_FIELDS = new Set([
   'shortDefinition',
@@ -29,7 +32,7 @@ const translateFields = async (value, fields, lang) => {
   if (texts.length === 0) return value;
 
   try {
-    const translated = await translateMany(texts, target);
+    const translated = await translateMany(texts, target, { throwOnFailure: true });
     let index = 0;
     const rebuild = (current) => {
       if (Array.isArray(current)) return current.map(rebuild);
@@ -46,27 +49,36 @@ const translateFields = async (value, fields, lang) => {
       }
       return changed ? result : current;
     };
-    return rebuild(value);
+    return withContentLanguage(rebuild(value), target);
   } catch (error) {
     console.warn(`[strongs] Translation to ${target} failed:`, error.message);
     return value;
   }
 };
 
-export const translateStrongsData = (data, lang) => translateFields(data, STRONGS_FIELDS, lang);
+export const translateStrongsData = async (data, lang) => {
+  const target = normalizeLanguage(lang);
+  if (!data || target.toLowerCase() === 'en') {
+    return data;
+  }
+  const translated = await translateFields(data, STRONGS_FIELDS, target);
+  return translated;
+};
 
 export const translateBibleTopics = async (data, lang) => {
   const target = normalizeLanguage(lang);
-  if (target.toLowerCase() === 'en' || data == null) return data;
+  if (!data || target.toLowerCase() === 'en') {
+    return data;
+  }
 
   const topics = Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : [data];
   const texts = topics.flatMap((topic) => ['topicName', 'description']
     .map((field) => topic?.[field])
     .filter((text) => typeof text === 'string' && text.length > 0));
-  if (texts.length === 0) return data;
+  if (texts.length === 0) return withContentLanguage(data, target);
 
   try {
-    const translated = await translateMany(texts, target);
+    const translated = await translateMany(texts, target, { throwOnFailure: true });
     let index = 0;
     const translatedTopics = topics.map((topic) => {
       let changed = false;
@@ -80,9 +92,11 @@ export const translateBibleTopics = async (data, lang) => {
       return changed ? result : topic;
     });
 
-    if (Array.isArray(data)) return translatedTopics;
-    if (Array.isArray(data.data)) return { ...data, data: translatedTopics };
-    return translatedTopics[0];
+    if (Array.isArray(data)) return withContentLanguage(translatedTopics, target);
+    if (Array.isArray(data.data)) {
+      return withContentLanguage({ ...data, data: translatedTopics }, target);
+    }
+    return withContentLanguage(translatedTopics[0], target);
   } catch (error) {
     console.warn(`[strongs] Translation to ${target} failed:`, error.message);
     return data;

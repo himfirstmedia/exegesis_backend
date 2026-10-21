@@ -1,6 +1,7 @@
 import { prisma } from '../../config/db.js';
 import { serializeBigInt } from '../../utils/helpers.js';
 import { normalizeLanguage, translateMany } from '../../utils/translator.js';
+import { withContentLanguage } from '../../utils/contentLanguage.js';
 
 const TRANSLATABLE_FIELDS = [
   'summary',
@@ -80,7 +81,7 @@ const getTranslationTimeoutMs = () => {
 const translateWithinBudget = async (values, target) => {
   let timeout;
   const result = await Promise.race([
-    translateMany(values, target),
+    translateMany(values, target, { throwOnFailure: true }).catch(() => null),
     new Promise((resolve) => {
       timeout = setTimeout(() => resolve(null), getTranslationTimeoutMs());
     }),
@@ -156,7 +157,7 @@ const translateBookPrologue = async (prologue, lang = 'en') => {
   const values = await translateWithinBudget(entries.map(entry => entry.value), target);
   if (!values) return prologue;
   entries.forEach((entry, index) => entry.setValue(values[index]));
-  return translated;
+  return withContentLanguage(translated, target);
 };
 
 export const getBookPrologue = async (body) => {

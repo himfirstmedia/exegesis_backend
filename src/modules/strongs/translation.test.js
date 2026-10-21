@@ -59,7 +59,7 @@ describe('Strongs display translation', () => {
       'Dictionary explanation',
       'Verse note',
       'Reference explanation',
-    ], 'es');
+    ], 'es', { throwOnFailure: true });
     expect(result.data[0]).toEqual(expect.objectContaining({
       id: 17,
       strongsId: 'G3056',
@@ -110,6 +110,7 @@ describe('Strongs display translation', () => {
     const result = await translateBibleTopics(source, 'es');
 
     expect(result).toEqual({
+      contentLanguage: 'es',
       data: [{
         id: 3,
         topicName: 'ES:Grace',

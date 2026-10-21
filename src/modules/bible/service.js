@@ -14,6 +14,10 @@ import {
   translateDailyExegesisContent,
   translateDailyVerseContent,
 } from "./dailyContentTranslation.js";
+import {
+  SOURCE_LANGUAGE,
+  withContentLanguage,
+} from "../../utils/contentLanguage.js";
 
 // Daily verses always need displayable text. If the stored bibleVersion has no
 // bundled XML (e.g. "WEB" from the app's local JSON list) we fall back to KJV
@@ -758,12 +762,64 @@ const verseExplanationCacheKey = (bookName, chapter, verseNumber) =>
 
 const dailyTranslationInFlight = new Map();
 
+/**
+ * In-process fallback for the Redis-backed translation cache.
+ *
+ * Redis is the intended store, but it is optional infrastructure: without it
+ * `cache.get` always misses and every request would re-translate the same
+ * daily content. This map keeps recent translations for the lifetime of the
+ * process so a single backend instance still avoids repeat work.
+ */
+const DAILY_TRANSLATION_MEMORY_MAX = 200;
+const dailyTranslationMemory = new Map();
+
+const readDailyTranslationMemory = (cacheKey) => {
+  const entry = dailyTranslationMemory.get(cacheKey);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    dailyTranslationMemory.delete(cacheKey);
+    return null;
+  }
+  // Refresh LRU position.
+  dailyTranslationMemory.delete(cacheKey);
+  dailyTranslationMemory.set(cacheKey, entry);
+  return entry.value;
+};
+
+const writeDailyTranslationMemory = (cacheKey, value, ttlSeconds) => {
+  if (dailyTranslationMemory.has(cacheKey)) {
+    dailyTranslationMemory.delete(cacheKey);
+  }
+  while (dailyTranslationMemory.size >= DAILY_TRANSLATION_MEMORY_MAX) {
+    dailyTranslationMemory.delete(dailyTranslationMemory.keys().next().value);
+  }
+  dailyTranslationMemory.set(cacheKey, {
+    value,
+    expiresAt: Date.now() + ttlSeconds * 1000,
+  });
+};
+
 const dailyTranslationSourceKey = (record) => {
   const updated = record?.updatedOn || record?.displayDate || "unknown";
   const timestamp = new Date(updated).getTime();
   return `${record?.id ?? "unknown"}:${Number.isFinite(timestamp) ? timestamp : "unknown"}`;
 };
 
+/**
+ * Return the daily content translated into `language`.
+ *
+ * The previous behaviour translated in the background and always answered
+ * with English (`contentLanguage: "en"`). That made the app translate the
+ * same content a second time on the client for every fresh language, and —
+ * because the cache is only a real cache when Redis is reachable — it
+ * repeated that cost on every request.
+ *
+ * Now the translation is awaited within the shared time budget, so the
+ * response is already in the requested language and the app can skip its
+ * own translation pass. A failed or over-budget translation still returns
+ * canonical English, correctly marked as English, so the app knows it has
+ * to translate the payload itself.
+ */
 const getCachedDailyTranslationOrWarm = async ({
   cacheKey,
   sourceResult,
@@ -773,15 +829,18 @@ const getCachedDailyTranslationOrWarm = async ({
   const cached = await cache.get("bible", cacheKey);
   if (cached) return cached;
 
+  const inMemory = readDailyTranslationMemory(cacheKey);
+  if (inMemory) return inMemory;
+
   if (!dailyTranslationInFlight.has(cacheKey)) {
     const operation = (async () => {
       const translated = {
         ...sourceResult,
         data: await translate(sourceResult.data, language, {
           throwOnFailure: true,
-          timeBudgetMs: 0,
         }),
       };
+      writeDailyTranslationMemory(cacheKey, translated, 1800);
       await cache.set("bible", cacheKey, translated, 1800);
     })()
       .catch(() => {})
@@ -789,9 +848,28 @@ const getCachedDailyTranslationOrWarm = async ({
     dailyTranslationInFlight.set(cacheKey, operation);
   }
 
+  // Do not hold the content API behind a cold translation provider. Give a
+  // warm/in-flight result a short head start; unfinished work still populates
+  // the caches and is deduplicated with client fallback at the provider layer.
+  let timer;
+  try {
+    await Promise.race([
+      dailyTranslationInFlight.get(cacheKey),
+      new Promise(resolve => { timer = setTimeout(resolve, 300); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const warm =
+    (await cache.get("bible", cacheKey)) || readDailyTranslationMemory(cacheKey);
+  if (warm) return warm;
+
+  // Translation failed or exceeded its budget: serve canonical English, but
+  // say so, so the app can translate the payload itself.
   return {
     ...sourceResult,
-    data: { ...sourceResult.data, contentLanguage: "en" },
+    data: withContentLanguage(sourceResult.data, SOURCE_LANGUAGE),
   };
 };
 
@@ -1438,7 +1516,10 @@ export const getVerseByDate = async (data) => {
           ...verseByDateResult,
           data: await translateDailyVerseContent(verseByDateResult.data, lang),
         }
-      : verseByDateResult;
+      : {
+          ...verseByDateResult,
+          data: withContentLanguage(verseByDateResult.data, SOURCE_LANGUAGE),
+        };
 
   return finalResult;
 };
@@ -1814,7 +1895,7 @@ export const getTodaysExegesis = async (data = {}) => {
   return {
     status: 200,
     message: "Today's exegesis fetched successfully",
-    data: exegesis,
+    data: withContentLanguage(exegesis, SOURCE_LANGUAGE),
   };
 };
 

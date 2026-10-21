@@ -38,9 +38,11 @@ describe('Bible heading translation', () => {
     expect(translateMany).toHaveBeenCalledWith(
       ['The Seventh Day', 'Man and Woman'],
       'fr',
+      { throwOnFailure: true },
     );
     expect(result).toEqual({
       ...data,
+      contentLanguage: 'fr',
       headings: [
         { verse: 1, heading: 'fr:The Seventh Day', reference: 'Genesis 2:1' },
         { verse: 4, heading: 'fr:Man and Woman', text: 'Scripture remains unchanged' },
@@ -67,10 +69,12 @@ describe('Bible heading translation', () => {
     expect(translateMany).toHaveBeenCalledWith(
       ['The Creation', 'The Seventh Day', 'Man and Woman'],
       'es',
+      { throwOnFailure: true },
     );
     expect(Object.keys(result.chapters)).toEqual(['1', '2']);
     expect(result).toEqual({
       ...data,
+      contentLanguage: 'es',
       chapters: {
         1: [{ verse: 1, heading: 'es:The Creation', reference: 'Genesis 1:1' }],
         2: [

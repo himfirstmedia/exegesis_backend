@@ -1,4 +1,7 @@
 import { normalizeLanguage, translateMany } from '../../utils/translator.js';
+import {
+  withContentLanguage,
+} from '../../utils/contentLanguage.js';
 
 const addText = (entries, value, setValue) => {
   if (typeof value === 'string' && value.trim()) {
@@ -27,13 +30,15 @@ const addOptions = (record, entries) => {
 
 const translateEntries = async (entries, lang) => {
   if (!entries.length) return;
-  const translated = await translateMany(entries.map(entry => entry.value), lang);
+  const translated = await translateMany(entries.map(entry => entry.value), lang, { throwOnFailure: true });
   translated.forEach((value, index) => entries[index]?.setValue(value));
 };
 
 export const translateTriviaQuestions = async (items, lang = 'en') => {
   const target = normalizeLanguage(lang);
-  if (!Array.isArray(items) || target.toLowerCase() === 'en') return items;
+  if (!Array.isArray(items) || target.toLowerCase() === 'en') {
+    return items;
+  }
 
   const translatedItems = items.map(item => ({ ...item }));
   const entries = [];
@@ -46,7 +51,7 @@ export const translateTriviaQuestions = async (items, lang = 'en') => {
 
   try {
     await translateEntries(entries, target);
-    return translatedItems;
+    return withContentLanguage(translatedItems, target);
   } catch (error) {
     console.warn(`[trivia] Translation to ${target} failed:`, error.message);
     return items;
@@ -61,7 +66,9 @@ export const translateTriviaQuestion = async (item, lang = 'en') => {
 
 export const translateSubmitResult = async (item, lang = 'en') => {
   const target = normalizeLanguage(lang);
-  if (!item || target.toLowerCase() === 'en') return item;
+  if (!item || target.toLowerCase() === 'en') {
+    return item;
+  }
 
   const translated = { ...item };
   const entries = [];
@@ -70,7 +77,7 @@ export const translateSubmitResult = async (item, lang = 'en') => {
 
   try {
     await translateEntries(entries, target);
-    return translated;
+    return withContentLanguage(translated, target);
   } catch (error) {
     console.warn(`[trivia] Translation to ${target} failed:`, error.message);
     return item;
@@ -79,17 +86,19 @@ export const translateSubmitResult = async (item, lang = 'en') => {
 
 export const translateTodaysTrivia = async (item, lang = 'en') => {
   const target = normalizeLanguage(lang);
-  if (!item || target.toLowerCase() === 'en') return item;
+  if (!item || target.toLowerCase() === 'en') {
+    return item;
+  }
 
   const translated = { ...item };
   const entries = [];
-  ['question', 'answerA', 'answerB', 'answerC', 'answerD'].forEach(field => {
+  ['question', 'answerA', 'answerB', 'answerC', 'answerD'].forEach((field) => {
     addText(entries, translated[field], value => { translated[field] = value; });
   });
 
   try {
     await translateEntries(entries, target);
-    return translated;
+    return withContentLanguage(translated, target);
   } catch (error) {
     console.warn(`[trivia] Translation to ${target} failed:`, error.message);
     return item;

@@ -53,7 +53,8 @@ describe('study tool translation', () => {
       'to love',
       'to welcome and love',
       'Lexicon explanation',
-    ], 'ar');
+    ], 'ar', { throwOnFailure: true });
+    expect(result[0].contentLanguage).toBe('ar');
     expect(result[0].label).toBe('AR:A command');
     expect(result[0].description).toBe('AR:Do this');
     expect(result[0].studyToolWords[0].adminExplanation).toBe('AR:Word explanation');

@@ -1,5 +1,6 @@
 import Redis from 'ioredis';
 
+const REDIS_URL = (process.env.REDIS_URL || '').trim();
 const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT) || 6379;
 const DEFAULT_TTL = parseInt(process.env.REDIS_CACHE_TTL) || 86400; // 24 hours default
@@ -7,18 +8,19 @@ const DEFAULT_TTL = parseInt(process.env.REDIS_CACHE_TTL) || 86400; // 24 hours 
 let client = null;
 let ready = false;
 let loggedError = false;
+let warnedUnavailable = false;
 
 const getClient = () => {
   if (!client) {
     try {
-      client = new Redis({
-        host: REDIS_HOST,
-        port: REDIS_PORT,
+      // REDIS_URL wins when present (Railway/Heroku provision it as a single
+      // connection string). Otherwise fall back to host/port.
+      const options = {
         maxRetriesPerRequest: 1,
         retryStrategy: (times) => {
           if (times > 2) {
             if (!loggedError) {
-              console.log('Redis retry limit exceeded, disabling cache');
+              warnIfUnavailable();
               loggedError = true;
             }
             return null;
@@ -26,7 +28,10 @@ const getClient = () => {
           return Math.min(times * 200, 2000);
         },
         connectTimeout: 5000,
-      });
+      };
+      client = REDIS_URL
+        ? new Redis(REDIS_URL, options)
+        : new Redis({ host: REDIS_HOST, port: REDIS_PORT, ...options });
 
       client.on('error', () => { ready = false; });
       client.on('ready', () => {
@@ -44,13 +49,31 @@ const getClient = () => {
 };
 
 /**
+ * The cache is load-bearing for the translation path, not merely an
+ * optimisation: without it every request re-translates the same content.
+ * Warn loudly once at boot so a missing REDIS_URL is not mistaken for
+ * "no cache configured" when it actually means "cache silently disabled".
+ */
+const warnIfUnavailable = () => {
+  if (warnedUnavailable) return;
+  warnedUnavailable = true;
+  console.warn(
+    '[cache] Redis is unavailable — the translation cache is disabled. ' +
+      'Set REDIS_URL (or REDIS_HOST/REDIS_PORT) to avoid re-translating the ' +
+      'same content on every request.',
+  );
+};
+
+/**
  * Get a value from the cache.
  * @param {string} namespace - A prefix for the cache key (e.g. 'translations', 'reading-plans')
  * @param {string} key - The unique key within the namespace
  * @returns {Promise<*>} Parsed cached data or null if miss/error
  */
 const get = async (namespace, key) => {
-  if (!ready) return null;
+  if (!ready) {
+    return null;
+  }
   try {
     const c = getClient();
     if (!c) return null;
@@ -77,7 +100,9 @@ const jsonSerialize = (data) => {
 };
 
 const set = async (namespace, key, data, ttl = DEFAULT_TTL) => {
-  if (!ready) return;
+  if (!ready) {
+    return;
+  }
   try {
     const c = getClient();
     if (!c) return;
@@ -120,7 +145,7 @@ const getOrSet = async (namespace, key, fetchFn, ttl = DEFAULT_TTL) => {
   return data;
 };
 
-export const cache = { get, set, getOrSet, del };
+export const cache = { get, set, getOrSet, del, isReady: () => ready };
 
 // Eagerly connect at module load. Without this the client is never created:
 // get/set short-circuit on `ready` before getClient() is ever called, so Redis

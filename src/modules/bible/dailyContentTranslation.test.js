@@ -123,7 +123,7 @@ describe("daily content translation", () => {
     translateMany.mockRejectedValueOnce(new Error("offline"));
     const item = { title: "Original", content: "Original content" };
 
-    await expect(translateDailyDevotionContent(item, "ar")).resolves.toBe(item);
+    await expect(translateDailyDevotionContent(item, "ar")).resolves.toEqual({ ...item, contentLanguage: "en" });
     warning.mockRestore();
   });
 
@@ -178,7 +178,7 @@ describe("daily content translation", () => {
 
     const promise = translateDailyDevotionContent(item, "ar");
     jest.advanceTimersByTime(51);
-    await expect(promise).resolves.toBe(item);
+    await expect(promise).resolves.toEqual({ ...item, contentLanguage: "en" });
     expect(translateMany).toHaveBeenCalled();
     warning.mockRestore();
   });

@@ -187,7 +187,9 @@ const translateRecord = async (
       );
     }
     if (throwOnFailure) throw error;
-    return item;
+    // Mark the payload as English explicitly: the caller (and the app) uses
+    // this to know the text still has to be translated.
+    return { ...item, contentLanguage: "en" };
   }
 };
 

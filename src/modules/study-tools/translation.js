@@ -1,4 +1,7 @@
 import { normalizeLanguage, translateMany } from '../../utils/translator.js';
+import {
+  withContentLanguage,
+} from '../../utils/contentLanguage.js';
 
 const addText = (entries, value, setValue) => {
   if (typeof value === 'string' && value.trim()) {
@@ -8,7 +11,9 @@ const addText = (entries, value, setValue) => {
 
 export const translateStudyTools = async (tools, lang = 'en') => {
   const target = normalizeLanguage(lang);
-  if (!Array.isArray(tools) || target.toLowerCase() === 'en') return tools;
+  if (!Array.isArray(tools) || target.toLowerCase() === 'en') {
+    return tools;
+  }
 
   const entries = [];
   const translated = tools.map((tool) => {
@@ -36,14 +41,14 @@ export const translateStudyTools = async (tools, lang = 'en') => {
     return nextTool;
   });
 
-  if (!entries.length) return translated;
+  if (!entries.length) return withContentLanguage(translated, target);
 
   try {
-    const translations = await translateMany(entries.map((entry) => entry.value), target);
+    const translations = await translateMany(entries.map((entry) => entry.value), target, { throwOnFailure: true });
     entries.forEach((entry, index) => {
       if (typeof translations[index] === 'string') entry.setValue(translations[index]);
     });
-    return translated;
+    return withContentLanguage(translated, target);
   } catch (error) {
     console.warn(`[study-tools] Translation to ${target} failed:`, error.message);
     return tools;

@@ -18,7 +18,7 @@ const translateHeadingLists = async (lists, target) => {
   });
 
   if (entries.length) {
-    const headings = await translateMany(entries.map((entry) => entry.heading), target);
+    const headings = await translateMany(entries.map((entry) => entry.heading), target, { throwOnFailure: true });
     headings.forEach((heading, index) => entries[index]?.setHeading(heading));
   }
 
@@ -31,7 +31,7 @@ export const translateChapterHeadings = async (data, lang = 'en') => {
 
   try {
     const [headings] = await translateHeadingLists([data.headings], target);
-    return { ...data, headings };
+    return { ...data, headings, contentLanguage: target };
   } catch (error) {
     console.warn(`[bible-translations] Heading translation to ${target} failed:`, error.message);
     return data;
@@ -55,7 +55,7 @@ export const translateBookHeadings = async (data, lang = 'en') => {
         translatedLists[index] ?? headings,
       ]),
     );
-    return { ...data, chapters };
+    return { ...data, chapters, contentLanguage: target };
   } catch (error) {
     console.warn(`[bible-translations] Heading translation to ${target} failed:`, error.message);
     return data;

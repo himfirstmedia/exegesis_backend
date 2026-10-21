@@ -44,9 +44,10 @@ describe('trivia response translation', () => {
       'David',
       'Paul',
       'Noah obeyed God.',
-    ], 'ar');
+    ], 'ar', { throwOnFailure: true });
     expect(result).toEqual({
       ...item,
+      contentLanguage: 'ar',
       question: 'AR:Who built the ark?',
       optionsJson: JSON.stringify(['AR:Noah', 'AR:Moses', 'AR:David', 'AR:Paul']),
       explanation: 'AR:Noah obeyed God.',
@@ -83,6 +84,7 @@ describe('trivia response translation', () => {
 
     await expect(translateSubmitResult(item, 'ar')).resolves.toEqual({
       ...item,
+      contentLanguage: 'ar',
       correctAnswerText: 'AR:Jerusalem',
       explanation: 'AR:Jerusalem is correct.',
     });
@@ -110,6 +112,7 @@ describe('trivia response translation', () => {
     expect(translateMany.mock.calls[0][0]).toEqual(['Question', 'A', 'B', 'C', 'D']);
     expect(result).toEqual({
       ...item,
+      contentLanguage: 'ar',
       question: 'AR:Question',
       answerA: 'AR:A',
       answerB: 'AR:B',
