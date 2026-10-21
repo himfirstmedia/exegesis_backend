@@ -867,12 +867,15 @@ async function countAvailableTranslations(bookName, chapter, verseNumber) {
 }
 
 /**
- * Compare the same verse across the available Bible translations.
+ * Compare the same verse across the Bible translations of one language.
  *
- * The comparison is drawn from the real catalogue rather than a fixed list,
- * so the reader sees the passage in every language the app ships. Each entry
- * carries its language so the app can group the list by language and open
- * one group at a time.
+ * The comparison is drawn from the real catalogue rather than a fixed list.
+ * It is scoped to the reader's language: a comparison only makes sense
+ * between renderings of the same language, and the catalogue holds several
+ * versions for English (KJV, BSB, ASV, ...) and one for most other
+ * languages.
+ *
+ * Each entry carries its language so the app can label the group.
  *
  * Translations whose verse cannot be read are skipped: a catalogue entry can
  * exist while its XML is missing a particular book.
@@ -884,7 +887,12 @@ export const compareTranslations = async (data) => {
       return { status: 400, message: 'bookName, chapter, and verseNumber are required' };
     }
 
-    const catalog = getCatalog();
+    // The app's `fil` code is Tagalog, which the catalogue calls `tl`.
+    const requested =
+      normalizeLanguage(lang) === 'fil' ? 'tl' : normalizeLanguage(lang);
+    const catalog = getCatalog().filter(
+      (entry) => !requested || entry.language === requested,
+    );
     const results = [];
 
     for (const entry of catalog) {
