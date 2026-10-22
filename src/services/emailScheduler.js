@@ -1,9 +1,15 @@
 import cron from "node-cron";
 import { processPendingMessages } from "../services/emailService.js";
+import { cache } from "../services/cacheService.js";
 import { isTransientDbError } from "../utils/dbRetry.js";
 
 // Run every 30 seconds under normal conditions.
 const CRON_INTERVAL = "*/30 * * * * *";
+// The distributed lock must outlive the slowest healthy run, but must also
+// expire quickly enough that a crashed instance cannot block the queue for
+// long. 2 minutes is comfortably above the 30s cadence.
+const LOCK_TTL_SECONDS = 120;
+const LOCK_NAME = "email-scheduler";
 // Exponential backoff when the database is unavailable: 1m → 2m → 4m → 5m cap.
 // Without this the scheduler hammered a dead connection pool every 30s during
 // outages, starving the API of connections (the P2024 "connection pool
@@ -19,47 +25,74 @@ const schedule = (seconds) => {
   nextAllowedRunAt = Date.now() + seconds * 1000;
 };
 
+/**
+ * One scheduler tick. Exported so tests can drive it without timers.
+ */
+export const runEmailSweep = async () => {
+  // Prevent overlapping runs inside this process. Set the flag before the
+  // lock round-trip so two ticks cannot both pass the check while awaiting.
+  if (isRunning) {
+    console.log("[EmailScheduler] Previous run still in progress, skipping...");
+    return;
+  }
+  // Backoff gate: skip ticks while waiting for the database to recover.
+  if (Date.now() < nextAllowedRunAt) return;
+
+  // Prevent two instances sending the same queued email. The lock is released
+  // in `finally`, so a healthy run never waits for the TTL.
+  isRunning = true;
+  const lock = await cache.acquireLock(LOCK_NAME, LOCK_TTL_SECONDS);
+  if (!lock.acquired) {
+    isRunning = false;
+    console.log("[EmailScheduler] Another instance is processing the queue, skipping...");
+    return;
+  }
+
+  try {
+    await processPendingMessages();
+    // Healthy run — clear any backoff.
+    if (backoffSeconds > 0) {
+      console.log("[EmailScheduler] Database recovered — resuming normal schedule");
+    }
+    backoffSeconds = 0;
+    nextAllowedRunAt = 0;
+  } catch (error) {
+    if (isTransientDbError(error)) {
+      backoffSeconds =
+        backoffSeconds === 0
+          ? BASE_BACKOFF_SECONDS
+          : Math.min(backoffSeconds * 2, MAX_BACKOFF_SECONDS);
+      schedule(backoffSeconds);
+      console.error(
+        `[EmailScheduler] Database unavailable — next attempt in ~${backoffSeconds}s`,
+      );
+    } else {
+      console.error("[EmailScheduler] Error:", error.message);
+    }
+  } finally {
+    isRunning = false;
+    await lock.release();
+  }
+};
+
 export const startEmailScheduler = () => {
   console.log(`Email scheduler started - running every 30 seconds`);
 
-  cron.schedule(CRON_INTERVAL, async () => {
-    // Prevent overlapping runs.
-    if (isRunning) {
-      console.log("[EmailScheduler] Previous run still in progress, skipping...");
-      return;
-    }
-    // Backoff gate: skip ticks while waiting for the database to recover.
-    if (Date.now() < nextAllowedRunAt) return;
-
-    isRunning = true;
-    try {
-      await processPendingMessages();
-      // Healthy run — clear any backoff.
-      if (backoffSeconds > 0) {
-        console.log("[EmailScheduler] Database recovered — resuming normal schedule");
-      }
-      backoffSeconds = 0;
-      nextAllowedRunAt = 0;
-    } catch (error) {
-      if (isTransientDbError(error)) {
-        backoffSeconds =
-          backoffSeconds === 0
-            ? BASE_BACKOFF_SECONDS
-            : Math.min(backoffSeconds * 2, MAX_BACKOFF_SECONDS);
-        schedule(backoffSeconds);
-        console.error(
-          `[EmailScheduler] Database unavailable — next attempt in ~${backoffSeconds}s`,
-        );
-      } else {
-        console.error("[EmailScheduler] Error:", error.message);
-      }
-    } finally {
-      isRunning = false;
-    }
+  cron.schedule(CRON_INTERVAL, () => {
+    runEmailSweep().catch((error) =>
+      console.error("[EmailScheduler] Unhandled sweep error:", error.message),
+    );
   });
 };
 
 export const stopEmailScheduler = () => {
   cron.stop();
   console.log("Email scheduler stopped");
+};
+
+/** Test-only: reset the in-process backoff state between cases. */
+export const __resetEmailSchedulerState = () => {
+  isRunning = false;
+  backoffSeconds = 0;
+  nextAllowedRunAt = 0;
 };

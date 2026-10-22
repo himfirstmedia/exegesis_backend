@@ -1,7 +1,12 @@
 const mockSendToUsers = jest.fn();
 const mockGetVerse = jest.fn();
+const mockAcquireLock = jest.fn();
 
 jest.mock("node-cron", () => ({ schedule: jest.fn() }));
+
+jest.mock("./cacheService.js", () => ({
+  cache: { acquireLock: (...args) => mockAcquireLock(...args) },
+}));
 
 jest.mock("../config/db.js", () => ({
   prisma: {
@@ -30,6 +35,11 @@ const dueSetting = (overrides = {}) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockAcquireLock.mockResolvedValue({
+    acquired: true,
+    degraded: false,
+    release: jest.fn().mockResolvedValue(undefined),
+  });
   prisma.pushSetting.updateMany.mockResolvedValue({ count: 1 });
   mockGetVerse.mockResolvedValue({ reference: "John 3:16", text: "For God so loved..." });
   mockSendToUsers.mockResolvedValue({ sent: 1, pruned: 0, acceptedUserIds: ["user-1"] });
@@ -92,5 +102,29 @@ describe("runPushSweep", () => {
     await runPushSweep(now);
 
     expect(mockSendToUsers).not.toHaveBeenCalled();
+  });
+
+  test("skips the sweep when another instance holds the distributed lock", async () => {
+    mockAcquireLock.mockResolvedValue({
+      acquired: false,
+      degraded: false,
+      release: jest.fn(),
+    });
+
+    await runPushSweep(now);
+
+    expect(mockAcquireLock).toHaveBeenCalledWith("push-scheduler", 240);
+    expect(prisma.pushSetting.findMany).not.toHaveBeenCalled();
+    expect(mockSendToUsers).not.toHaveBeenCalled();
+  });
+
+  test("releases the distributed lock after a sweep", async () => {
+    const release = jest.fn().mockResolvedValue(undefined);
+    mockAcquireLock.mockResolvedValue({ acquired: true, degraded: false, release });
+    prisma.pushSetting.findMany.mockResolvedValue([]);
+
+    await runPushSweep(now);
+
+    expect(release).toHaveBeenCalledTimes(1);
   });
 });

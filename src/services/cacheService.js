@@ -1,4 +1,5 @@
 import Redis from 'ioredis';
+import { randomUUID } from 'node:crypto';
 
 const REDIS_URL = (process.env.REDIS_URL || '').trim();
 const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
@@ -145,7 +146,66 @@ const getOrSet = async (namespace, key, fetchFn, ttl = DEFAULT_TTL) => {
   return data;
 };
 
-export const cache = { get, set, getOrSet, del, isReady: () => ready };
+/**
+ * Release a lock only if we still own it. A plain DEL would let a slow worker
+ * delete a lock that a second instance has already taken over after the TTL.
+ */
+const RELEASE_LOCK_SCRIPT = `
+if redis.call("get", KEYS[1]) == ARGV[1] then
+  return redis.call("del", KEYS[1])
+else
+  return 0
+end`;
+
+/**
+ * Take a short-lived distributed lock (Redis `SET NX EX`).
+ *
+ * Cron jobs run in every process, so a multi-instance deployment would send
+ * every reminder/email twice without a shared lock. The returned `acquired`
+ * flag tells the caller whether it owns the run.
+ *
+ * When Redis is unavailable the lock degrades to "acquired" so a
+ * single-instance deployment keeps working; callers must keep their own
+ * in-process guard (`isRunning`) to avoid overlapping local runs.
+ *
+ * @param {string} name - Lock name (without the `lock:` prefix).
+ * @param {number} [ttlSeconds=60] - Automatic expiry if the holder crashes.
+ * @returns {Promise<{acquired: boolean, degraded: boolean, release: () => Promise<void>}>}
+ */
+const acquireLock = async (name, ttlSeconds = 60) => {
+  const noop = async () => {};
+  if (!ready) return { acquired: true, degraded: true, release: noop };
+
+  try {
+    const c = getClient();
+    if (!c) return { acquired: true, degraded: true, release: noop };
+
+    const key = `lock:${name}`;
+    const token = randomUUID();
+    const result = await c.set(key, token, 'EX', ttlSeconds, 'NX');
+    if (result !== 'OK') {
+      return { acquired: false, degraded: false, release: noop };
+    }
+
+    return {
+      acquired: true,
+      degraded: false,
+      release: async () => {
+        try {
+          await c.eval(RELEASE_LOCK_SCRIPT, 1, key, token);
+        } catch {
+          // The lock expires on its own; never fail the job over cleanup.
+        }
+      },
+    };
+  } catch {
+    ready = false;
+    warnIfUnavailable();
+    return { acquired: true, degraded: true, release: noop };
+  }
+};
+
+export const cache = { get, set, getOrSet, del, acquireLock, isReady: () => ready };
 
 // Eagerly connect at module load. Without this the client is never created:
 // get/set short-circuit on `ready` before getClient() is ever called, so Redis

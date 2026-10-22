@@ -197,3 +197,13 @@ export const forceChangePassword = async (req, res) => {
     return res.status(500).json(formatApiResponse({ status: 500, message: "Failed to update password: " + error.message }));
   }
 };
+
+export const deleteAccount = async (req, res) => {
+  try {
+    const result = await authService.deleteAccount(req.user.id, req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Delete account error:", error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Failed to delete account: " + error.message }));
+  }
+};

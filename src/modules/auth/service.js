@@ -24,6 +24,10 @@ import {
   deleteStoredMedia,
   contentTypeForExtension,
 } from "../../services/objectStorage.js";
+import {
+  ACCOUNT_DELETE_SOURCES,
+  deleteUserAccount,
+} from "../../services/accountDeletion.js";
 
 
 
@@ -1182,6 +1186,53 @@ export const updatePassword = async (userId, data) => {
   });
 
   return { status: 200, message: "Password updated successfully" };
+};
+
+/**
+ * Self-service account deletion (required by the Play Store / App Store for
+ * any app that lets people create an account).
+ *
+ * The current password is re-checked so a stolen session token cannot destroy
+ * an account. Deletion is the same billing-safe soft delete used by admins:
+ * the person loses access, PII is erased, and invoices are retained.
+ */
+export const deleteAccount = async (userId, data = {}) => {
+  const { password, confirmation } = data;
+
+  if (!password) {
+    return { status: 400, message: "Password is required to delete your account" };
+  }
+  if (confirmation !== "DELETE" && confirmation !== "delete") {
+    return {
+      status: 400,
+      message: 'Type "DELETE" to confirm account deletion',
+    };
+  }
+
+  const user = await prisma.systemUser.findUnique({ where: { id: userId } });
+  if (!user) {
+    return { status: 404, message: "User not found" };
+  }
+  if (user.accountStatus === "deleted") {
+    return { status: 410, message: "This account has already been deleted" };
+  }
+
+  const isValidPassword = await bcrypt.compare(password, user.password);
+  if (!isValidPassword) {
+    return { status: 422, message: "Password is incorrect" };
+  }
+
+  const result = await deleteUserAccount({
+    user,
+    deletedBy: userId,
+    source: ACCOUNT_DELETE_SOURCES.SELF,
+  });
+
+  return {
+    ...result,
+    message:
+      "Your account has been deleted. Your subscription has been cancelled and billing records have been retained.",
+  };
 };
 
 /**

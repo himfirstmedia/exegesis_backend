@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: exegesis
+          POSTGRES_PASSWORD: exegesis
+          POSTGRES_DB: exegesis_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U exegesis -d exegesis_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://exegesis:exegesis@localhost:5432/exegesis_ci?schema=public
+      JWT_SECRET: ci-only-secret-not-used-in-production
+      STRIPE_SECRET_KEY: sk_test_ci_placeholder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply migrations to a fresh database
+        run: npx prisma migrate deploy
+
+      - name: Fail if the migration history drifts from schema.prisma
+        run: >-
+          npx prisma migrate diff
+          --from-url "$DATABASE_URL"
+          --to-schema-datamodel prisma/schema.prisma
+          --exit-code
+
+      - name: Tests
+        run: npm test
+
+      - name: Bible licence gate
+        run: npm run check:bible-licenses

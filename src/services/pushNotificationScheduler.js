@@ -2,14 +2,30 @@
 // duplicate an offline-capable reminder or change its requested wall-clock time.
 import cron from "node-cron";
 import { prisma } from "../config/db.js";
+import { cache } from "./cacheService.js";
 import { getTodaysVerseForPush, sendToUsers } from "../modules/push/service.js";
 import { dueReminder } from "../modules/push/reminderTime.js";
 
+// Reminders are claimed per user with a compare-and-set, but the sweep itself
+// should still run on one instance: duplicate sweeps would duplicate the
+// "no verse" work and the logs. The TTL is longer than the one-minute cadence
+// so a slow sweep is not taken over while it is still sending.
+const LOCK_NAME = "push-scheduler";
+const LOCK_TTL_SECONDS = 240;
+
 let isRunning = false;
 
-export const runPushSweep = async (now = new Date()) => {
+export const runPushSweep = async (now = new Date(), options = {}) => {
   if (isRunning) return;
   isRunning = true;
+  const lock =
+    options.lock === false
+      ? { acquired: true, release: async () => {} }
+      : await cache.acquireLock(LOCK_NAME, LOCK_TTL_SECONDS);
+  if (!lock.acquired) {
+    isRunning = false;
+    return;
+  }
   try {
     const settings = await prisma.pushSetting.findMany({ where: { dailyVerseReminder: true } });
     const due = settings.map(setting => ({ setting, occurrence: dueReminder(setting, now) }))
@@ -64,6 +80,7 @@ export const runPushSweep = async (now = new Date()) => {
     await Promise.all(Array.from({ length: Math.min(4, due.length) }, worker));
   } finally {
     isRunning = false;
+    await lock.release();
   }
 };
 
