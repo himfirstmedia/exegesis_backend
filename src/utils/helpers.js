@@ -9,10 +9,12 @@ const getJwtSecret = () => {
   }
   return secret;
 };
-// Optional expiry. When unset/empty the token carries no `exp` claim and
-// never expires — a logged-in user keeps API access indefinitely (months
-// or years later). Set JWT_EXPIRES_IN if you ever want expiring tokens.
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "";
+// Access tokens expire. Previously the expiry was opt-in (`JWT_EXPIRES_IN`
+// defaulted to empty), so a leaked token granted API access forever. The
+// default is now a bounded 7-day window; a deployment can shorten or extend
+// it, but it can no longer be switched off by omission.
+const DEFAULT_JWT_EXPIRES_IN = "7d";
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || DEFAULT_JWT_EXPIRES_IN;
 
 export const generateToken = (user) => {
   const payload = {
@@ -21,11 +23,7 @@ export const generateToken = (user) => {
     email: user.email,
     userRole: Number(user.userRole),
   };
-  return jwt.sign(
-    payload,
-    getJwtSecret(),
-    JWT_EXPIRES_IN ? { expiresIn: JWT_EXPIRES_IN } : {},
-  );
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: JWT_EXPIRES_IN });
 };
 
 export const verifyToken = (token) => {
@@ -67,6 +65,38 @@ export const verifyGoogleRegistrationProof = (token) => {
   }
 };
 
+const getPasswordSetProofSecret = () =>
+  crypto
+    .createHmac("sha256", getJwtSecret())
+    .update("exegesis-password-set-proof-v1")
+    .digest();
+
+/**
+ * Short-lived proof that the caller proved control of an email inbox.
+ * Issued by `verify-code` and required by `set-password`, so that setting a
+ * password can never be done on the strength of an email address alone.
+ */
+export const generatePasswordSetProof = (identity) =>
+  jwt.sign({ ...identity, purpose: "password-set" }, getPasswordSetProofSecret(), {
+    algorithm: "HS256",
+    audience: "password-set",
+    issuer: "exegesis-api",
+    expiresIn: "15m",
+  });
+
+export const verifyPasswordSetProof = (token) => {
+  try {
+    const decoded = jwt.verify(token, getPasswordSetProofSecret(), {
+      algorithms: ["HS256"],
+      audience: "password-set",
+      issuer: "exegesis-api",
+    });
+    return decoded?.purpose === "password-set" ? decoded : null;
+  } catch {
+    return null;
+  }
+};
+
 export const extractToken = (authHeader) => {
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return null;
@@ -75,12 +105,14 @@ export const extractToken = (authHeader) => {
 };
 
 export const generateSixDigitCode = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  // crypto.randomInt (not Math.random) so verification codes cannot be
+  // predicted from observed outputs.
+  return crypto.randomInt(100000, 1000000).toString();
 };
 
 export const generatePlanId = () => {
   const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const randomPart = crypto.randomBytes(4).toString("hex").toUpperCase();
   return `PLAN-${datePart}-${randomPart}`;
 };
 
@@ -165,12 +197,12 @@ export const isAuthenticated = (req) => {
 
 
 export const generateRandomPassword = (length = 8) => {
-   const charset =
-     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+~`|}{[]:;?><,./-=";
-   let password = "";
-   for (let i = 0; i < length; i++) {
-     const randomIndex = Math.floor(Math.random() * charset.length);
-     password += charset[randomIndex];
-   }
-   return password;
- };
+  const charset =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+~`|}{[]:;?><,./-=";
+  // crypto.randomInt so generated passwords are not derived from a
+  // predictable PRNG state.
+  const picks = Array.from({ length }, () =>
+    charset.charAt(crypto.randomInt(0, charset.length)),
+  );
+  return picks.join("");
+};

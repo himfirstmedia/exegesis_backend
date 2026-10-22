@@ -8,6 +8,8 @@ import {
   verifyToken,
   generateGoogleRegistrationProof,
   verifyGoogleRegistrationProof,
+  generatePasswordSetProof,
+  verifyPasswordSetProof,
   generateSixDigitCode,
   serializeBigInt,
 } from "../../utils/helpers.js";
@@ -27,6 +29,11 @@ import {
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const googleOAuthClient = new OAuth2Client();
+
+// Role ids from the `role` table seeded by prisma/seed.js:
+//   1 = ADMIN, 2 = USER. Self-registration may only ever create a USER.
+const ADMIN_ROLE_ID = 1n;
+const DEFAULT_REGISTRATION_ROLE = 2n;
 
 const getGoogleOAuthAudiences = () => {
   const configured = [
@@ -256,7 +263,7 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
       lastName: verifiedLastName || "User",
       phoneNumber: phoneNumber || "",
       gender: gender || "Not specified",
-      userRole: 2n,
+      userRole: DEFAULT_REGISTRATION_ROLE,
       emailVerified: true,
       status: true,
       loginCount: 0n,
@@ -354,7 +361,10 @@ export const register = async (data) => {
       phoneNumber: phoneNumber || "",
       ...(dateOfBirth && !isNaN(Date.parse(dateOfBirth)) && { dateOfBirth: new Date(dateOfBirth) }),
       gender: gender || "Not specified",
-      userRole: userRole || 2n,
+      // Public self-registration always creates a standard member account.
+      // A caller-supplied `userRole` must never be honoured here, otherwise
+      // anyone could register themselves as an admin.
+      userRole: DEFAULT_REGISTRATION_ROLE,
       emailVerified: false,
       status: true,
       loginCount: 0n,
@@ -520,7 +530,19 @@ export const verifyCode = async (data) => {
     data: { emailVerified: true },
   });
 
-  return { status: 200, message: "Verification code has been verified" };
+  // Issue a short-lived proof that the caller proved control of this inbox.
+  // `set-password` requires it, so knowing an email address is never enough
+  // to take over an account.
+  const passwordSetProof = generatePasswordSetProof({
+    email: user.email,
+    userId: String(user.id),
+  });
+
+  return {
+    status: 200,
+    message: "Verification code has been verified",
+    data: { passwordSetProof },
+  };
 };
 
 export const login = async (data, deviceInfo = null) => {
@@ -964,7 +986,7 @@ export const resendVerification = async (data) => {
 };
 
 export const setPassword = async (data) => {
-  const { email, password } = data;
+  const { email, password, passwordSetProof } = data;
   if (!email || !password) {
     return { status: 400, message: "Email and password are required" };
   }
@@ -977,6 +999,24 @@ export const setPassword = async (data) => {
   const user = await prisma.systemUser.findFirst({ where: { email: email.toLowerCase() } });
   if (!user) {
     return { status: 404, message: "User with the provided email does not exist" };
+  }
+
+  // Setting a password must be backed by proof that the caller controls this
+  // inbox. The proof is minted by `verify-code` after a valid code is
+  // submitted, and is bound to this email address.
+  if (!passwordSetProof) {
+    return {
+      status: 400,
+      message: "Email verification is required before setting a password",
+    };
+  }
+
+  const proof = verifyPasswordSetProof(passwordSetProof);
+  if (!proof || proof.email !== user.email) {
+    return {
+      status: 400,
+      message: "Email verification is invalid or has expired. Please verify your email again.",
+    };
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);

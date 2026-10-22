@@ -9,14 +9,16 @@ import { verifyToken } from "../utils/helpers.js";
 import { ADMIN_ROOM, REALTIME_EVENTS, userRoom } from "./events.js";
 import { prisma } from "../config/db.js";
 import { withDbRetry } from "../utils/dbRetry.js";
+import { corsOriginDelegate } from "../config/corsOrigins.js";
 
 let io = null;
 
 /**
- * CORS mirrors the REST server: reflect the caller. Socket.IO needs an explicit
- * origin callback (it does not reuse the Express cors middleware).
+ * CORS mirrors the REST server: the same allow-list, so a browser origin
+ * that cannot call the API cannot open a socket either. Socket.IO needs an
+ * explicit origin callback (it does not reuse the Express cors middleware).
  */
-const corsOrigin = (origin, callback) => callback(null, true);
+const corsOrigin = corsOriginDelegate;
 
 const authenticateSocket = async (socket) => {
   const token =

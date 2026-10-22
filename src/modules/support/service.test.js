@@ -168,7 +168,7 @@ describe('createTicket', () => {
       attachment: null,
       attachmentName: null,
     });
-    expect(createArgs.data.ticketCode).toMatch(/^SUP-\d{8}-[A-Z0-9]{4}$/);
+    expect(createArgs.data.ticketCode).toMatch(/^SUP-\d{8}-[A-F0-9]{6}$/);
     expect(result.data.messageCount).toBe(1);
   });
 });

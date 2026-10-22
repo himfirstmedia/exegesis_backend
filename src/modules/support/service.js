@@ -17,6 +17,10 @@ import { emailTemplates } from "../../utils/emailTemplates.js";
 import { sendToUsers } from "../push/service.js";
 import { decodeAttachmentUpload, safeAttachmentName } from "./attachmentUpload.js";
 import {
+  isPrivateMediaKey,
+  signMediaPath,
+} from "../../services/mediaSignature.js";
+import {
   REALTIME_EVENTS,
   emitToAdmins,
   emitToUser,
@@ -58,7 +62,8 @@ const makeTicketCode = () => {
     String(now.getMonth() + 1).padStart(2, "0"),
     String(now.getDate()).padStart(2, "0"),
   ].join("");
-  const randomPart = Math.random().toString(36).slice(2, 6).toUpperCase();
+  // crypto.randomBytes so ticket codes cannot be guessed from the sequence.
+  const randomPart = crypto.randomBytes(3).toString("hex").toUpperCase();
   return `SUP-${datePart}-${randomPart}`;
 };
 
@@ -202,8 +207,32 @@ export const notifyAdminsOfNewTicket = async (ticket) => {
   if (message) await notifySupportMessage(ticket, message, "admin");
 };
 
+/**
+ * Attach a short-lived signature to a private attachment URL so the image
+ * can be fetched by <Image> without an Authorization header. Public media
+ * (profile photos, covers) is returned unchanged.
+ */
+const signAttachment = (attachment) => {
+  if (!attachment) return attachment;
+  const location = storedMediaLocation(String(attachment));
+  if (!location || !isPrivateMediaKey(location.key)) return attachment;
+  return signMediaPath(String(attachment));
+};
+
+/** Sign the attachment of every message in a list, in place. */
+const signMessageAttachments = (messages) => {
+  if (!Array.isArray(messages)) return messages;
+  for (const message of messages) {
+    if (message && message.attachment) {
+      message.attachment = signAttachment(message.attachment);
+    }
+  }
+  return messages;
+};
+
 const serializeTicketSummary = (ticket) => {
   const serialized = serializeBigInt(ticket);
+  signMessageAttachments(serialized.messages);
   const lastMessage = serialized.messages?.[0] ?? null;
   return {
     id: serialized.id,
@@ -227,6 +256,7 @@ const serializeTicketSummary = (ticket) => {
 
 const serializeTicketDetail = (ticket) => {
   const serialized = serializeBigInt(ticket);
+  signMessageAttachments(serialized.messages);
   return {
     ...serialized,
     messageCount: serialized.messages?.length ?? 0,

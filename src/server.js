@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { pipeline } from "stream/promises";
 import { config } from "dotenv";
 import { connectDB, disconnectDB } from "./config/db.js";
+import { corsOriginDelegate } from "./config/corsOrigins.js";
 import authRouter from "./modules/auth/route.js";
 import adminRouter from "./modules/admin/route.js";
 import bibleRouter from "./modules/bible/route.js";
@@ -39,6 +40,10 @@ import {
   isMediaObjectKey,
   validateObjectStorageConfig,
 } from "./services/objectStorage.js";
+import {
+  isPrivateMediaKey,
+  verifyMediaSignature,
+} from "./services/mediaSignature.js";
 import { initRealtime } from "./realtime/index.js";
 
 config();
@@ -67,33 +72,17 @@ const app = express();
 // first hop — required for rate limiting to key on the real client.
 app.set("trust proxy", 1);
 
-app.options("/{*path}", cors());
-
 const corsOptions = {
-  origin: function (origin, callback) {
-    const allowedOrigins = [
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://localhost:4173",
-      "http://localhost:3000",
-      "http://localhost:8080",
-      "http://localhost:5001",
-      "https://app.exegesisproject.org",
-      "https://exegesisproject.org",
-      process.env.CLIENT_URL,
-      process.env.SITEGRROUND_URL,
-    ].filter(Boolean);
-
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(null, true);
-    }
-  },
+  origin: corsOriginDelegate,
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
+
+// Preflight must use the same allow-list as the actual routes — a
+// permissive OPTIONS handler would otherwise hand out the wildcard origin
+// that the real CORS middleware is there to prevent.
+app.options("/{*path}", cors(corsOptions));
 
 app.use(cors(corsOptions));
 
@@ -121,6 +110,17 @@ app.get(/^\/media\/(.+)$/, async (req, res) => {
   if (!isMediaObjectKey(key)) {
     return res.status(404).json({ status: 404, message: "Not found" });
   }
+
+  // Support attachments are private: they may only be read with a valid,
+  // unexpired signature that the API issued to the ticket's owner.
+  const isPrivate = isPrivateMediaKey(key);
+  if (isPrivate) {
+    const { exp, sig } = req.query || {};
+    if (!verifyMediaSignature(key, exp, sig)) {
+      return res.status(403).json({ status: 403, message: "Media link is invalid or has expired" });
+    }
+  }
+
   try {
     const object = await getObjectStream(key);
     if (!object) return res.status(404).json({ status: 404, message: "Not found" });
@@ -128,7 +128,12 @@ app.get(/^\/media\/(.+)$/, async (req, res) => {
     if (object.contentLength !== undefined) {
       res.setHeader("Content-Length", object.contentLength);
     }
-    res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+    // Private media must not be cached by shared caches; public media is
+    // immutable because every key is a content-unique UUID.
+    res.setHeader(
+      "Cache-Control",
+      isPrivate ? "private, max-age=300" : "public, max-age=2592000, immutable",
+    );
     await pipeline(object.body, res);
   } catch (error) {
     console.error("Media proxy error:", error?.message || error);
