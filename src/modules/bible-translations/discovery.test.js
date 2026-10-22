@@ -9,7 +9,7 @@ const XML_DIR = path.join(MODULE_DIR, 'Holy-Bible-XML-Format');
 describe('discoverBibles', () => {
   test('keeps the lean curated free-translation catalog', () => {
     const entries = discoverBibles(XML_DIR);
-    expect(entries.length).toBe(44);
+    expect(entries.length).toBe(46);
     expect(entries.length).toBeGreaterThan(10);
     expect(entries.map((entry) => entry.shortId)).toEqual(
       expect.arrayContaining([
@@ -50,11 +50,9 @@ describe('discoverBibles', () => {
       .filter((entry) => entry.language === 'en')
       .map((entry) => entry.shortId);
 
-    // The New King James Version, God's Word, EASY and The Living Bible are
-    // all under a publisher's copyright; they were replaced by free texts.
+    // The New King James Version and The Living Bible are under a
+    // publisher's copyright; they were replaced by the free Tyndale 1537.
     expect(englishIds).not.toContain('NKJ');
-    expect(englishIds).not.toContain('GW');
-    expect(englishIds).not.toContain('EASY');
     expect(englishIds).not.toContain('TL');
     expect(englishIds).toEqual(
       expect.arrayContaining(['Berean', 'KJV', 'ASV', 'YLT', 'Darby', 'Tyndale']),

@@ -343,6 +343,9 @@ const TRANSLATION_ALIASES = {
   // Tyndale 1537 replaced it and old references still resolve.
   'NKJV': 'Tyndale',
   'NKJ': 'Tyndale',
+  'TL': 'Tyndale',
+  'LivingBible': 'Tyndale',
+  'LIVING': 'Tyndale',
   'BSB': 'Berean',
   'BereanStandardBible': 'Berean',
   'DARBY': 'Darby',
@@ -350,8 +353,6 @@ const TRANSLATION_ALIASES = {
   'AMP': 'Amplified',
   'AMPC': 'AmplifiedClassic',
   'TPT': 'Passion',
-  'LIVING': 'TL',
-  'LivingBible': 'TL',
 };
 
 /**

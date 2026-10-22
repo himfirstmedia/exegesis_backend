@@ -305,6 +305,10 @@ export const CURATED_TRANSLATION_SHORT_IDS = new Set([
   'YLT',
   'Darby',
   'Tyndale',
+  // Redistributable with attribution (EASY and God's Word are published for
+  // free copying and distribution, provided the source is credited).
+  'GW',
+  'EASY',
   'Spanish',
   'French',
   'Arabic',

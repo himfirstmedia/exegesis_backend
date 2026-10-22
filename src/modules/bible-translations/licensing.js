@@ -238,13 +238,6 @@ export const TRANSLATION_LICENSES = {
       "God's Word © 1995. Free to copy and distribute with attribution.",
     source: "God's Word Translation",
   },
-  EnglishTLBible: {
-    license: ATTRIBUTION,
-    attribution:
-      'The Living Bible © 1971 Tyndale House Foundation. Used with permission.',
-    source: 'Tyndale House Foundation',
-  },
-
   // ── Permission-based: require a signed agreement with the rights holder ──
   HindiBible: {
     license: PERMISSION,
