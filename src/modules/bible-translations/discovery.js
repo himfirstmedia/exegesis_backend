@@ -180,7 +180,6 @@ export const LEGACY_SHORT_IDS = {
   EnglishNETBible: 'NET',
   EnglishNIRVBible: 'NIRV',
   EnglishNIVBible: 'NIV',
-  EnglishNKJBible: 'NKJ',
   EnglishNLTBible: 'NLT',
   EnglishNRSVBible: 'NRSV',
   EnglishPassionBible: 'Passion',
@@ -196,8 +195,17 @@ export const LEGACY_SHORT_IDS = {
   Nepali2012Bible: 'Nepali2012',
   OdiaIRV2017Bible: 'OdiaIRV2017',
   PunjabiIRVBible: 'PunjabiIRV',
-  Tamil2017Bible: 'Tamil2017',
   UrduIRVURDBible: 'Urdu',
+  // Free-licensed replacements. The catalogue id stays what clients already
+  // use; only the underlying text (and its licence) changed.
+  ArabicSVDBible: 'Arabic',
+  ChineseTraditionalBible: 'ChineseSimplified',
+  GermanLuther1912Bible: 'German',
+  PolishGdanskBible: 'Polish',
+  Romanian1928Bible: 'Romanian',
+  TamilIRVBible: 'Tamil2017',
+  TurkishYTCBible: 'Turkish',
+  Ukrainian1903Bible: 'Ukrainian',
 };
 
 /**
@@ -287,16 +295,16 @@ const buildShortId = (fileId, seen) => {
 
 // Keep only a lean, production-friendly catalog: all free English options plus
 // one common free translation per widely used non-English language.
+//
+// Every entry here must have a reviewed licence record in `licensing.js`;
+// `scripts/check-bible-licenses.mjs` fails the build otherwise.
 export const CURATED_TRANSLATION_SHORT_IDS = new Set([
   'Berean',
   'KJV',
-  'NKJ',
   'ASV',
   'YLT',
   'Darby',
-  'GW',
-  'EASY',
-  'TL',
+  'Tyndale',
   'Spanish',
   'French',
   'Arabic',

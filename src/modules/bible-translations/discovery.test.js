@@ -9,13 +9,14 @@ const XML_DIR = path.join(MODULE_DIR, 'Holy-Bible-XML-Format');
 describe('discoverBibles', () => {
   test('keeps the lean curated free-translation catalog', () => {
     const entries = discoverBibles(XML_DIR);
-    expect(entries.length).toBe(47);
+    expect(entries.length).toBe(44);
     expect(entries.length).toBeGreaterThan(10);
     expect(entries.map((entry) => entry.shortId)).toEqual(
       expect.arrayContaining([
         'Berean',
         'KJV',
         'ASV',
+        'Tyndale',
         'French',
         'Arabic',
         'Spanish',
@@ -40,6 +41,23 @@ describe('discoverBibles', () => {
         'SantaliCommon',
         'SindhiMuslim',
       ]),
+    );
+  });
+
+  test('the catalogue contains no copyrighted English translations', () => {
+    const entries = discoverBibles(XML_DIR);
+    const englishIds = entries
+      .filter((entry) => entry.language === 'en')
+      .map((entry) => entry.shortId);
+
+    // The New King James Version, God's Word, EASY and The Living Bible are
+    // all under a publisher's copyright; they were replaced by free texts.
+    expect(englishIds).not.toContain('NKJ');
+    expect(englishIds).not.toContain('GW');
+    expect(englishIds).not.toContain('EASY');
+    expect(englishIds).not.toContain('TL');
+    expect(englishIds).toEqual(
+      expect.arrayContaining(['Berean', 'KJV', 'ASV', 'YLT', 'Darby', 'Tyndale']),
     );
   });
 
@@ -83,7 +101,7 @@ describe('discoverBibles', () => {
 
   test.each([
     ['FrenchBible.xml', 'fr', 'French'],
-    ['ArabicBible.xml', 'ar', 'Arabic'],
+    ['ArabicSVDBible.xml', 'ar', 'Arabic'],
     ['SpanishBible.xml', 'es', 'Spanish'],
   ])('%s is classified under its actual language', (fileName, code, name) => {
     const entries = discoverBibles(XML_DIR);
@@ -125,9 +143,9 @@ describe('discoverBibles', () => {
     expect(inconsistent).toEqual([]);
   });
 
-  test('ChineseSimplifiedBible.xml is included with language "zh"', () => {
+  test('ChineseTraditionalBible.xml is included with language "zh"', () => {
     const entries = discoverBibles(XML_DIR);
-    const chinese = entries.find((e) => e.fileName === 'ChineseSimplifiedBible.xml');
+    const chinese = entries.find((e) => e.fileName === 'ChineseTraditionalBible.xml');
     expect(chinese).toBeDefined();
     expect(chinese.language).toBe('zh');
     expect(chinese.shortId).toBe('ChineseSimplified');
@@ -136,7 +154,7 @@ describe('discoverBibles', () => {
   test.each([
     ['UrduIRVURDBible.xml', 'Urdu', 'ur'],
     ['GreekModern1904Bible.xml', 'GreekModern1904', 'el'],
-    ['Tamil2017Bible.xml', 'Tamil2017', 'ta'],
+    ['TamilIRVBible.xml', 'Tamil2017', 'ta'],
     ['TeluguBible.xml', 'Telugu', 'te'],
     ['MarathiIRVMARBible.xml', 'MarathiIRVMAR', 'mr'],
     ['Gujarati2017Bible.xml', 'Gujarati2017', 'gu'],

@@ -37,8 +37,9 @@ describe('normalizeTranslationId', () => {
     consoleError.mockRestore();
   });
 
-  test('resolves the NKJV alias to the canonical NKJ id', () => {
-    expect(normalizeTranslationId('NKJV')).toBe('NKJ');
+  test('resolves the retired NKJV alias to the free Tyndale replacement', () => {
+    expect(normalizeTranslationId('NKJV')).toBe('Tyndale');
+    expect(normalizeTranslationId('NKJ')).toBe('Tyndale');
   });
 
   test('resolves BSB to Berean', () => {
@@ -51,8 +52,8 @@ describe('normalizeTranslationId', () => {
     expect(normalizeTranslationId('kjv')).toBe('KJV');
   });
 
-  test('resolves full display names (New King James Version → NKJ)', () => {
-    expect(normalizeTranslationId('New King James Version')).toBe('NKJ');
+  test('resolves full display names (Tyndale Bible → Tyndale)', () => {
+    expect(normalizeTranslationId('Tyndale Bible')).toBe('Tyndale');
   });
 
   test('resolves full XML file names (EnglishKJBible → KJV)', () => {
@@ -60,7 +61,7 @@ describe('normalizeTranslationId', () => {
   });
 
   test('trims surrounding whitespace', () => {
-    expect(normalizeTranslationId('  NKJV  ')).toBe('NKJ');
+    expect(normalizeTranslationId('  Tyndale  ')).toBe('Tyndale');
   });
 
   test('returns unknown ids untouched so callers surface Translation not found', () => {
@@ -113,7 +114,7 @@ describe('catalog presentation', () => {
 
 describe('getTranslationDisplayName', () => {
   test('returns the proper name for aliased ids', () => {
-    expect(getTranslationDisplayName('NKJV')).toBe('New King James Version');
+    expect(getTranslationDisplayName('NKJV')).toBe('Tyndale Bible');
     expect(getTranslationDisplayName('BSB')).toBe('Berean Standard Bible');
     expect(getTranslationDisplayName('KJV')).toBe('King James Version');
   });
@@ -124,7 +125,7 @@ describe('getTranslationDisplayName', () => {
 });
 
 describe('getVerse (real XML files)', () => {
-  test('fetches a verse with the aliased NKJV id', async () => {
+  test('fetches a verse with the retired NKJV id', async () => {
     const verse = await getVerse('NKJV', 'Genesis', 1, 1);
     expect(verse.bookName).toBe('Genesis');
     expect(verse.chapterNumber).toBe(1);
@@ -132,8 +133,8 @@ describe('getVerse (real XML files)', () => {
     expect(verse.text.length).toBeGreaterThan(0);
   });
 
-  test('fetches a verse with the canonical NKJ id', async () => {
-    const verse = await getVerse('NKJ', 'John', 3, 16);
+  test('fetches a verse with the canonical Tyndale id', async () => {
+    const verse = await getVerse('Tyndale', 'John', 3, 16);
     expect(verse.text.length).toBeGreaterThan(0);
   });
 

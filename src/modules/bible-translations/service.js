@@ -4,6 +4,10 @@ import { fileURLToPath } from 'url';
 import { parseString } from 'xml2js';
 import { cache } from '../../services/cacheService.js';
 import { discoverBibles } from './discovery.js';
+import {
+  getTranslationLicense,
+  isRedistributable,
+} from './licensing.js';
 
 // Module directory — resolves via import.meta in ESM (production) and falls
 // back to the CJS-native __dirname under jest's CommonJS transform.
@@ -142,14 +146,13 @@ const LEGACY_HARDCODED_SHORT_IDS = {
   'NET': 'EnglishNETBible',
   'NIRV': 'EnglishNIRVBible',
   'NIV': 'EnglishNIVBible',
-  'NKJ': 'EnglishNKJBible',
   'NLT': 'EnglishNLTBible',
   'NRSV': 'EnglishNRSVBible',
   'Passion': 'EnglishPassionBible',
   'RSV': 'EnglishRSVBible',
   'TL': 'EnglishTLBible',
   'Tyndale': 'EnglishTyndale1537Bible',
-  'YLT': 'EnglishYLTBible'
+  'YLT': 'EnglishYLTBible',
 };
 
 // Build the dynamic catalog from the XML directory on module load.
@@ -224,7 +227,6 @@ export const TRANSLATION_DISPLAY_NAMES = {
   'NET': { name: 'NET Bible', year: '2005' },
   'NIRV': { name: 'New International Reader\'s Version', year: '1996' },
   'NIV': { name: 'New International Version', year: '2011' },
-  'NKJ': { name: 'New King James Version', year: '1982' },
   'NLT': { name: 'New Living Translation', year: '2004' },
   'NRSV': { name: 'New Revised Standard Version', year: '1989' },
   'Passion': { name: 'The Passion Translation', year: '2020' },
@@ -233,6 +235,14 @@ export const TRANSLATION_DISPLAY_NAMES = {
   'Tyndale': { name: 'Tyndale Bible', year: '1537' },
   'YLT': { name: "Young's Literal Translation", year: '1898' },
   'Bengali': { name: 'Indian Revised Version - Bengali', year: '2019' },
+  'Arabic': { name: 'Arabic SVD 1865', year: '1865' },
+  'ChineseSimplified': { name: 'Chinese Union Version 1919', year: '1919' },
+  'German': { name: 'German Luther 1912', year: '1912' },
+  'Polish': { name: 'Polish Gdansk 1881-1910', year: '1910' },
+  'Romanian': { name: 'Romanian Cornilescu 1928', year: '1928' },
+  'Tamil2017': { name: 'Indian Revised Version - Tamil', year: '2019' },
+  'Turkish': { name: 'Turkish Yorumsuz Turkce Ceviri', year: '2024' },
+  'Ukrainian': { name: 'Ukrainian 1871', year: '1871' },
 };
 
 const DISPLAY_ABBREVIATIONS = {
@@ -241,10 +251,17 @@ const DISPLAY_ABBREVIATIONS = {
   Berean: 'BSB',
   Darby: 'DARBY',
   EASY: 'EASY',
-  NKJ: 'NKJV',
   Passion: 'TPT',
   TL: 'TLB',
   Tyndale: 'TYNDALE',
+  Arabic: 'SVD',
+  ChineseSimplified: 'CUV1919',
+  German: 'LUT1912',
+  Polish: 'PDG',
+  Romanian: 'COR1928',
+  Tamil2017: 'IRV-TAM',
+  Turkish: 'YTC',
+  Ukrainian: 'KUL1871',
   Bengali: 'IRV-BEN',
 };
 
@@ -322,7 +339,10 @@ const getCatalogPresentation = (entry) => {
 // which made getVerse throw "Translation not found" and daily verses
 // silently return empty text.
 const TRANSLATION_ALIASES = {
-  'NKJV': 'NKJ', // seed data & older admin submissions used the KJV-style abbreviation
+  // NKJ was retired (the New King James Version is copyrighted); the free
+  // Tyndale 1537 replaced it and old references still resolve.
+  'NKJV': 'Tyndale',
+  'NKJ': 'Tyndale',
   'BSB': 'Berean',
   'BereanStandardBible': 'Berean',
   'DARBY': 'Darby',
@@ -885,6 +905,7 @@ export const getCatalog = () => {
   const entries = buildCatalog();
   return entries.map((e) => {
     const presentation = getCatalogPresentation(e);
+    const license = getTranslationLicense(e.fileId);
     return {
       id: e.shortId,
       fileId: e.fileId,
@@ -892,6 +913,12 @@ export const getCatalog = () => {
       languageName: e.languageName,
       ...presentation,
       fileSize: e.fileSize,
+      // Licence metadata so clients can display the required attribution and
+      // tell the user where the text came from.
+      license: license?.license ?? null,
+      attribution: license?.attribution || '',
+      source: license?.source || '',
+      redistributable: isRedistributable(e.fileId),
     };
   });
 };

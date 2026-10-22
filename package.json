@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "jest --runInBand",
+    "check:bible-licenses": "node scripts/check-bible-licenses.mjs",
     "test:smoke:daily-verse": "node scripts/smoke-test-daily-verse.js",
     "predev": "prisma generate",
     "dev": "nodemon src/bootstrap.js",
