@@ -929,15 +929,20 @@ Firebase configuration; production scaling needs explicit adapter/routing design
 
 - SMTP supports account verification/reset and configured outbound messages.
 - Pending email processing runs on a 30-second cron with process-local overlap
-  prevention and database-outage backoff up to five minutes.
-- Push sweep runs every minute with its own process-local overlap guard.
+  prevention, database-outage backoff up to five minutes, and a Redis lock so
+  replicas do not send the same queued message twice.
+- Push sweep runs every minute with its own process-local overlap guard plus the
+  same Redis lock.
 - Popular-search cleanup starts alongside other scheduled jobs.
 - Redis is optional; cache errors disable that path while modules can use their
-  own in-process caches. These caches are not durable business records.
+  own in-process caches. These caches are not durable business records. When
+  Redis is absent, scheduler locks degrade to "acquired" so a single-instance
+  deployment keeps working.
 - TTS warmup pre-connects service resources to reduce the first-request delay.
 
-Deployment scaling changes job multiplicity: these are not automatically
-distributed task queues merely because the HTTP service has multiple replicas.
+Deployment scaling changes job multiplicity. The schedulers use a Redis lock
+when `REDIS_URL`/`REDIS_HOST` is configured; without Redis they assume a single
+instance and rely on the process-local guard.
 
 # Configuration and deployment
 
@@ -954,7 +959,7 @@ ignored files or deployment secrets, never in client bundles or these manuals.
 | Storage | `R2_ACCOUNT_ID`, key/secret, bucket, endpoint, public base URL |
 | Email | `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, sender/support settings |
 | Stripe | Server/webhook secrets and configured price IDs |
-| Cache | `REDIS_HOST`, `REDIS_PORT`, cache TTL |
+| Cache | `REDIS_URL` (preferred), or `REDIS_HOST`, `REDIS_PORT`, cache TTL |
 | Translation | `LIBRETRANSLATE_*`, `MYMEMORY_*`, `LORDSBOOK_TEXT_*`, translation limits |
 | Voice | `LORDSBOOK_TTS_ENABLE`, gateway/key, synthesis timeouts and concurrency settings |
 | Bible metadata | `BIBLE_INDEX_CACHE_DIR` |
@@ -967,11 +972,30 @@ npx prisma generate
 npm run dev
 ```
 
-Provision PostgreSQL/schema and required seed/content data deliberately.
-The current `npm start` runs `prisma db push`, regenerates Prisma and starts
-`src/bootstrap.js`; understand that schema-update behavior before using it in
-production. Dockerfile and Railway configuration are included in the repository.
-Changing local `.env` does not change Railway's deployed secrets.
+Provision PostgreSQL and required seed/content data deliberately. The current
+`npm start` runs `prisma migrate deploy`, regenerates Prisma and starts
+`src/bootstrap.js`. It never runs `prisma db push` against a production
+database.
+
+### Database migrations
+
+`prisma/migrations/` is the source of truth. The first deployment of this
+migration chain to the existing `db push`-managed Railway database must be
+baselined exactly once:
+
+```bash
+npm run db:baseline -- --dry-run   # inspect what will be recorded
+npm run db:baseline                # record the already-present migrations
+npm start                          # applies only the remaining migrations
+```
+
+Never run `db:baseline` twice, and never add non-idempotent `ADD COLUMN` /
+`ADD CONSTRAINT` statements to the baseline or convergence migrations. CI
+applies the chain to an empty PostgreSQL 16 database and fails if
+`prisma migrate diff` finds drift between the migrations and `schema.prisma`.
+
+Dockerfile and Railway configuration are included in the repository. Changing
+local `.env` does not change Railway's deployed secrets.
 
 For production, align API origins/client builds, R2 persistent storage, Stripe
 webhook URL, Firebase Admin credentials, SMTP, XML files/indexes and any provider

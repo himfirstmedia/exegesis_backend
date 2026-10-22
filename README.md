@@ -32,6 +32,7 @@ npx prisma generate
 npm run dev
 ```
 
-Tests: `npm test`. The production `npm start` script currently applies
-`prisma db push` before starting the service; review the platform manual before
-using that startup behavior against a production database.
+Tests: `npm test`. The production `npm start` script runs
+`prisma migrate deploy` (never `prisma db push`) before starting the service.
+Baseline the existing Railway database once with `npm run db:baseline` — see
+[the platform manual](docs/PLATFORM_GUIDE.md#database-migrations).
