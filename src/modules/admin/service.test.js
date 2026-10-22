@@ -21,6 +21,14 @@ jest.mock("stripe", () => {
 jest.mock("../../config/db.js", () => ({
   prisma: {
     systemUser: { findFirst: jest.fn(), update: jest.fn() },
+    journalLike: { deleteMany: jest.fn() },
+    exegesisSession: { deleteMany: jest.fn() },
+    journalEntry: { deleteMany: jest.fn() },
+    triviaAnswer: { deleteMany: jest.fn() },
+    popularSearchLog: { deleteMany: jest.fn() },
+    pushToken: { deleteMany: jest.fn() },
+    pushSetting: { deleteMany: jest.fn() },
+    supportTicket: { deleteMany: jest.fn() },
     activity: { deleteMany: jest.fn() },
     highlight: { deleteMany: jest.fn() },
     favorite: { deleteMany: jest.fn() },

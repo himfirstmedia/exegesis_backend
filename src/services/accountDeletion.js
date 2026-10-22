@@ -72,7 +72,17 @@ export const deleteUserAccount = async ({
   await cancelStripeSubscription(user);
   await anonymizeStripeCustomer(user, deletedBy);
 
-  // Clean up personal activity records (no billing value).
+  // Clean up personal content and activity (no billing value). This includes
+  // the journals the in-app deletion notice promises to erase, plus everything
+  // else that carries the person's words or device identifiers.
+  await prisma.journalLike.deleteMany({ where: { userId: user.id } });
+  await prisma.exegesisSession.deleteMany({ where: { userId: user.id } });
+  await prisma.journalEntry.deleteMany({ where: { userId: user.id } });
+  await prisma.triviaAnswer.deleteMany({ where: { userId: user.id } });
+  await prisma.popularSearchLog.deleteMany({ where: { userId: user.id } });
+  await prisma.pushToken.deleteMany({ where: { userId: user.id } });
+  await prisma.pushSetting.deleteMany({ where: { userId: user.id } });
+  await prisma.supportTicket.deleteMany({ where: { userId: user.id } });
   await prisma.activity.deleteMany({ where: { userId: user.id } });
   await prisma.highlight.deleteMany({ where: { createdBy: user.id } });
   await prisma.favorite.deleteMany({ where: { createdBy: user.id } });

@@ -20,6 +20,14 @@ jest.mock("stripe", () => ({
 jest.mock("../../../config/db.js", () => ({
   prisma: {
     systemUser: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
+    journalLike: { deleteMany: jest.fn() },
+    exegesisSession: { deleteMany: jest.fn() },
+    journalEntry: { deleteMany: jest.fn() },
+    triviaAnswer: { deleteMany: jest.fn() },
+    popularSearchLog: { deleteMany: jest.fn() },
+    pushToken: { deleteMany: jest.fn() },
+    pushSetting: { deleteMany: jest.fn() },
+    supportTicket: { deleteMany: jest.fn() },
     activity: { deleteMany: jest.fn() },
     highlight: { deleteMany: jest.fn() },
     favorite: { deleteMany: jest.fn() },
@@ -125,6 +133,16 @@ describe("deleteAccount", () => {
     expect(data.email).not.toBe("reader@example.com");
     expect(data.username).toBe("deleted_user-1");
     expect(deleteStoredMedia).toHaveBeenCalledWith("https://cdn.example.com/profile.jpg");
+    // The in-app notice promises that journals and study content are erased.
+    expect(prisma.journalEntry.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "user-1" },
+    });
+    expect(prisma.journalLike.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "user-1" },
+    });
+    expect(prisma.supportTicket.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "user-1" },
+    });
   });
 
   test("refuses to delete an account twice", async () => {
