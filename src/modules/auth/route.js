@@ -20,7 +20,7 @@ router.post("/upload-cover", authenticate, authController.uploadCover);
 router.post("/upload-profile-photo", authenticate, authController.uploadProfilePhoto);
 router.post("/update-password", authenticate, authController.updatePassword);
 router.post("/force-change-password", authenticate, authController.forceChangePassword);
-router.post("/delete-account", authenticate, authController.deleteAccount);
+router.post("/delete-account", authenticate, authLimiter, authController.deleteAccount);
 router.post("/resend-verification", authLimiter, authController.resendVerification);
 router.post("/set-password", authLimiter, authController.setPassword);
 router.post("/forgot-password", authLimiter, authController.forgotPassword);
