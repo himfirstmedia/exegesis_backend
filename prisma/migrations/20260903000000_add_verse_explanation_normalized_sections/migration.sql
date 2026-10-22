@@ -76,6 +76,10 @@ SELECT "id", "explanation", "learn_more" FROM "verse_explanations"
 WHERE "explanation" IS NOT NULL;
 
 -- DropColumns: remove old JSON-blob columns
-ALTER TABLE "verse_explanations" DROP COLUMN "explanation",
-DROP COLUMN "learn_more",
-DROP COLUMN "prompt_ids";
+--
+-- IF EXISTS because `prompt_ids` only ever existed in a database created
+-- with `prisma db push`; a database built from the migration chain never
+-- had the column.
+ALTER TABLE "verse_explanations" DROP COLUMN IF EXISTS "explanation",
+DROP COLUMN IF EXISTS "learn_more",
+DROP COLUMN IF EXISTS "prompt_ids";

@@ -104,13 +104,22 @@ export const handleStripeWebhook = async (req, res) => {
   const data = event.data.object;
 
   try {
-    // Stripe retries deliveries. Ignore an event that was already applied so
-    // renewals, slots, and subscription history are not processed twice.
-    const alreadyProcessed = await prisma.subscriptionEvent.findFirst({
-      where: { stripeEventId: event.id },
-      select: { id: true },
-    });
-    if (alreadyProcessed) return res.json({ received: true, duplicate: true });
+    // Stripe retries deliveries, and two replicas can receive the same
+    // delivery at the same time. Claim the event first: the receipt table's
+    // primary key is the Stripe event id, so exactly one claim can win and
+    // every later delivery is skipped. Checking first and recording later
+    // left a window in which both copies applied the change.
+    try {
+      await prisma.stripeWebhookReceipt.create({
+        data: { id: event.id, eventType: event.type },
+      });
+    } catch (claimError) {
+      const isDuplicate = claimError?.code === 'P2002';
+      if (isDuplicate) {
+        return res.json({ received: true, duplicate: true });
+      }
+      throw claimError;
+    }
 
     switch (event.type) {
       // ── New checkout / upgrade checkout completed ────────────────────────
@@ -462,9 +471,18 @@ export const handleStripeWebhook = async (req, res) => {
     }
   } catch (error) {
     console.error("[StripeWebhook] Error processing event:", error);
+    // Release the claim so Stripe's retry is not skipped as a duplicate.
+    // Without this, a transient failure would consume the event id and the
+    // subscription change would never be applied.
+    try {
+      await prisma.stripeWebhookReceipt.delete({ where: { id: event.id } });
+    } catch (releaseError) {
+      console.warn(
+        "[StripeWebhook] Failed to release event claim:",
+        releaseError.message,
+      );
+    }
     // Return a failure so Stripe retries transient database/API failures.
-    // Event processing is idempotent because completed event IDs are checked
-    // before the switch above.
     return res.status(500).json({ error: "Webhook processing failed" });
   }
 

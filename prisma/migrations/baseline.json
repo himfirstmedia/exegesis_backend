@@ -1,0 +1,4 @@
+{
+  "_comment": "The live database was created with `prisma db push`, so it already reflects every migration up to and including this one. `npm run db:baseline` records them so that only newer migrations run.",
+  "appliedThrough": "20261012000000_add_support_message_receipts"
+}

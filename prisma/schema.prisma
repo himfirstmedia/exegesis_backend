@@ -91,6 +91,17 @@ model SubscriptionEvent {
   @@map("subscription_events")
 }
 
+/// Idempotency receipts for Stripe webhook deliveries. The primary key is
+/// the Stripe event id, so a duplicate delivery fails to insert and the
+/// handler can skip the event instead of applying it twice.
+model StripeWebhookReceipt {
+  id          String   @id
+  eventType   String   @map("event_type")
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@map("stripe_webhook_receipts")
+}
+
 model SubscriptionTier {
   id             String   @id
   name           String   @unique
