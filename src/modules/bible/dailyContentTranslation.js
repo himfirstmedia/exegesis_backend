@@ -2,9 +2,16 @@ import {
   normalizeLanguage,
   translateMany,
 } from "../../utils/translator.js";
+import {
+  buildLocalizedReference,
+  localizeReferenceText,
+  splitCrossReference,
+} from "./bookNames.js";
 
 const VERSE_FIELDS = [
+  "title",
   "text",
+  "verseText",
   "reflection",
   "explanation",
   "learnMore",
@@ -16,7 +23,7 @@ const VERSE_FIELDS = [
   "finalThoughts",
 ];
 
-const DEVOTION_FIELDS = ["title", "content", ...VERSE_FIELDS];
+const DEVOTION_FIELDS = ["title", "content", ...VERSE_FIELDS.filter(field => field !== "title")];
 const EXEGESIS_FIELDS = [
   "title",
   "introduction",
@@ -72,6 +79,54 @@ const addJsonArray = (record, field, entries) => {
   } catch {
     // Keep malformed legacy JSON unchanged.
   }
+};
+
+/**
+ * Cross-reference entries are usually "Book chapter:verse — explanation".
+ * Translate only the explanation: machine providers either leave the English
+ * book name untouched or replace it with an unrelated word (for example
+ * Chinese LibreTranslate renders "Proverbs" as "原词"). The localized book
+ * name comes from the static map instead.
+ */
+const addCrossReferences = (record, entries, lang) => {
+  if (typeof record.crossReferences !== "string") return;
+  try {
+    const values = JSON.parse(record.crossReferences);
+    if (!Array.isArray(values)) return;
+    const translated = [...values];
+    values.forEach((value, index) => {
+      if (typeof value !== "string" || !value.trim()) return;
+      const parts = splitCrossReference(value);
+      if (parts && parts.text) {
+        const reference = localizeReferenceText(parts.reference, lang);
+        addText(entries, parts.text, (next) => {
+          translated[index] = `${reference}${parts.separator}${next}`;
+          record.crossReferences = JSON.stringify(translated);
+        });
+        return;
+      }
+      translated[index] = localizeReferenceText(value, lang);
+      record.crossReferences = JSON.stringify(translated);
+    });
+  } catch {
+    // Keep malformed legacy JSON unchanged.
+  }
+};
+
+/**
+ * Devotion `content` stores the reference on its first line followed by the
+ * verse text and meditation. Replace that line after translation so the
+ * embedded reference is localized even when the provider leaves it English.
+ */
+const localizeContentReference = (record, lang) => {
+  if (typeof record.content !== "string" || !record.bookName) return;
+  const lines = record.content.split("\n");
+  if (!lines.length) return;
+  const reference = buildLocalizedReference(record, lang);
+  if (!reference) return;
+  const version = record.bibleVersion ? ` (${record.bibleVersion})` : "";
+  lines[0] = `${reference}${version}`;
+  record.content = lines.join("\n");
 };
 
 const addWordStudies = (record, entries) => {
@@ -168,14 +223,30 @@ const translateRecord = async (
 
   if (includeRichFields) {
     ARRAY_FIELDS.forEach((field) => addJsonArray(translated, field, entries));
+    addCrossReferences(translated, entries, target);
     addWordStudies(translated, entries);
   }
 
-  if (!entries.length) return { ...translated, contentLanguage: target };
+  const finalize = () => {
+    const reference = buildLocalizedReference(translated, target);
+    if (reference) translated.reference = reference;
+    if (includeRichFields) localizeContentReference(translated, target);
+    return {
+      ...translated,
+      ...(typeof item.title === "string" ? { sourceTitle: item.title } : {}),
+      contentLanguage: target,
+    };
+  };
+
+  if (!entries.length) return finalize();
 
   try {
     await translateEntries(entries, target, timeBudgetMs);
-    return { ...translated, contentLanguage: target };
+    if (typeof item.title === "string" && item.title.trim() &&
+        translated.title?.trim() === item.title.trim()) {
+      throw new Error("Daily content title was not translated");
+    }
+    return finalize();
   } catch (error) {
     const warningKey = `${target}:${error.message}`;
     const lastWarning = translationWarnings.get(warningKey) || 0;
@@ -188,8 +259,14 @@ const translateRecord = async (
     }
     if (throwOnFailure) throw error;
     // Mark the payload as English explicitly: the caller (and the app) uses
-    // this to know the text still has to be translated.
-    return { ...item, contentLanguage: "en" };
+    // this to know the text still has to be translated. The reference is still
+    // safe to localize from the canonical book/chapter/verse fields.
+    const reference = buildLocalizedReference(item, target);
+    return {
+      ...item,
+      ...(reference ? { reference } : {}),
+      contentLanguage: "en",
+    };
   }
 };
 

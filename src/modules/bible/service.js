@@ -1631,7 +1631,7 @@ export const getTodaysVerse = async (data = {}) => {
     .toLowerCase();
   if (normLang === "en") return todaysVerseResult;
 
-  const translationKey = `todays-verse:v5:translated:${normLang}:${dailyTranslationSourceKey(dv)}`;
+  const translationKey = `todays-verse:v7:translated:${normLang}:${dailyTranslationSourceKey(dv)}`;
   return getCachedDailyTranslationOrWarm({
     cacheKey: translationKey,
     sourceResult: todaysVerseResult,
@@ -1726,7 +1726,7 @@ export const getTodaysDevotion = async (data = {}) => {
     .toLowerCase();
   if (normLang === "en") return result;
 
-  const translationKey = `todays-devotion:v4:translated:${normLang}:${dailyTranslationSourceKey(dv)}`;
+  const translationKey = `todays-devotion:v6:translated:${normLang}:${dailyTranslationSourceKey(dv)}`;
   return getCachedDailyTranslationOrWarm({
     cacheKey: translationKey,
     sourceResult: result,

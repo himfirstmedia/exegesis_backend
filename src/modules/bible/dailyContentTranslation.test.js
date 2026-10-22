@@ -34,12 +34,14 @@ describe("daily content translation", () => {
   test("translates daily verse prose while preserving metadata", async () => {
     const item = {
       id: 12,
+      title: "The Grace of Forgiveness",
       bookName: "John",
       chapter: 3,
       verseNumber: 16,
       reference: "John 3:16",
       bibleVersion: "KJV",
       text: "For God so loved the world.",
+      verseText: "For God so loved the world.",
       explanation: "God's love is demonstrated.",
       reflection: "Consider God's love.",
       learnMore: "https://example.com/learn-more",
@@ -55,6 +57,9 @@ describe("daily content translation", () => {
     const result = await translateDailyVerseContent(item, "ar");
 
     expect(result.text).toBe("AR:For God so loved the world.");
+    expect(result.verseText).toBe("AR:For God so loved the world.");
+    expect(result.title).toBe("AR:The Grace of Forgiveness");
+    expect(result.sourceTitle).toBe("The Grace of Forgiveness");
     expect(result.explanation).toBe("AR:God's love is demonstrated.");
     expect(result.reflection).toBe("AR:Consider God's love.");
     expect(result.learnMore).toBe("https://example.com/learn-more");
@@ -65,10 +70,23 @@ describe("daily content translation", () => {
       { word: "loved", strongs: "G25", definition: "AR:to love" },
     ]);
     expect(result.bookName).toBe("John");
-    expect(result.reference).toBe("John 3:16");
+    expect(result.reference).toBe("يوحنا 3:16");
     expect(result.bibleVersion).toBe("KJV");
-    expect(result.crossReferences).toBe(item.crossReferences);
+    expect(JSON.parse(result.crossReferences)).toEqual(["رسالة روما 5:8"]);
     expect(result.contentLanguage).toBe("ar");
+  });
+
+  test("does not mark an unchanged English title as translated", async () => {
+    translateMany.mockImplementation(async texts => texts.map(text =>
+      text === "The Grace of Forgiveness" ? text : `FR:${text}`));
+    const item = { title: "The Grace of Forgiveness", content: "Reflect on forgiveness." };
+    const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(translateDailyDevotionContent(item, "fr")).resolves.toEqual({ ...item, contentLanguage: "en" });
+      await expect(translateDailyDevotionContent(item, "fr", { throwOnFailure: true })).rejects.toThrow("title was not translated");
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   test("translates devotion title, content, and rich prose", async () => {
@@ -105,7 +123,37 @@ describe("daily content translation", () => {
     expect(result.teachingBody).toBe("AR:The Word was with God.");
     expect(result.application).toBe("AR:Listen to the Word.");
     expect(result.passageReference).toBe("John 1:1-5");
+    expect(result.reference).toBe("يوحنا 1:1-5");
     expect(result.tags).toBe("john,word");
+  });
+
+  test("localizes the reference and cross-reference explanation", async () => {
+    const result = await translateDailyDevotionContent(
+      {
+        bookName: "Jeremiah",
+        chapter: 29,
+        verseNumber: 11,
+        bibleVersion: "NKJV",
+        content:
+          "Jeremiah 29:11 (NKJV)\nFor I know the plans I have for you.\n\nA future with hope.",
+        crossReferences: JSON.stringify([
+          "Proverbs 3:5–6 — Trust in the Lord",
+          "Romans 8:28",
+          "Rom 8:28—God loves us",
+        ]),
+      },
+      "zh",
+    );
+
+    expect(result.bookName).toBe("Jeremiah");
+    expect(result.reference).toBe("耶利米书 29:11");
+    expect(result.content.split("\n")[0]).toBe("耶利米书 29:11 (NKJV)");
+    expect(JSON.parse(result.crossReferences)).toEqual([
+      "箴言 3:5–6 — AR:Trust in the Lord",
+      "罗马书 8:28",
+      "罗马书 8:28—AR:God loves us",
+    ]);
+    expect(result.contentLanguage).toBe("zh");
   });
 
   test("keeps malformed JSON and English responses unchanged", async () => {
@@ -159,6 +207,7 @@ describe("daily content translation", () => {
 
     expect(result).toEqual({
       title: `AR:${item.title}`,
+      sourceTitle: item.title,
       content: `AR:${item.content}`,
       reflection: `AR:${item.reflection}`,
       contentLanguage: "fr",
@@ -205,6 +254,7 @@ describe("daily content translation", () => {
 
     await expect(promise).resolves.toEqual({
       title: "HI:Patient title",
+      sourceTitle: "Patient title",
       content: "HI:Patient content",
       contentLanguage: "hi",
     });

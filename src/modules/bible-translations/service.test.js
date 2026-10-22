@@ -88,7 +88,7 @@ describe('catalog presentation', () => {
       fileName: 'EnglishBereanBible.xml',
     });
     expect(bengali).toMatchObject({
-      name: 'Indian Revised Version - Bengali (IRV-BEN)',
+      name: 'ইন্ডিয়ান রিভাইজড ভার্সন (IRV-BEN)',
       abbreviation: 'IRV-BEN',
       fileName: 'BengaliBible.xml',
       year: '2019',
@@ -284,6 +284,8 @@ describe('getAllTranslations', () => {
     const list = await getAllTranslations();
     expect(Array.isArray(list)).toBe(true);
     expect(list.length).toBeGreaterThan(10);
-    expect(list.some((t) => t.id === 'NKJ')).toBe(true);
+    // Assert against a translation in the current free catalog, not the
+    // removed NKJ edition (which must not be reintroduced to satisfy a test).
+    expect(list.some((t) => t.id === 'Berean')).toBe(true);
   });
 });

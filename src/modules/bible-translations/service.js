@@ -245,6 +245,52 @@ export const TRANSLATION_DISPLAY_NAMES = {
   'Ukrainian': { name: 'Ukrainian 1871', year: '1871' },
 };
 
+// Curated catalog labels. Several source XML files only expose a partial
+// <bible> header, which used to produce labels such as "Holy Bible", "1961",
+// "Bible HHBD =" and "BSI) 1880". Keep the publication name in the translation
+// language so the library never shows a malformed or English-only label for a
+// non-English Bible. English versions keep their established names.
+const CATALOG_PRESENTATION_OVERRIDES = {
+  Arabic: { name: 'الكتاب المقدس (SVD 1865)', abbreviation: 'SVD', year: '1865' },
+  Assamese: { name: 'ইণ্ডিয়ান ৰিভাইচ ভাৰচন (IRV) 2019', abbreviation: 'IRV', year: '2019' },
+  Bengali: { name: 'ইন্ডিয়ান রিভাইজড ভার্সন (IRV-BEN)', abbreviation: 'IRV-BEN', year: '2019' },
+  ChineseSimplified: { name: '和合本 1919 (CUV1919)', abbreviation: 'CUV1919', year: '1919' },
+  Dogri: { name: 'डोगरी नवां नियम', abbreviation: 'DOGRI', year: null },
+  French: { name: 'La Sainte Bible par Louis Segond 1910', abbreviation: 'LSG', year: '1910' },
+  German: { name: 'Luther 1912 (LUT1912)', abbreviation: 'LUT1912', year: '1912' },
+  GreekModern1904: { name: 'Νεοελληνική Μετάφραση 1904 (Modern1904)', abbreviation: 'Modern1904', year: '1904' },
+  Gujarati2017: { name: 'ઇન્ડિયન રિવાઇઝ્ડ વર્ઝન (IRVGUJ)', abbreviation: 'IRVGUJ', year: '2017' },
+  Hindi: { name: 'पवित्र बाइबल (HHBD)', abbreviation: 'HHBD', year: null },
+  Indonesian: { name: 'Alkitab Terjemahan Baru', abbreviation: 'TB', year: null },
+  Italian: { name: 'Bibbia CEI 1974', abbreviation: 'CEI', year: '1974' },
+  Japanese: { name: '口語訳聖書 1955', abbreviation: 'JCB', year: '1955' },
+  KannadaIRV: { name: 'ಇಂಡಿಯನ್ ರಿವೈಜ್ಡ್ ವರ್ಶನ್ (IRV) 2019', abbreviation: 'IRV', year: '2019' },
+  Konkani: { name: 'बायबल नवो करार (BSI)', abbreviation: 'BSI', year: null },
+  Korean: { name: '개역한글 1961', abbreviation: 'KRV', year: '1961' },
+  Maithili: { name: 'मैथिली बाइबल 2010', abbreviation: 'MTH', year: '2010' },
+  MalayalamBCS: { name: 'മലയാളം ബൈബിൾ (IRV) 2019', abbreviation: 'IRV', year: '2019' },
+  MarathiIRVMAR: { name: 'मराठी इंडियन रिवाइज्ड वर्जन (IRV)', abbreviation: 'IRV', year: null },
+  Meitei: { name: 'ꯃꯤꯇꯩ ꯕꯥꯏꯕꯦꯜ (ꯑꯅꯧꯕ ꯋꯥꯔꯦꯞꯅꯕ) 2022', abbreviation: 'MNI', year: '2022' },
+  Nepali2012: { name: 'नेपाली नयाँ संशोधित संस्करण (NNRV) 2012', abbreviation: 'NNRV', year: '2012' },
+  OdiaIRV2017: { name: 'ଇଣ୍ଡିଆନ ରିଭାଇଜଡ ଭର୍ସନ (IRV) 2017', abbreviation: 'IRV', year: '2017' },
+  Polish: { name: 'Biblia Gdańska 1881-1910 (PDG)', abbreviation: 'PDG', year: '1910' },
+  Portuguese: { name: 'Almeida Revista e Atualizada 1993 (ARA)', abbreviation: 'ARA', year: '1993' },
+  PunjabiIRV: { name: 'ਇੰਡੀਅਨ ਰਿਵਾਇਜ਼ਡ ਵਰਜ਼ਨ (IRV) - ਪੰਜਾਬੀ', abbreviation: 'IRV', year: null },
+  Romanian: { name: 'Biblia Cornilescu 1928 (COR1928)', abbreviation: 'COR1928', year: '1928' },
+  Russian: { name: 'Синодальный перевод 1876', abbreviation: 'SYNO', year: '1876' },
+  SanskritDevanagari: { name: 'संस्कृत बाइबल (नवीन नियम)', abbreviation: 'SKT', year: null },
+  SantaliCommon: { name: 'ᱥᱟᱱᱛᱟᱲᱤ ᱵᱟᱭᱵᱮᱞ (ᱥᱟᱫᱷᱟᱨᱚᱱ)', abbreviation: 'SAT', year: null },
+  SindhiMuslim: { name: 'سنڌي مقدس ڪلام (مسلم)', abbreviation: 'MSB', year: '2022' },
+  Spanish: { name: 'Reina-Valera 1909 (RVR)', abbreviation: 'RVR', year: '1909' },
+  Swahili: { name: 'Biblia ya Kiswahili (SRUV)', abbreviation: 'SRUV', year: null },
+  Tagalog: { name: 'Ang Biblia 1905/1982 (TLAB)', abbreviation: 'TLAB', year: '1982' },
+  Tamil2017: { name: 'இந்தியன் ரிவைஸ்டு வேர்ஷன் - தமிழ் (IRV-TAM)', abbreviation: 'IRV-TAM', year: '2019' },
+  Telugu: { name: 'తెలుగు బైబిల్ (BSI) 1880', abbreviation: 'BSI', year: '1880' },
+  Turkish: { name: 'Yorumsuz Türkçe Çeviri (YTC)', abbreviation: 'YTC', year: '2024' },
+  Ukrainian: { name: 'Українська Біблія 1871 (KUL1871)', abbreviation: 'KUL1871', year: '1871' },
+  Urdu: { name: 'اردو بائبل (IRV) 2019', abbreviation: 'IRV', year: '2019' },
+};
+
 const DISPLAY_ABBREVIATIONS = {
   Amplified: 'AMP',
   AmplifiedClassic: 'AMPC',
@@ -311,6 +357,16 @@ const stripLanguagePrefixFromDisplayName = (entry, name) => {
 };
 
 const getCatalogPresentation = (entry) => {
+  const override = CATALOG_PRESENTATION_OVERRIDES[entry.shortId];
+  if (override) {
+    return {
+      abbreviation: override.abbreviation,
+      name: override.name,
+      fileName: entry.fileName,
+      year: override.year ?? null,
+    };
+  }
+
   const abbreviation = getCatalogVersionCode(entry);
   const displayInfo = TRANSLATION_DISPLAY_NAMES[entry.shortId];
   const rawName = displayInfo?.name || entry.displayName ||
@@ -631,11 +687,12 @@ export const getAllTranslations = async () => {
   const entries = buildCatalog();
   const translations = entries.map((e) => {
     const displayInfo = TRANSLATION_DISPLAY_NAMES[e.shortId];
+    const override = CATALOG_PRESENTATION_OVERRIDES[e.shortId];
     return {
       id: e.shortId,
-      name: displayInfo ? displayInfo.name : e.fileId.replace(/Bible$/, ''),
+      name: override?.name || (displayInfo ? displayInfo.name : e.fileId.replace(/Bible$/, '')),
       shortName: e.shortId,
-      year: displayInfo?.year || null,
+      year: override?.year || displayInfo?.year || null,
       language: e.language,
       languageName: e.languageName,
       fileSize: e.fileSize,
