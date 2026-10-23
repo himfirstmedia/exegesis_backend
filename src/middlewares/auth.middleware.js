@@ -29,8 +29,16 @@ export const authenticate = async (req, res, next) => {
       return res.status(401).json(formatApiResponse({ status: 401, message: "User not found" }));
     }
 
-    if (userStatus.accountStatus === "deleted" || !userStatus.status) {
-      return res.status(403).json(formatApiResponse({ status: 403, message: "Account is disabled" }));
+    // Allow logout and push token cleanup even for deleted/disabled accounts.
+    // These are idempotent cleanup operations that must succeed so the client
+    // can clear local state without being blocked by the account's status.
+    const cleanupPaths = ["/auth/logout", "/push/unregister-token"];
+    const isCleanup = cleanupPaths.some((p) => req.path.endsWith(p));
+
+    if (!isCleanup) {
+      if (userStatus.accountStatus === "deleted" || !userStatus.status) {
+        return res.status(403).json(formatApiResponse({ status: 403, message: "Account is disabled" }));
+      }
     }
 
     req.user = decoded;
