@@ -45,7 +45,10 @@ const translationCharacterLimiter = (req, res, next) => {
   const windowMs = readPositiveInt("TRANSLATION_RATE_LIMIT_WINDOW_MS", 60_000);
   const limit = readPositiveInt("TRANSLATION_RATE_LIMIT_CHARACTERS", 100_000);
   const key = req.user?.id ? `user:${req.user.id}` : `ip:${req.ip}`;
-  const cost = Array.isArray(req.body?.q)
+  // Reader streams compute their source cost on the server, not in a client q.
+  const cost = Number.isSafeInteger(req.translationCharacterCost) && req.translationCharacterCost >= 0
+    ? req.translationCharacterCost
+    : Array.isArray(req.body?.q)
     ? req.body.q.reduce((sum, text) => sum + text.length, 0)
     : req.body?.q?.length || 0;
   const current = translationCharacterUsage.get(key);

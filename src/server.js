@@ -34,6 +34,7 @@ import pushRouter from "./modules/push/route.js";
 import { initializePushService } from "./modules/push/service.js";
 import landingRouter from "./modules/landing/route.js";
 import supportRouter from "./modules/support/route.js";
+import readerStreamRouter from "./modules/reader-stream/route.js";
 import { handleStripeWebhook } from "./modules/subscriptions/webhook.js";
 import {
   getObjectStream,
@@ -182,6 +183,7 @@ app.use("/push", pushRouter);
 // Public landing-page data (daily verse, featured plans, tiers, stats).
 app.use("/landing", landingRouter);
 app.use("/support", supportRouter);
+app.use("/reader", readerStreamRouter);
 
 app.get("/health", (req, res) => {
   res.send(
