@@ -12,6 +12,7 @@ import {
   getVersesBatch,
   getVerse,
   searchVerses,
+  searchXmlVerses,
   getChapterRange,
   getReadingProgress,
   getChapterHeadings,
@@ -639,6 +640,30 @@ export const searchCross = async (req, res) => {
   }
 };
 
+// `search_index` is populated only for the seeded English translations. Cache
+// which translation ids exist there so requests for catalog-only translations
+// can skip the empty SQL query and use their XML instead.
+const SEARCH_INDEX_PRESENCE_TTL_MS = 10 * 60 * 1000;
+const searchIndexPresence = new Map();
+
+const translationHasSearchIndex = async (translationId) => {
+  const cached = searchIndexPresence.get(translationId);
+  if (cached && Date.now() - cached.checkedAt < SEARCH_INDEX_PRESENCE_TTL_MS) {
+    return cached.present;
+  }
+  const rows = await prisma.$queryRawUnsafe(
+    'SELECT 1 AS present FROM search_index WHERE translation = $1 LIMIT 1',
+    translationId,
+  );
+  const present = rows.length > 0;
+  if (searchIndexPresence.size > 100) searchIndexPresence.clear();
+  searchIndexPresence.set(translationId, {
+    present,
+    checkedAt: Date.now(),
+  });
+  return present;
+};
+
 export const searchFTS = async (req, res) => {
   try {
     // Support both URL param (legacy) and body param (new)
@@ -656,69 +681,91 @@ export const searchFTS = async (req, res) => {
     const skip = parseInt(offset) || 0;
     const searchTerm = query.trim();
 
-    const conditions = [];
-    const params = [];
-    let paramCount = 0;
+    const indexed = translationId
+      ? await translationHasSearchIndex(translationId)
+      : true;
 
-    const addParam = (val) => {
-      paramCount++;
-      params.push(val);
-      return `$${paramCount}`;
-    };
+    let resultTotal = 0;
+    let resultRows = [];
 
-    const prefixTsQuery = buildPrefixTsQuery(searchTerm);
-    const likeParam = addParam(`%${searchTerm}%`);
-    const tsParam = prefixTsQuery ? addParam(prefixTsQuery) : null;
+    if (indexed) {
+      const conditions = [];
+      const params = [];
+      let paramCount = 0;
 
-    conditions.push(tsParam
-      ? `(verse_tsv @@ to_tsquery('english', ${tsParam}) OR verse_text ILIKE ${likeParam})`
-      : `verse_text ILIKE ${likeParam}`);
+      const addParam = (val) => {
+        paramCount++;
+        params.push(val);
+        return `$${paramCount}`;
+      };
 
-    const rankExpr = tsParam
-      ? `ts_rank(verse_tsv, to_tsquery('english', ${tsParam}))`
-      : '0';
+      const prefixTsQuery = buildPrefixTsQuery(searchTerm);
+      const likeParam = addParam(`%${searchTerm}%`);
+      const tsParam = prefixTsQuery ? addParam(prefixTsQuery) : null;
 
-    if (translationId) {
-      conditions.push(`translation = ${addParam(translationId)}`);
+      conditions.push(tsParam
+        ? `(verse_tsv @@ to_tsquery('english', ${tsParam}) OR verse_text ILIKE ${likeParam})`
+        : `verse_text ILIKE ${likeParam}`);
+
+      const rankExpr = tsParam
+        ? `ts_rank(verse_tsv, to_tsquery('english', ${tsParam}))`
+        : '0';
+
+      if (translationId) {
+        conditions.push(`translation = ${addParam(translationId)}`);
+      }
+      if (bookName) {
+        conditions.push(`LOWER(book_name) = LOWER(${addParam(bookName)})`);
+      }
+      if (covenant === 'ot') {
+        conditions.push(`book_number BETWEEN ${addParam(1)} AND ${addParam(39)}`);
+      } else if (covenant === 'nt') {
+        conditions.push(`book_number BETWEEN ${addParam(40)} AND ${addParam(66)}`);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const totalSql = `SELECT COUNT(*)::int AS total FROM search_index ${whereClause}`;
+      const totalResult = await prisma.$queryRawUnsafe(totalSql, ...params);
+      resultTotal = totalResult[0]?.total || 0;
+
+      const dataSql = `
+        SELECT
+          book_number,
+          book_name,
+          chapter,
+          verse,
+          verse_text,
+          ${rankExpr} AS rank
+        FROM search_index
+        ${whereClause}
+        ORDER BY rank DESC, book_number ASC, chapter ASC, verse ASC
+        OFFSET ${skip}
+        LIMIT ${maxLimit}
+      `;
+
+      resultRows = await prisma.$queryRawUnsafe(dataSql, ...params);
+    } else {
+      // Catalog translations have no rows in search_index. Search their XML
+      // through a cached offset index instead of returning an empty page.
+      const xmlResult = await searchXmlVerses(translationId, searchTerm, {
+        bookName,
+        covenant,
+        limit: maxLimit,
+        offset: skip,
+      });
+      if (xmlResult) {
+        resultTotal = xmlResult.total;
+        resultRows = xmlResult.data;
+      }
     }
-    if (bookName) {
-      conditions.push(`LOWER(book_name) = LOWER(${addParam(bookName)})`);
-    }
-    if (covenant === 'ot') {
-      conditions.push(`book_number BETWEEN ${addParam(1)} AND ${addParam(39)}`);
-    } else if (covenant === 'nt') {
-      conditions.push(`book_number BETWEEN ${addParam(40)} AND ${addParam(66)}`);
-    }
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    const totalSql = `SELECT COUNT(*)::int AS total FROM search_index ${whereClause}`;
-    const totalResult = await prisma.$queryRawUnsafe(totalSql, ...params);
-    const total = totalResult[0]?.total || 0;
-
-    const dataSql = `
-      SELECT
-        book_number,
-        book_name,
-        chapter,
-        verse,
-        verse_text,
-        ${rankExpr} AS rank
-      FROM search_index
-      ${whereClause}
-      ORDER BY rank DESC, book_number ASC, chapter ASC, verse ASC
-      OFFSET ${skip}
-      LIMIT ${maxLimit}
-    `;
-
-    const rows = await prisma.$queryRawUnsafe(dataSql, ...params);
 
     // Generate headline with <mark> tags around matched terms
     const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const escapedTerm = escapeRegex(searchTerm);
     const markPattern = new RegExp(`(${escapedTerm})`, 'gi');
 
-    const data = (rows).map((row) => ({
+    const data = (resultRows).map((row) => ({
       ...row,
       headline: row.verse_text.replace(markPattern, '<mark>$1</mark>'),
       rank: row.rank ? Number(row.rank) : 0,
@@ -730,7 +777,7 @@ export const searchFTS = async (req, res) => {
     return res.status(200).json(formatApiResponse({
       status: 200,
       message: "OK",
-      data: { query, total, page: Math.floor(skip / maxLimit) + 1, limit: maxLimit, data },
+      data: { query, total: resultTotal, page: Math.floor(skip / maxLimit) + 1, limit: maxLimit, data },
     }));
   } catch (error) {
     console.error('FTS search error:', error);

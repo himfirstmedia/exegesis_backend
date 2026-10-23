@@ -874,6 +874,173 @@ export const searchVerses = async (id, query, limit = 50) => {
   return results;
 };
 
+// ── XML fallback search ──────────────────────────────────────────────────
+// `search_index` only contains the English translations that were seeded into
+// Postgres. Catalog translations (Tamil, Hindi, German, …) have no rows there,
+// so searching them used to return an empty page. Build a compact offset index
+// from the translation's XML once and serve substring search from it. The
+// index stores offsets, not verse text, so a 31k-verse Bible costs little
+// memory and pagination does not re-parse the document.
+const XML_SEARCH_INDEX_MAX = 2;
+const xmlSearchIndexCache = new Map();
+const xmlSearchIndexOrder = [];
+
+const rememberXmlSearchIndex = (key, xml, entries) => {
+  if (xmlSearchIndexCache.has(key)) {
+    const at = xmlSearchIndexOrder.indexOf(key);
+    if (at !== -1) xmlSearchIndexOrder.splice(at, 1);
+  } else if (xmlSearchIndexOrder.length >= XML_SEARCH_INDEX_MAX) {
+    const oldest = xmlSearchIndexOrder.shift();
+    if (oldest) xmlSearchIndexCache.delete(oldest);
+  }
+  xmlSearchIndexCache.set(key, { xml, entries });
+  xmlSearchIndexOrder.push(key);
+};
+
+const buildXmlVerseIndex = (xml) => {
+  const entries = [];
+  const expression =
+    /<book\b[^>]*\bnumber\s*=\s*["'](\d+)["'][^>]*>|<chapter\b[^>]*\bnumber\s*=\s*["'](\d+)["'][^>]*>|<verse\b[^>]*\bnumber\s*=\s*["'](\d+)["'][^>]*>([\s\S]*?)<\/verse>/gi;
+  let book = 0;
+  let chapter = 0;
+  let match;
+
+  while ((match = expression.exec(xml)) !== null) {
+    if (match[1]) {
+      book = parseInt(match[1], 10);
+      chapter = 0;
+      continue;
+    }
+    if (match[2]) {
+      chapter = parseInt(match[2], 10);
+      continue;
+    }
+    if (!match[3] || !book || !chapter) continue;
+
+    const text = match[4] || '';
+    const end = match.index + match[0].length - '</verse>'.length;
+    entries.push({
+      book,
+      chapter,
+      verse: parseInt(match[3], 10),
+      start: end - text.length,
+      end,
+    });
+  }
+
+  return entries;
+};
+
+const decodeXmlEntities = (raw) =>
+  raw
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&amp;/g, '&');
+
+const normalizeBookKey = (name) =>
+  String(name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+const findVerseEntryAt = (entries, position) => {
+  let low = 0;
+  let high = entries.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const entry = entries[mid];
+    if (position < entry.start) high = mid - 1;
+    else if (position >= entry.end) low = mid + 1;
+    else return mid;
+  }
+  return -1;
+};
+
+const runXmlSearch = (xml, entries, query, options = {}) => {
+  const term = String(query || '').trim();
+  if (!term || entries.length === 0) return null;
+
+  const limit = Math.max(1, Math.min(parseInt(options.limit, 10) || 50, 200));
+  const offset = Math.max(0, parseInt(options.offset, 10) || 0);
+  const covenant = options.covenant || 'all';
+  const bookFilter = options.bookName
+    ? normalizeBookKey(options.bookName)
+    : null;
+  const matcher = new RegExp(escapeRegExp(term), 'gi');
+  const hits = [];
+  let lastEntry = -1;
+  let match;
+
+  while ((match = matcher.exec(xml)) !== null) {
+    if (match[0].length === 0) {
+      matcher.lastIndex += 1;
+      continue;
+    }
+    const entryIndex = findVerseEntryAt(entries, match.index);
+    if (entryIndex < 0 || entryIndex === lastEntry) continue;
+    lastEntry = entryIndex;
+
+    const entry = entries[entryIndex];
+    const bookName = BOOK_NAMES[entry.book] || '';
+    if (bookFilter && normalizeBookKey(bookName) !== bookFilter) continue;
+    if (covenant === 'ot' && (entry.book < 1 || entry.book > 39)) continue;
+    if (covenant === 'nt' && (entry.book < 40 || entry.book > 66)) continue;
+    hits.push(entry);
+  }
+
+  const data = hits.slice(offset, offset + limit).map((entry) => {
+    const text = decodeXmlEntities(xml.slice(entry.start, entry.end))
+      .replace(/\s+/g, ' ')
+      .trim();
+    return {
+      book_number: entry.book,
+      book_name: BOOK_NAMES[entry.book] || `Book ${entry.book}`,
+      chapter: entry.chapter,
+      verse: entry.verse,
+      verse_text: text,
+      rank: 0,
+    };
+  });
+
+  return { total: hits.length, data };
+};
+
+/**
+ * Search a Bible XML string directly. Exported for tests and for callers that
+ * already hold the document in memory.
+ */
+export const searchXmlText = (xml, query, options = {}) => {
+  const entries = buildXmlVerseIndex(xml);
+  if (entries.length === 0) return null;
+  return runXmlSearch(xml, entries, query, options);
+};
+
+/**
+ * Search a translation's XML file, with a small LRU of offset indexes.
+ * Returns null when the translation has no readable XML file.
+ */
+export const searchXmlVerses = async (id, query, options = {}) => {
+  let xml;
+  try {
+    xml = await getRawBibleXml(id);
+  } catch {
+    return null;
+  }
+  if (!xml) return null;
+
+  const key = toFullId(id);
+  let cached = xmlSearchIndexCache.get(key);
+  if (!cached || cached.xml !== xml) {
+    const entries = buildXmlVerseIndex(xml);
+    if (entries.length === 0) return null;
+    rememberXmlSearchIndex(key, xml, entries);
+    cached = { xml, entries };
+  }
+
+  return runXmlSearch(xml, cached.entries, query, options);
+};
+
 /** Fetch multiple chapters at once while reusing the canonical chapter cache. */
 export const getVersesBatch = async (id, bookName, chapters) => {
   resolveBookContext(id, bookName);
