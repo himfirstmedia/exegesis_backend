@@ -69,10 +69,17 @@ export async function streamReaderTranslation({ source, fields, atomicFields, av
     checkAbort(signal);
     const text = result?.translatedText?.trim();
     const reportedTarget = result?.targetLanguage || result?.target;
-    const sameAllowed = (['author', 'keyPeople'].includes(plan.jobs[index].field) && plan.jobs[index].text.length <= 60 && !/[.!?]/.test(plan.jobs[index].text)) ||
-      (language === 'fr' && ['Introduction', 'Application', 'Conclusion', 'Question', 'Questions'].includes(plan.jobs[index].text.trim()));
+    const job = plan.jobs[index];
+    const shortCanonical = job.text.length <= 60 && !/[.!?]/.test(job.text);
+    // Cognates and proper nouns legitimately survive translation unchanged
+    // (e.g. French "propitiation"); prose never does.
+    const sameAllowed = (['author', 'keyPeople', 'dateWritten', 'locationWritten'].includes(job.field) && shortCanonical) ||
+      (shortCanonical && (job.key === 'term' ||
+        (job.key === 'label' && job.field === 'studyTools') ||
+        (job.key === 'translation' && job.field === 'interlinearWords'))) ||
+      (language === 'fr' && ['Introduction', 'Application', 'Conclusion', 'Question', 'Questions'].includes(job.text.trim()));
     if (error || !text || (reportedTarget && reportedTarget.toLowerCase() !== language.toLowerCase()) ||
-      (!sameAllowed && text === plan.jobs[index].text.trim())) {
+      (!sameAllowed && text === job.text.trim())) {
       await emit('error', { ...common, code: 'TRANSLATION_FAILED', completed: index, pendingFields: pendingFields(index) });
       return; // Never certify source fallbacks or skip a missing chunk.
     }

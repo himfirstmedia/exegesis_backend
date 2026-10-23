@@ -8,12 +8,11 @@ import { BIBLE_BOOK_NAMES } from '../bible/bookNames.js';
 function bookDesignation(bookName) {
   const index = Object.keys(BIBLE_BOOK_NAMES.en).indexOf(bookName === 'Psalm' ? 'Psalms' : bookName) + 1;
   if (!index) return '';
-  const first = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth',
-    'Tenth', 'Eleventh', 'Twelfth', 'Thirteenth', 'Fourteenth', 'Fifteenth', 'Sixteenth', 'Seventeenth', 'Eighteenth', 'Nineteenth'];
-  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty'];
-  const exact = { 20: 'Twentieth', 30: 'Thirtieth', 40: 'Fortieth', 50: 'Fiftieth', 60: 'Sixtieth' };
-  const ordinal = first[index - 1] || exact[index] || `${tens[Math.floor(index / 10)]}-${first[index % 10 - 1]}`;
-  return `The ${ordinal} Book of the Bible`;
+  // Numeric ordinals translate reliably across providers. Word ordinals such
+  // as "Twenty-Third" are occasionally misread as "Third" by public engines.
+  const mod100 = index % 100;
+  const suffix = mod100 >= 11 && mod100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[index % 10] || 'th');
+  return `The ${index}${suffix} Book of the Bible`;
 }
 
 const dailyVerse = ['title', 'text', 'reflection', 'verseIntroduction', 'explanation', 'application',

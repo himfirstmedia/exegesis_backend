@@ -42,6 +42,30 @@ it('preserves JSON, HTML, canonical references and original-language words', () 
   expect(partial.content).toBe('<p><b>Premier passage</b></p>');
 });
 
+it('preserves structural reader metadata while translating nested prose', () => {
+  const original = {
+    interlinearWords: [{ original: 'λόγος', strongs: 'G3056', transliteration: 'logos', translation: 'word', grammar: 'N-NSM', lemma: 'λόγος' }],
+    dictionaryTerms: [{ term: 'Grace', pronunciation: 'grayce', definition: 'Unmerited favor.', description: 'A gift.' }],
+    crossReferences: [{ ref: 'John 3:16', bookName: 'John', chapter: 3, verse: 16, text: 'For God so loved the world.',
+      commentary: 'A familiar summary.', verseText: 'For God so loved the world.', contextVerses: [{ verse: 15, text: 'Earlier verse.' }] }],
+    studyTools: [{ id: 7, toolType: 'CONTRAST', label: 'Not X but Y', description: 'An explicit contrast.',
+      verseRefs: [{ verse: 16, excerpt: 'For God so loved…' }], studyToolWords: [{ word: 'ἀλλά', order: 2 }] }],
+  };
+  const fields = ['interlinearWords', 'dictionaryTerms', 'crossReferences', 'studyTools'];
+  const plan = buildReaderPlan(original, fields, ['crossReferences']);
+  const translated = plan.render(plan.jobs.map(job => `FR:${job.text}`));
+  expect(translated.interlinearWords[0]).toEqual({ original: 'λόγος', strongs: 'G3056', transliteration: 'logos',
+    translation: 'FR:word', grammar: 'N-NSM', lemma: 'λόγος' });
+  expect(translated.dictionaryTerms[0]).toEqual({ term: 'FR:Grace', pronunciation: 'grayce',
+    definition: 'FR:Unmerited favor.', description: 'FR:A gift.' });
+  expect(translated.crossReferences[0]).toMatchObject({ ref: 'John 3:16', bookName: 'John', chapter: 3,
+    verse: 16, text: 'FR:For God so loved the world.', commentary: 'FR:A familiar summary.',
+    verseText: 'FR:For God so loved the world.', contextVerses: [{ verse: 15, text: 'FR:Earlier verse.' }] });
+  expect(translated.studyTools[0]).toMatchObject({ id: 7, toolType: 'CONTRAST', label: 'FR:Not X but Y',
+    description: 'FR:An explicit contrast.', verseRefs: [{ verse: 16, excerpt: 'FR:For God so loved…' }],
+    studyToolWords: [{ word: 'ἀλλά', order: 2 }] });
+});
+
 it('publishes the first translated chunk before a later provider call finishes', async () => {
   const events = []; const controller = new AbortController();
   let first; const firstPatch = new Promise(resolve => { first = resolve; });

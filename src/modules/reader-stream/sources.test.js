@@ -24,6 +24,12 @@ it('keeps exegesis ID lookup restricted to published records', async () => {
   expect(prisma.dailyExegesis.findFirst).toHaveBeenCalledWith({ where: { id: 7n, isPublished: true } });
   expect(result.source.id).toBe(7);
 });
+it('uses a numeric book ordinal so providers cannot misread hyphenated ordinals', async () => {
+  books.getBookPrologue.mockResolvedValue({ status: 200, data: { bookName: 'Isaiah' } });
+  const result = await loadReaderSource({ kind: 'book-overview', params: { bookName: 'Isaiah' } });
+  expect(result.source.designation).toBe('The 23rd Book of the Bible');
+});
+
 it('selects only the requested resource scope and returns availability without English content', async () => {
   resources.getVerseResources.mockResolvedValue({ status: 200, data: { commentaries: [{ text: 'Commentary' }], dictionaryTerms: [{ definition: 'Definition' }] } });
   const result = await loadReaderSource({ kind: 'verse-resources', scope: 'dictionary', params: { bookName: 'Genesis', chapter: 1, verseNumber: 1 } });

@@ -1,23 +1,19 @@
 import { createHash } from 'node:crypto';
 
 export const CHUNK_CHARACTERS = 250;
-const TEXT_KEYS = new Set(['title', 'heading', 'label', 'name', 'term', 'text', 'content',
-  'description', 'definition', 'shortDefinition', 'fullDefinition', 'adminExplanation',
-  'customDefinition', 'meaning', 'explanation', 'application', 'reflection', 'prayer',
-  'summary', 'background', 'authorDetail', 'audience', 'purpose', 'lessons', 'keyTheme',
-  'christConnection', 'dateWritten', 'locationWritten', 'verseIntroduction',
-  'backgroundAuthor', 'backgroundBook', 'backgroundContext', 'finalThoughts', 'learnMore',
-  'introduction', 'contextSummary', 'teachingBody', 'explanationText', 'applicationText',
-  'challengeDescription', 'resultsDescription', 'notes']);
-const BODY_KEYS = new Set(['text', 'content', 'description', 'definition', 'meaning',
-  'explanation', 'adminExplanation', 'fullDefinition', 'summary']);
+const BODY_KEYS = new Set(['text', 'content', 'description', 'definition', 'meaning', 'label',
+  'commentary', 'verseText', 'excerpt', 'translation', 'explanation', 'adminExplanation',
+  'fullDefinition', 'summary']);
+// Structural / canonical values. They are preserved verbatim and never sent to
+// a translation provider. Anything else is reader prose.
 const METADATA = new Set(['id', 'bookName', 'chapter', 'verse', 'verseNumber', 'verseStart',
   'verseEnd', 'reference', 'ref', 'passageReference', 'bibleVersion', 'translation',
   'displayDate', 'displayTime', 'createdOn', 'updatedOn', 'chapters', 'isPublished',
   'published', 'sortOrder', 'order', 'wordOrder', 'range', 'strongsId', 'strongsIds',
   'verseRefs', 'originalWord', 'original', 'surfaceText', 'word', 'transliteration',
   'pronunciation', 'language', 'partOfSpeech', 'grammaticalCase', 'gender', 'number',
-  'usageCount', 'url', 'href', 'author', 'toolType', 'strongs']);
+  'usageCount', 'url', 'href', 'author', 'toolType', 'strongs', 'lemma', 'grammar',
+  'morphology', 'abbreviation', 'type', 'code', 'slug', 'key']);
 
 export function splitReaderText(value) {
   const chunks = [];
@@ -52,6 +48,11 @@ export function buildReaderPlan(source, fields, atomicFields = []) {
   const build = (value, key, field, atomic = false) => {
     atomic ||= atomicFields.includes(key);
     if (typeof value === 'string') {
+      // Bible versions, names, original-language words, Strong's ids, etc.
+      // stay canonical. `translation` is prose only in the interlinear table,
+      // and the book author is prose only when it is the requested field.
+      if (METADATA.has(key) && !(key === 'translation' && field === 'interlinearWords') &&
+        !(key === 'author' && field === 'author')) return literal(value);
       if (/^[\s\d\p{P}\p{S}]*$/u.test(value) || /^(https?:\/\/|mailto:)/i.test(value.trim()) ||
         (['crossReferences', 'keyVerses'].includes(key) && /^(?:[1-3]\s+)?[A-Za-z][A-Za-z ]+\s+\d+(?::[\d,; :–—-]+)?$/.test(value.trim()))) return literal(value, true);
       if (/^\s*[\[{]/.test(value)) {
@@ -64,15 +65,15 @@ export function buildReaderPlan(source, fields, atomicFields = []) {
         }) };
       return { kind: 'text', atomic, chunks: splitReaderText(value).map(chunk => {
         const index = jobs.length;
-        jobs.push({ text: chunk.text, field });
+        jobs.push({ text: chunk.text, field, key });
         return { index, separator: chunk.separator };
       }) };
     }
     if (Array.isArray(value)) return { kind: 'array', items: value.map(item => build(item, key, field, atomic)) };
     if (value && typeof value === 'object') return { kind: 'object', fields: Object.entries(value)
-      .filter(([name, item]) => TEXT_KEYS.has(name) || METADATA.has(name) || Array.isArray(item) || (item && typeof item === 'object'))
-      .map(([name, item]) => [name, METADATA.has(name) && (name !== 'strongs' || typeof item === 'string')
-        ? literal(item) : build(item, name, field, atomic)]) };
+      // Preserve every structural property (ids, grammar tags, word order,
+      // study-tool metadata) while translating the prose inside it.
+      .map(([name, item]) => [name, build(item, name, field, atomic)]) };
     return literal(value);
   };
   const nodes = fields.filter(field => source[field] != null).map(field => [field, build(source[field], field, field)]);
