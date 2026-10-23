@@ -67,7 +67,7 @@ const isLordsbookTextEnabled = () =>
 const isMyMemoryEnabled = () =>
   (process.env.MYMEMORY_TRANSLATE_ENABLE ?? "true").trim().toLowerCase() !== "false";
 
-const getTranslationCacheKey = ({ q, source = "auto", target, format = "text", alternatives }) => {
+const getTranslationCacheKey = ({ q, source = "auto", target, format = "text", alternatives, requireChanged = false }) => {
   const provider = [
     ...(isLordsbookTextEnabled() ? ["lordsbook"] : []),
     "libre",
@@ -83,7 +83,8 @@ const getTranslationCacheKey = ({ q, source = "auto", target, format = "text", a
       : {}),
   };
   const digest = createHash("sha256")
-    .update(JSON.stringify({ source, target, format, alternatives: alternatives || 0, provider, versions, text: q }))
+    .update(JSON.stringify({ source, target, format, alternatives: alternatives || 0, provider, versions, text: q,
+      ...(requireChanged ? { requireChanged: true } : {}) }))
     .digest("hex");
   return `v2:${digest}`;
 };
@@ -595,7 +596,8 @@ const translateChunk = async (chunk, options) => {
           format: options.format,
         }),
       );
-      if (lbResult && lbResult.translatedText) {
+      if (lbResult && lbResult.translatedText &&
+        (!options.requireChanged || lbResult.translatedText.trim() !== value.trim())) {
         return markProvider({
           ...lbResult,
           translatedText: `${leading}${lbResult.translatedText}${trailing}`,
@@ -633,7 +635,12 @@ const translateChunk = async (chunk, options) => {
         }),
       );
       const translated = result?.translatedText;
-      if (typeof translated === "string" && translated.trim()) break;
+      if (typeof translated === "string" && translated.trim()) {
+        if (options.requireChanged && translated.trim() === value.trim()) {
+          throw new AppError(502, "Translation provider returned untranslated text");
+        }
+        break;
+      }
       result = null;
       if (attempt < config.retryAttempts) {
         await new Promise((resolve) =>
@@ -657,11 +664,15 @@ const translateChunk = async (chunk, options) => {
     console.warn(
       `[Translation] LibreTranslate failed for ${options.target}; using MyMemory fallback: ${error.message}`,
     );
-    return translateWithMyMemory(item, options);
+    const fallback = await translateWithMyMemory(item, options);
+    if (options.requireChanged && fallback.translatedText?.trim() === value.trim()) {
+      throw new AppError(502, "Translation provider returned untranslated text");
+    }
+    return fallback;
   }
 };
 
-const translateTextUncached = async ({ q, source = "auto", target, format = "text", alternatives }) => {
+const translateTextUncached = async ({ q, source = "auto", target, format = "text", alternatives, requireChanged = false }) => {
   const config = getConfig();
 
   // LibreTranslate's sentence tokenizer can leave `sentence.[123]` untouched.
@@ -672,7 +683,7 @@ const translateTextUncached = async ({ q, source = "auto", target, format = "tex
   const results = await mapWithConcurrency(
     chunks,
     config.maxConcurrency,
-    (chunk) => translateChunk(chunk, { source, target, format, alternatives }),
+    (chunk) => translateChunk(chunk, { source, target, format, alternatives, requireChanged }),
   );
 
   const provider = results.some((result) => result[RESULT_PROVIDER] === "libre")

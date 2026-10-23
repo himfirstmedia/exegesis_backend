@@ -374,7 +374,8 @@ export const getVersesByStrongs = async (strongsId, translation = 'Berean', limi
   return translateResponse({ status: 200, message: 'Verses fetched successfully', data: result }, lang);
 };
 
-export const getBookWords = async (bookName, limit = 200, offset = 0, lang, language = 'all') => {
+export const getBookWords = async (bookName, limit = 4, offset = 0, lang = 'en', language = 'all') => {
+  limit = Math.min(4, Math.max(1, limit));
   const languageFilter = language && language.toLowerCase() !== 'all'
     ? language.toLowerCase()
     : null;
@@ -401,20 +402,19 @@ export const getBookWords = async (bookName, limit = 200, offset = 0, lang, lang
     select: { strongsId: true },
   });
   const strongsIds = verseWordIds.map((row) => row.strongsId).filter(Boolean);
-  if (strongsIds.length === 0) {
-    return translateResponse({
-      status: 200,
-      message: 'No Strongs words found for this book',
-      data: { data: [], total: 0, hasNext: false },
-    }, lang);
-  }
-
   const totalRows = await prisma.verseWord.findMany({
     where: wordWhere,
     distinct: ['strongsId'],
     select: { strongsId: true },
   });
   const total = totalRows.length;
+  if (strongsIds.length === 0) {
+    return {
+      status: 200,
+      message: 'No Strongs words found for this book',
+      data: { data: [], total, hasNext: false, contentLanguage: lang },
+    };
+  }
 
   // Fetch the Strong's entries with verseReferences for attachment info
   const entries = await prisma.strongsDictionary.findMany({
@@ -482,11 +482,12 @@ export const getBookWords = async (bookName, limit = 200, offset = 0, lang, lang
     };
   });
 
-  return translateResponse({
+  const translated = await translateSearchPage(enriched, lang);
+  return {
     status: 200,
     message: 'Book words fetched successfully',
-    data: { data: enriched, total, hasNext: offset + limit < total },
-  }, lang);
+    data: { data: translated, total, hasNext: offset + strongsIds.length < total, contentLanguage: lang },
+  };
 };
 
 export const getVerseWords = async (bookName, chapter, verseNumber, translation = 'Berean', lang) => {

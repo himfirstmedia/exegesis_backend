@@ -2,6 +2,7 @@ import { buildReaderPlan } from './plan.js';
 import { translateText } from '../text-to-text-translation/service.js';
 import { cache } from '../../services/cacheService.js';
 import { localizeBookNames } from '../../utils/localizedBookNames.js';
+import { isGrammarCognate } from './grammar.js';
 
 export const MAX_READER_CHARACTERS = 100_000;
 export const MAX_READER_CHUNKS = 600;
@@ -67,27 +68,50 @@ export async function streamReaderTranslation({ source, fields, atomicFields, av
   start(0); start(1);
   for (let index = 0; index < plan.jobs.length; index += 1) {
     checkAbort(signal);
-    const { result, error } = await abortable(inflight.get(index), signal);
+    let { result, error } = await abortable(inflight.get(index), signal);
     inflight.delete(index);
     checkAbort(signal);
-    const translated = result?.translatedText;
+    let translated = result?.translatedText;
     // Providers routinely leave proper book names in English. Normalize them
     // after translation, before validation/cache/emit, so every reader kind
     // (explanations, background, Strong's, Lab, headings) stays consistent.
-    const text = localizeBookNames(translated, language)?.trim();
-    const reportedTarget = result?.targetLanguage || result?.target;
+    let text = localizeBookNames(translated, language)?.trim();
+    let reportedTarget = result?.targetLanguage || result?.target;
     const job = plan.jobs[index];
     const shortCanonical = job.text.length <= 60 && !/[.!?]/.test(job.text);
     // Cognates and proper nouns legitimately survive translation unchanged
     // (e.g. French "propitiation"); prose never does.
-    const sameAllowed = (['author', 'keyPeople', 'dateWritten', 'locationWritten'].includes(job.field) && shortCanonical) ||
+    const sameAllowed = isGrammarCognate(job.key, job.text, language) ||
+      (['author', 'keyPeople', 'dateWritten', 'locationWritten'].includes(job.field) && shortCanonical) ||
       (shortCanonical && (job.key === 'term' || job.key === 'shortDefinition' ||
         (job.key === 'label' && job.field === 'studyTools') ||
         (job.key === 'translation' && job.field === 'interlinearWords'))) ||
       (language === 'fr' && ['Introduction', 'Application', 'Conclusion', 'Question', 'Questions'].includes(job.text.trim()));
+    // A provider can report success while echoing a short word such as "In"
+    // or "adverb". Retry once through the existing provider fallback chain,
+    // bypassing permissive cached echoes, rather than failing every page retry.
+    if (!error && !sameAllowed && translated?.trim() === job.text.trim()) {
+      try {
+        result = await abortable(translate({ q: job.text, source: 'en', target: language,
+          format: 'text', requireChanged: true }), signal);
+        checkAbort(signal);
+        translated = result?.translatedText;
+        text = localizeBookNames(translated, language)?.trim();
+        reportedTarget = result?.targetLanguage || result?.target;
+      } catch (failure) {
+        if (failure.name === 'AbortError') throw failure;
+        error = failure;
+      }
+    }
     if (error || !text || (reportedTarget && reportedTarget.toLowerCase() !== language.toLowerCase()) ||
       (!sameAllowed && translated?.trim() === job.text.trim())) {
-      await emit('error', { ...common, code: 'TRANSLATION_FAILED', completed: index, pendingFields: pendingFields(index) });
+      // Safe diagnostics identify the field/reason without publishing source
+      // prose or upstream error messages (which can contain provider secrets).
+      const reason = error ? 'PROVIDER_ERROR' : !text ? 'EMPTY_TRANSLATION'
+        : reportedTarget && reportedTarget.toLowerCase() !== language.toLowerCase()
+          ? 'TARGET_MISMATCH' : 'UNCHANGED_SOURCE';
+      await emit('error', { ...common, code: 'TRANSLATION_FAILED', reason,
+        field: job.field, key: job.key, completed: index, pendingFields: pendingFields(index) });
       return; // Never certify source fallbacks or skip a missing chunk.
     }
     values.push(text);

@@ -34,7 +34,7 @@ export const getBookWords = asyncHandler(async (req, res) => {
     throw new ValidationError('bookName is required');
   }
   const { limit, offset, lang, language } = req.query;
-  const result = await strongsService.getBookWords(bookName, parseInt(limit) || 200, parseInt(offset) || 0, lang, language);
+  const result = await strongsService.getBookWords(bookName, parseInt(limit) || 4, parseInt(offset) || 0, lang, language);
   res.json(formatApiResponse(result));
 });
 

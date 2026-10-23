@@ -82,6 +82,31 @@ describe("text-to-text translation service", () => {
     }
   });
 
+  test("strict reader retries bypass cached echoes and use a translated provider fallback", async () => {
+    process.env.MYMEMORY_TRANSLATE_ENABLE = "true";
+    global.fetch.mockImplementation(async url => url.startsWith("https://api.mymemory.translated.net/get?")
+      ? jsonResponse({ responseStatus: 200, responseData: { translatedText: "En" } })
+      : jsonResponse({ translatedText: "In" }));
+    const request = { q: "In", source: "en", target: "es" };
+    expect((await translateText(request)).translatedText).toBe("In");
+    const strict = await translateText({ ...request, requireChanged: true });
+    expect(strict.translatedText).toBe("En");
+    expect(global.fetch.mock.calls.some(([url]) => url.includes("mymemory"))).toBe(true);
+    const count = global.fetch.mock.calls.length;
+    expect((await translateText({ ...request, requireChanged: true })).translatedText).toBe("En");
+    expect(global.fetch).toHaveBeenCalledTimes(count);
+  });
+
+  test("never caches or certifies a strict retry when every provider echoes English", async () => {
+    process.env.MYMEMORY_TRANSLATE_ENABLE = "true";
+    global.fetch.mockImplementation(async url => url.startsWith("https://api.mymemory.translated.net/get?")
+      ? jsonResponse({ responseStatus: 200, responseData: { translatedText: "In" } })
+      : jsonResponse({ translatedText: "In" }));
+    await expect(translateText({ q: "In", source: "en", target: "es", requireChanged: true }))
+      .rejects.toMatchObject({ status: 502 });
+    expect(cache.set).not.toHaveBeenCalled();
+  });
+
   test("rejects text and batches over the configured character limit", async () => {
     await expect(
       translateText({ q: "x".repeat(201), target: "ar" }),

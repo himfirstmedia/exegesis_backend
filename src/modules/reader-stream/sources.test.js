@@ -59,7 +59,8 @@ it('streams an English gloss beside the canonical word-study text', async () => 
     id: '137', exegesis: { explanationText: 'Explanation' },
     wordStudies: [{
       surfaceText: 'Give Thanks — יָדָה (yadah)',
-      strongs: { shortDefinition: 'to give thanks' },
+      strongs: { shortDefinition: 'to give thanks',
+        verseReferences: [{ surfaceText: 'LORD', bookName: 'Psalms' }] },
     }],
   } });
   const result = await loadReaderSource({
@@ -70,6 +71,7 @@ it('streams an English gloss beside the canonical word-study text', async () => 
     surfaceText: 'Give Thanks — יָדָה (yadah)',
     surfaceTextGloss: 'Give Thanks',
     surfaceTextOriginal: 'יָדָה (yadah)',
+    strongs: { verseReferences: [{ surfaceText: 'LORD', surfaceTextGloss: 'LORD', surfaceTextOriginal: '', bookName: 'Psalms' }] },
   });
 });
 

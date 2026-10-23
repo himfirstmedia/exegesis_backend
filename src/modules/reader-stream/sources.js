@@ -32,7 +32,10 @@ const withSurfaceGloss = item => {
 };
 
 const withWordStudyGloss = data => Array.isArray(data?.wordStudies)
-  ? { ...data, wordStudies: data.wordStudies.map(withSurfaceGloss) }
+  ? { ...data, wordStudies: data.wordStudies.map(item => {
+    const word = withSurfaceGloss(item);
+    return word?.strongs ? { ...word, strongs: withStrongsGloss(word.strongs) } : word;
+  }) }
   : data;
 
 const withStrongsGloss = data => {
