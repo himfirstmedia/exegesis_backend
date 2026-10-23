@@ -57,6 +57,8 @@ describe('Strongs display translation', () => {
       'a word',
       'a spoken message',
       'Dictionary explanation',
+      'nominative',
+      'noun',
       'Verse note',
       'Reference explanation',
     ], 'es', { throwOnFailure: true });
@@ -70,16 +72,17 @@ describe('Strongs display translation', () => {
       fullDefinition: 'ES:a spoken message',
       adminExplanation: 'ES:Dictionary explanation',
       morphology: 'N-NSM',
-      grammaticalCase: 'nominative',
+      grammaticalCase: 'ES:nominative',
       grammar: 'noun singular',
       language: 'greek',
-      partOfSpeech: 'noun',
+      partOfSpeech: 'ES:noun',
       references: ['John 1:1'],
       crossReferences: ['G4487'],
       surfaceText: 'Word',
       lemma: 'logos',
       text: 'In the beginning was the Word',
       verseStudyNote: 'ES:Verse note',
+      contentLanguage: 'es',
     }));
     expect(result.data[0].verseReferences[0]).toEqual({
       id: 44,
@@ -138,13 +141,39 @@ describe('Strongs display translation', () => {
       .toBe('invalid value');
   });
 
-  test('fails soft when translation is unavailable', async () => {
+  test('fails soft without pretending English is translated', async () => {
     const warning = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const source = { strongsId: 'G1', shortDefinition: 'first' };
     translateMany.mockRejectedValueOnce(new Error('offline'));
 
-    await expect(translateStrongsData(source, 'es')).resolves.toBe(source);
+    await expect(translateStrongsData(source, 'es')).resolves.toEqual({
+      ...source,
+      contentLanguage: 'en',
+    });
     expect(warning).toHaveBeenCalledWith('[strongs] Translation to es failed:', 'offline');
     warning.mockRestore();
+  });
+
+  test('marks every paged result and localizes book names in translated prose', async () => {
+    const source = {
+      data: [
+        { strongsId: 'H1', shortDefinition: 'Psalm 105', fullDefinition: 'The book of Isaiah' },
+        { strongsId: 'H2', shortDefinition: 'Genesis 1:1', fullDefinition: 'Psalms 90–106' },
+      ],
+      total: 2,
+    };
+
+    const result = await translateStrongsData(source, 'es');
+
+    expect(result.contentLanguage).toBe('es');
+    expect(result.data.every(item => item.contentLanguage === 'es')).toBe(true);
+    expect(result.data.map(item => item.shortDefinition)).toEqual([
+      'ES:Salmos 105',
+      'ES:Génesis 1:1',
+    ]);
+    expect(result.data.map(item => item.fullDefinition)).toEqual([
+      'ES:The book of Isaías',
+      'ES:Salmos 90–106',
+    ]);
   });
 });

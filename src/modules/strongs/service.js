@@ -1,6 +1,7 @@
 import { prisma } from '../../config/db.js';
 import { cache } from '../../services/cacheService.js';
 import { translateBibleTopics, translateStrongsData } from './translation.js';
+import { translateSearchPage } from './searchTranslation.js';
 
 const CACHE_TTL = 86400;
 
@@ -152,7 +153,8 @@ export const getStrongsEntry = async (strongsId, lang) => {
   return translateResponse({ status: 200, message: 'Strongs entry fetched successfully', data: enrichedEntry }, lang);
 };
 
-export const searchStrongs = async (query, limit = 50, offset = 0, lang, language) => {
+export const searchStrongs = async (query, limit = 2, offset = 0, lang = 'en', language) => {
+  limit = Math.min(2, Math.max(1, limit));
   const trimmedQuery = query.trim();
   const strongsQuery = trimmedQuery.toUpperCase();
   const where = {};
@@ -254,9 +256,9 @@ export const searchStrongs = async (query, limit = 50, offset = 0, lang, languag
     prisma.strongsDictionary.count({ where }),
   ]);
 
-  const enrichedData = data.map((entry) => ({
+  const enrichedData = data.map(({ verseExplanationWordStudies, ...entry }) => ({
     ...entry,
-    contextualStudies: entry.verseExplanationWordStudies.map((study) => ({
+    contextualStudies: verseExplanationWordStudies.map((study) => ({
       surfaceText: study.surfaceText,
       customDefinition: study.customDefinition,
       sortOrder: study.sortOrder,
@@ -276,11 +278,12 @@ export const searchStrongs = async (query, limit = 50, offset = 0, lang, languag
     })),
   }));
 
-  return translateResponse({
+  const translated = await translateSearchPage(enrichedData, lang);
+  return {
     status: 200,
     message: 'Strongs search results',
-    data: { data: enrichedData, total },
-  }, lang);
+    data: { data: translated, total, hasNext: offset + data.length < total, contentLanguage: lang },
+  };
 };
 
 export const getRelatedWords = async (strongsId, lang) => {

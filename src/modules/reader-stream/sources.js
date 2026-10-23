@@ -1,9 +1,56 @@
 import * as bible from '../bible/service.js';
 import * as books from '../book-prologues/service.js';
 import * as resources from '../verse-resources/service.js';
+import * as strongs from '../strongs/service.js';
+import { getBookHeadings as getTranslationBookHeadings } from '../bible-translations/service.js';
 import { prisma } from '../../config/db.js';
 import { serializeBigInt } from '../../utils/helpers.js';
 import { BIBLE_BOOK_NAMES } from '../bible/bookNames.js';
+
+const LATIN_TEXT = /^[\p{Script=Latin}\p{Script=Common}\p{M}\p{N}\p{P}\p{S}\s]+$/u;
+
+/**
+ * Admin word-study labels often combine an English gloss with the original
+ * word ("Give Thanks — יָדָה (yadah)"). Keep the canonical original text and
+ * expose the gloss as a separate prose field so the reader stream can
+ * translate it without touching the original language.
+ */
+export function splitSurfaceText(value) {
+  const text = String(value || '').trim();
+  if (!text) return { gloss: '', original: '' };
+  const split = text.match(/^(.+?)\s+[—–-]\s+(.+)$/u);
+  if (split) return { gloss: split[1].trim(), original: split[2].trim() };
+  return LATIN_TEXT.test(text)
+    ? { gloss: text, original: '' }
+    : { gloss: '', original: text };
+}
+
+const withSurfaceGloss = item => {
+  if (!item || typeof item !== 'object' || typeof item.surfaceText !== 'string') return item;
+  const { gloss, original } = splitSurfaceText(item.surfaceText);
+  return { ...item, surfaceTextGloss: gloss, surfaceTextOriginal: original };
+};
+
+const withWordStudyGloss = data => Array.isArray(data?.wordStudies)
+  ? { ...data, wordStudies: data.wordStudies.map(withSurfaceGloss) }
+  : data;
+
+const withStrongsGloss = data => {
+  if (!data || typeof data !== 'object') return data;
+  const next = { ...data };
+  if (Array.isArray(next.contextualStudies)) {
+    next.contextualStudies = next.contextualStudies.map(withSurfaceGloss);
+  }
+  if (Array.isArray(next.verseReferences)) {
+    next.verseReferences = next.verseReferences.map(withSurfaceGloss);
+  } else if (typeof next.verseReferences === 'string' && next.verseReferences.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(next.verseReferences);
+      if (Array.isArray(parsed)) next.verseReferences = JSON.stringify(parsed.map(withSurfaceGloss));
+    } catch { /* Keep malformed legacy JSON canonical. */ }
+  }
+  return next;
+};
 
 function bookDesignation(bookName) {
   const index = Object.keys(BIBLE_BOOK_NAMES.en).indexOf(bookName === 'Psalm' ? 'Psalms' : bookName) + 1;
@@ -41,9 +88,13 @@ export async function loadReaderSource({ kind, params = {}, scope }) {
       result = await books.getBookPrologue(input);
       fields = ['summary', 'author', 'audience', 'dateWritten', 'locationWritten', 'keyTheme', 'purpose', 'mainThemes', 'christConnection']; break;
     case 'daily-verse':
-      result = await bible.getTodaysVerse(input); fields = dailyVerse; atomicFields = ['title', 'text', 'reflection']; break;
+      result = await bible.getTodaysVerse(input);
+      if (result.data) result = { ...result, data: withWordStudyGloss(result.data) };
+      fields = dailyVerse; atomicFields = ['title', 'text', 'reflection']; break;
     case 'daily-devotion':
-      result = await bible.getTodaysDevotion(input); fields = dailyDevotion; atomicFields = ['title', 'reflection']; break;
+      result = await bible.getTodaysDevotion(input);
+      if (result.data) result = { ...result, data: withWordStudyGloss(result.data) };
+      fields = dailyDevotion; atomicFields = ['title', 'reflection']; break;
     case 'daily-exegesis':
       if (params.id) {
         const record = await prisma.dailyExegesis.findFirst({ where: { id: BigInt(params.id), isPublished: true } });
@@ -52,7 +103,22 @@ export async function loadReaderSource({ kind, params = {}, scope }) {
       fields = ['title', 'introduction', 'contextSummary', 'teachingBody', 'application', 'prayer']; break;
     case 'verse-explanation':
       result = await bible.getVerseExplanation(input);
-      fields = ['explanation', 'learnMore']; break;
+      if (result.data) result = { ...result, data: withWordStudyGloss(result.data) };
+      fields = ['exegesis', 'studyMetadata', 'wordStudies', 'practicalApps', 'crossReferences', 'themes'];
+      // Older records may only carry the flattened explanation/application
+      // columns. Include them only when the rich exegesis row is absent so a
+      // field is never translated twice.
+      if (!result.data?.exegesis) fields.push('explanation', 'application', 'learnMore');
+      break;
+    case 'strongs-entry':
+      result = await strongs.getStrongsEntry(String(params.strongsId || '').toUpperCase(), 'en');
+      if (result.data) result = { ...result, data: withStrongsGloss(serializeBigInt(result.data)) };
+      fields = ['shortDefinition', 'fullDefinition', 'adminExplanation', 'crossReferences',
+        'contextualStudies', 'verseReferences', 'partOfSpeech', 'grammaticalCase',
+        'gender', 'number']; break;
+    case 'book-headings':
+      result = await getTranslationBookHeadings({ bookName: params.bookName });
+      fields = ['chapters']; atomicFields = ['heading']; break;
     case 'verse-resources':
       result = await resources.getVerseResources({ ...input, section: resourceSections[scope || 'commentaries'] });
       if (result.status === 200 && result.data.sections?.studyTools > 0) {
@@ -62,6 +128,7 @@ export async function loadReaderSource({ kind, params = {}, scope }) {
         if (tools.status !== 200) throw Object.assign(new Error('Study tools unavailable'), { status: tools.status || 500 });
         result = { ...result, data: { ...result.data, studyTools: tools.data.studyTools } };
       }
+      if (scope === 'wordStudies' && result.data) result = { ...result, data: withWordStudyGloss(result.data) };
       fields = [resourceScopes[scope || 'commentaries'], 'studyTools']; atomicFields = ['title', 'crossReferences']; break;
     default: throw Object.assign(new Error('Unknown reader content'), { status: 400 });
   }

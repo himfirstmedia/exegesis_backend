@@ -42,6 +42,20 @@ it('preserves JSON, HTML, canonical references and original-language words', () 
   expect(partial.content).toBe('<p><b>Premier passage</b></p>');
 });
 
+it('keeps reference lists and original-language verse words canonical', () => {
+  const plan = buildReaderPlan({
+    crossReferences: 'John 3:16; Romans 5:8; Ephesians 2:8-9',
+    verseReferences: [{ reference: 'John 1:1', bookName: 'John', chapter: 1, verse: 1,
+      translation: 'BSB', surfaceText: 'λόγος', verseText: 'In the beginning was the Word.',
+      verseWords: ['λόγος', 'ἦν'] }],
+  }, ['crossReferences', 'verseReferences']);
+  expect(plan.jobs.map(job => job.text)).toEqual(['In the beginning was the Word.']);
+  const translated = plan.render(plan.jobs.map(job => `FR:${job.text}`));
+  expect(translated.crossReferences).toBe('John 3:16; Romans 5:8; Ephesians 2:8-9');
+  expect(translated.verseReferences[0]).toMatchObject({ reference: 'John 1:1', surfaceText: 'λόγος',
+    verseWords: ['λόγος', 'ἦν'], verseText: 'FR:In the beginning was the Word.' });
+});
+
 it('preserves structural reader metadata while translating nested prose', () => {
   const original = {
     interlinearWords: [{ original: 'λόγος', strongs: 'G3056', transliteration: 'logos', translation: 'word', grammar: 'N-NSM', lemma: 'λόγος' }],
@@ -103,6 +117,22 @@ it('uses cached completed documents without invoking a provider or charging tran
   expect(translateText).not.toHaveBeenCalled(); expect(reserveCharacters).not.toHaveBeenCalled();
   expect(events.map(item => item.event)).toEqual(['meta', 'done']);
   expect(events[0].data.data.localizationIncomplete).toBe(false);
+});
+
+it('localizes book names left in translated prose before publishing and caching', async () => {
+  translateText.mockResolvedValue({ translatedText: 'Psalm 105 gives thanks.', target: 'hi' });
+  const events = [];
+  await streamReaderTranslation({
+    kind: 'verse-explanation',
+    source: { explanation: 'Give thanks to the LORD.' },
+    fields: ['explanation'],
+    language: 'hi',
+    emit: async (event, data) => events.push({ event, data }),
+  });
+  const patch = events.find(item => item.event === 'patch');
+  expect(patch.data.append.explanation).toBe('भजन संहिता 105 gives thanks.');
+  expect(cache.set).toHaveBeenCalledWith('reader-stream', expect.stringContaining('v2:verse-explanation'),
+    expect.objectContaining({ data: expect.objectContaining({ explanation: 'भजन संहिता 105 gives thanks.' }) }), expect.any(Number));
 });
 
 it('does not certify an unchanged English fallback or cache an incomplete document', async () => {

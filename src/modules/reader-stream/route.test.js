@@ -52,7 +52,14 @@ it('rejects arbitrary source uploads, unknown kinds/languages, and invalid refer
     { kind: 'verse-resources', language: 'fr', params: { bookName: 'Genesis' } },
     { kind: 'daily-exegesis', language: 'fr', params: { id: '-1' } },
     { kind: 'book-overview', language: 'fr', params: { bookName: '../../private' } },
+    { kind: 'book-headings', language: 'fr' },
+    { kind: 'strongs-entry', language: 'fr' },
+    { kind: 'strongs-entry', language: 'fr', params: { strongsId: 'word' } },
+    { kind: 'daily-verse', language: 'fr', params: { strongsId: 'G3056' } },
   ]) expect(readerRequestSchema.safeParse(body).success).toBe(false);
+
+  expect(readerRequestSchema.safeParse({ kind: 'strongs-entry', language: 'fr', params: { strongsId: 'G3056' } }).success).toBe(true);
+  expect(readerRequestSchema.safeParse({ kind: 'book-headings', language: 'fr', params: { bookName: 'Psalms' } }).success).toBe(true);
 });
 
 it('returns a normal HTTP error before opening a stream when source lookup fails', async () => {

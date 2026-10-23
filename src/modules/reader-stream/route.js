@@ -8,15 +8,18 @@ import { formatApiResponse } from '../../utils/helpers.js';
 import { BIBLE_BOOK_NAMES } from '../bible/bookNames.js';
 
 export const readerRequestSchema = z.object({
-  kind: z.enum(['book-overview', 'book-introduction', 'daily-verse', 'daily-devotion', 'daily-exegesis', 'verse-explanation', 'verse-resources']),
+  kind: z.enum(['book-overview', 'book-introduction', 'book-headings', 'daily-verse', 'daily-devotion', 'daily-exegesis', 'verse-explanation', 'verse-resources', 'strongs-entry']),
   language: z.enum('en es fr ar de pt hi bn ta te mr gu kn ml pa ur sw it el ru ne fil as doi kok mai mni or sa sat sd id ja ko zh pl ro uk tr'.split(' ')),
   scope: z.enum(['commentaries', 'crossrefs', 'wordStudies', 'dictionary', 'interlinear', 'topics']).optional(),
   params: z.object({ bookName: z.enum([...Object.keys(BIBLE_BOOK_NAMES.en), 'Psalm']).optional(),
     chapter: z.number().int().min(1).max(150).optional(), verseNumber: z.number().int().min(1).max(176).optional(),
-    id: z.string().regex(/^\d{1,19}$/).optional() }).strict().default({}),
+    id: z.string().regex(/^\d{1,19}$/).optional(),
+    strongsId: z.string().regex(/^[GH]\d{1,5}$/i).optional() }).strict().default({}),
 }).strict().superRefine((value, ctx) => {
-  if (['book-overview', 'book-introduction', 'verse-explanation', 'verse-resources'].includes(value.kind) && !value.params.bookName) ctx.addIssue({ code: 'custom', message: 'Book is required' });
+  if (['book-overview', 'book-introduction', 'book-headings', 'verse-explanation', 'verse-resources'].includes(value.kind) && !value.params.bookName) ctx.addIssue({ code: 'custom', message: 'Book is required' });
   if (['verse-explanation', 'verse-resources'].includes(value.kind) && (!value.params.chapter || !value.params.verseNumber)) ctx.addIssue({ code: 'custom', message: 'Verse reference is required' });
+  if (value.kind === 'strongs-entry' && !value.params.strongsId) ctx.addIssue({ code: 'custom', message: 'Strongs ID is required' });
+  if (value.params.strongsId && value.kind !== 'strongs-entry') ctx.addIssue({ code: 'custom', message: 'Strongs ID is only supported for entries' });
   if (value.scope && value.kind !== 'verse-resources') ctx.addIssue({ code: 'custom', message: 'Scope is only supported for resources' });
   if (value.params.id && value.kind !== 'daily-exegesis') ctx.addIssue({ code: 'custom', message: 'ID is only supported for exegesis' });
 });

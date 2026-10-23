@@ -10,10 +10,15 @@ const METADATA = new Set(['id', 'bookName', 'chapter', 'verse', 'verseNumber', '
   'verseEnd', 'reference', 'ref', 'passageReference', 'bibleVersion', 'translation',
   'displayDate', 'displayTime', 'createdOn', 'updatedOn', 'chapters', 'isPublished',
   'published', 'sortOrder', 'order', 'wordOrder', 'range', 'strongsId', 'strongsIds',
-  'verseRefs', 'originalWord', 'original', 'surfaceText', 'word', 'transliteration',
-  'pronunciation', 'language', 'partOfSpeech', 'grammaticalCase', 'gender', 'number',
-  'usageCount', 'url', 'href', 'author', 'toolType', 'strongs', 'lemma', 'grammar',
-  'morphology', 'abbreviation', 'type', 'code', 'slug', 'key']);
+  'verseRefs', 'originalWord', 'original', 'surfaceText', 'surfaceTextOriginal', 'word',
+  'transliteration', 'pronunciation', 'language', 'usageCount', 'url', 'href', 'author',
+  'toolType', 'strongs', 'lemma', 'grammar', 'morphology', 'abbreviation', 'type', 'code',
+  'slug', 'key', 'verseWords']);
+
+const reference = /^(?:[1-3]\s+)?[A-Za-z][A-Za-z ]+\s+\d+(?::[\d,; :–—-]+)?$/;
+/** "John 3:16", "John 3:16; Romans 5:8", "Genesis 1:1, 2:3" and similar. */
+const isReferenceList = value => value.trim().split(/\s*[;\n]\s*/).filter(Boolean)
+  .every(part => reference.test(part.trim()));
 
 export function splitReaderText(value) {
   const chunks = [];
@@ -54,7 +59,7 @@ export function buildReaderPlan(source, fields, atomicFields = []) {
       if (METADATA.has(key) && !(key === 'translation' && field === 'interlinearWords') &&
         !(key === 'author' && field === 'author')) return literal(value);
       if (/^[\s\d\p{P}\p{S}]*$/u.test(value) || /^(https?:\/\/|mailto:)/i.test(value.trim()) ||
-        (['crossReferences', 'keyVerses'].includes(key) && /^(?:[1-3]\s+)?[A-Za-z][A-Za-z ]+\s+\d+(?::[\d,; :–—-]+)?$/.test(value.trim()))) return literal(value, true);
+        (['crossReferences', 'keyVerses'].includes(key) && isReferenceList(value))) return literal(value, true);
       if (/^\s*[\[{]/.test(value)) {
         try { return { kind: 'json', node: build(JSON.parse(value), key, field, atomic) }; }
         catch { return literal('', true); }

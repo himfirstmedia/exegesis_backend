@@ -1,6 +1,7 @@
 import { buildReaderPlan } from './plan.js';
 import { translateText } from '../text-to-text-translation/service.js';
 import { cache } from '../../services/cacheService.js';
+import { localizeBookNames } from '../../utils/localizedBookNames.js';
 
 export const MAX_READER_CHARACTERS = 100_000;
 export const MAX_READER_CHUNKS = 600;
@@ -26,7 +27,9 @@ export async function streamReaderTranslation({ source, fields, atomicFields, av
   if (characters > MAX_READER_CHARACTERS || plan.jobs.length > MAX_READER_CHUNKS) {
     throw Object.assign(new Error('Reader document is too large'), { status: 413 });
   }
-  const key = `v1:${kind}:${scope || ''}:${language}:${plan.sourceVersion}`;
+  // Bumped whenever post-translation normalization changes so cached documents
+  // cannot keep serving older prose (for example untranslated book names).
+  const key = `v2:${kind}:${scope || ''}:${language}:${plan.sourceVersion}`;
   const cached = await cache.get('reader-stream', key).catch(() => null);
   checkAbort(signal);
   const pendingFields = completed => [...new Set(plan.jobs.slice(completed).map(job => job.field))];
@@ -67,19 +70,23 @@ export async function streamReaderTranslation({ source, fields, atomicFields, av
     const { result, error } = await abortable(inflight.get(index), signal);
     inflight.delete(index);
     checkAbort(signal);
-    const text = result?.translatedText?.trim();
+    const translated = result?.translatedText;
+    // Providers routinely leave proper book names in English. Normalize them
+    // after translation, before validation/cache/emit, so every reader kind
+    // (explanations, background, Strong's, Lab, headings) stays consistent.
+    const text = localizeBookNames(translated, language)?.trim();
     const reportedTarget = result?.targetLanguage || result?.target;
     const job = plan.jobs[index];
     const shortCanonical = job.text.length <= 60 && !/[.!?]/.test(job.text);
     // Cognates and proper nouns legitimately survive translation unchanged
     // (e.g. French "propitiation"); prose never does.
     const sameAllowed = (['author', 'keyPeople', 'dateWritten', 'locationWritten'].includes(job.field) && shortCanonical) ||
-      (shortCanonical && (job.key === 'term' ||
+      (shortCanonical && (job.key === 'term' || job.key === 'shortDefinition' ||
         (job.key === 'label' && job.field === 'studyTools') ||
         (job.key === 'translation' && job.field === 'interlinearWords'))) ||
       (language === 'fr' && ['Introduction', 'Application', 'Conclusion', 'Question', 'Questions'].includes(job.text.trim()));
     if (error || !text || (reportedTarget && reportedTarget.toLowerCase() !== language.toLowerCase()) ||
-      (!sameAllowed && text === job.text.trim())) {
+      (!sameAllowed && translated?.trim() === job.text.trim())) {
       await emit('error', { ...common, code: 'TRANSLATION_FAILED', completed: index, pendingFields: pendingFields(index) });
       return; // Never certify source fallbacks or skip a missing chunk.
     }

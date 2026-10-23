@@ -2,6 +2,7 @@ import { normalizeLanguage, translateMany } from '../../utils/translator.js';
 import {
   withContentLanguage,
 } from '../../utils/contentLanguage.js';
+import { localizeBookNames } from '../../utils/localizedBookNames.js';
 
 const STRONGS_FIELDS = new Set([
   'shortDefinition',
@@ -10,7 +11,26 @@ const STRONGS_FIELDS = new Set([
   'verseStudyNote',
   'customDefinition',
   'themeName',
+  // Grammar values are displayed beside the lexeme, so they follow the same
+  // reader language as the definitions instead of leaking English.
+  'partOfSpeech',
+  'grammaticalCase',
+  'gender',
+  'number',
 ]);
+
+/**
+ * Mark the payload and, for paged responses, every item in `data`. The app
+ * checks the marker per list item before deciding whether it still needs to
+ * stream a translation.
+ */
+const markPayloadLanguage = (payload, language) => {
+  const marked = withContentLanguage(payload, language);
+  if (marked && !Array.isArray(marked) && typeof marked === 'object' && Array.isArray(marked.data)) {
+    return { ...marked, data: withContentLanguage(marked.data, language) };
+  }
+  return marked;
+};
 
 const translateFields = async (value, fields, lang) => {
   const target = normalizeLanguage(lang);
@@ -33,6 +53,7 @@ const translateFields = async (value, fields, lang) => {
 
   try {
     const translated = await translateMany(texts, target, { throwOnFailure: true });
+    const localized = translated.map((text) => localizeBookNames(text, target));
     let index = 0;
     const rebuild = (current) => {
       if (Array.isArray(current)) return current.map(rebuild);
@@ -42,17 +63,19 @@ const translateFields = async (value, fields, lang) => {
       const result = {};
       for (const [key, child] of Object.entries(current)) {
         const next = fields.has(key) && typeof child === 'string' && child.length > 0
-          ? translated[index++]
+          ? localized[index++]
           : rebuild(child);
         result[key] = next;
         changed ||= next !== child;
       }
       return changed ? result : current;
     };
-    return withContentLanguage(rebuild(value), target);
+    return markPayloadLanguage(rebuild(value), target);
   } catch (error) {
     console.warn(`[strongs] Translation to ${target} failed:`, error.message);
-    return value;
+    // Do not pretend canonical English is translated. The marker lets clients
+    // request the reader stream instead of rendering English in another UI.
+    return markPayloadLanguage(value, 'en');
   }
 };
 
