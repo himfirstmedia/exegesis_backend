@@ -4,7 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { pipeline } from "stream/promises";
 import { config } from "dotenv";
-import { connectDB, disconnectDB } from "./config/db.js";
+import { connectDB, disconnectDB, prisma } from "./config/db.js";
 import { corsOriginDelegate } from "./config/corsOrigins.js";
 import authRouter from "./modules/auth/route.js";
 import adminRouter from "./modules/admin/route.js";
@@ -61,6 +61,21 @@ try {
 } catch (error) {
   console.error(`FATAL: ${error.message}`);
   process.exit(1);
+}
+
+// A production process holding a test-mode Stripe key accepts checkout
+// sessions that never charge anyone. This cannot be validated at build time
+// because the key lives in the deployment environment, so make it loud here.
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
+if (
+  process.env.NODE_ENV === "production" &&
+  stripeSecretKey.startsWith("sk_test_")
+) {
+  console.error(
+    "WARNING: STRIPE_SECRET_KEY is a TEST key while NODE_ENV=production. " +
+      "No real payment will be collected. Replace the key, the price IDs and " +
+      "STRIPE_WEBHOOK_SECRET with live-mode values before launch.",
+  );
 }
 
 initializePushService();
@@ -185,14 +200,35 @@ app.use("/landing", landingRouter);
 app.use("/support", supportRouter);
 app.use("/reader", readerStreamRouter);
 
-app.get("/health", (req, res) => {
-  res.send(
-    formatApiResponse({
-      status: 200,
-      message: "Server is healthy",
-      data: { timestamp: new Date().toISOString() },
-    }),
-  );
+app.get("/health", async (req, res) => {
+  // Report dependency health, not just process liveness: Railway restarts the
+  // container on a non-2xx, and a booted process with a dead database cannot
+  // serve a single request.
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.send(
+      formatApiResponse({
+        status: 200,
+        message: "Server is healthy",
+        data: {
+          timestamp: new Date().toISOString(),
+          database: "up",
+        },
+      }),
+    );
+  } catch (error) {
+    console.error("Health check failed:", error.message);
+    res.status(503).send(
+      formatApiResponse({
+        status: 503,
+        message: "Service unavailable",
+        data: {
+          timestamp: new Date().toISOString(),
+          database: "down",
+        },
+      }),
+    );
+  }
 });
 
 app.use(errorHandler);
