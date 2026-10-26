@@ -17,6 +17,17 @@ const TRANSLATION_CACHE_NAMESPACE = "text-translations";
 const RESULT_PROVIDER = Symbol("translationProvider");
 const translationMemoryCache = new Map();
 const translationInFlight = new Map();
+const providerWarningTimes = new Map();
+
+// A flaky provider used to print one warning per text chunk. Keep the first
+// failure per provider/language and suppress repeats for 30 seconds so real
+// errors stay visible in the log.
+const warnProvider = (key, message) => {
+  const now = Date.now();
+  if (now - (providerWarningTimes.get(key) || 0) < 30000) return;
+  providerWarningTimes.set(key, now);
+  console.warn(message);
+};
 
 const readPositiveInt = (name, fallback) => {
   const value = Number.parseInt(process.env[name], 10);
@@ -45,7 +56,10 @@ const getConfig = () => ({
   chunkSize: readPositiveInt("TRANSLATION_CHUNK_SIZE", 1000),
   maxBatchItems: readPositiveInt("TRANSLATION_MAX_BATCH_ITEMS", 100),
   providerQueueMax: readPositiveInt("TRANSLATION_PROVIDER_QUEUE_MAX", 100),
-  providerQueueWaitMs: readPositiveInt("TRANSLATION_PROVIDER_QUEUE_WAIT_MS", 2000),
+  // A batch enqueues many items at once. With a 2s deadline only the first
+  // handful could ever start, so the rest failed with "queue wait exceeded"
+  // even while the provider was healthy. Allow a full batch to drain.
+  providerQueueWaitMs: readPositiveInt("TRANSLATION_PROVIDER_QUEUE_WAIT_MS", 15000),
   lordsbookMaxConcurrency: readPositiveInt("LORDSBOOK_TEXT_MAX_CONCURRENCY", 2),
   lordsbookMinDelayMs: readNonNegativeInt("LORDSBOOK_TEXT_MIN_DELAY_MS", 0),
   lordsbookQueueMax: readPositiveInt("LORDSBOOK_TEXT_QUEUE_MAX", 20),
@@ -610,7 +624,7 @@ const translateChunk = async (chunk, options) => {
         recordLordsbookTextFailure();
       }
       if (!e.providerQueueOverload) {
-        console.warn(`[Translation] Lordsbook failed, falling back to LibreTranslate: ${e.message}`);
+        warnProvider(`lordsbook:${options.target}`, `[Translation] Lordsbook failed, falling back to LibreTranslate: ${e.message}`);
       }
     }
   }
@@ -661,7 +675,8 @@ const translateChunk = async (chunk, options) => {
     return await translateWithLibre();
   } catch (error) {
     if (!canUseMyMemory(options) || error?.providerQueueOverload) throw error;
-    console.warn(
+    warnProvider(
+      `libre:${options.target}`,
       `[Translation] LibreTranslate failed for ${options.target}; using MyMemory fallback: ${error.message}`,
     );
     const fallback = await translateWithMyMemory(item, options);
@@ -670,6 +685,24 @@ const translateChunk = async (chunk, options) => {
     }
     return fallback;
   }
+};
+
+const REFERENCE_PATTERN = /\d+:\d+(?:\s*[-–]\s*\d+)?/g;
+
+/**
+ * Restore the Bible references a provider replaced with "<ID1>", "<ID2>" ...
+ * The markers map to references in source order, so the source chunk is the
+ * only reliable dictionary. Unknown markers are removed rather than shown.
+ */
+const restoreReferenceMarkers = (translated, source) => {
+  if (typeof translated !== "string" || !/<ID\d+>/i.test(translated)) {
+    return translated;
+  }
+  const references = String(source || "").match(REFERENCE_PATTERN) || [];
+  return translated
+    .replace(/<ID(\d+)>/gi, (marker, index) => references[Number(index) - 1] || "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 };
 
 const translateTextUncached = async ({ q, source = "auto", target, format = "text", alternatives, requireChanged = false }) => {
@@ -686,19 +719,27 @@ const translateTextUncached = async ({ q, source = "auto", target, format = "tex
     (chunk) => translateChunk(chunk, { source, target, format, alternatives, requireChanged }),
   );
 
-  const provider = results.some((result) => result[RESULT_PROVIDER] === "libre")
+  const restoredResults = results.map((result, index) => {
+    // Some providers (notably the Tamil/Indic engines) replace every Bible
+    // reference with an opaque "<ID1>" marker. Restore the reference from the
+    // matching position in the source chunk so readers never see the marker.
+    result.translatedText = restoreReferenceMarkers(result.translatedText, chunks[index]);
+    return result;
+  });
+
+  const provider = restoredResults.some((result) => result[RESULT_PROVIDER] === "libre")
     ? "libre"
-    : results.some((result) => result[RESULT_PROVIDER] === "mymemory")
+    : restoredResults.some((result) => result[RESULT_PROVIDER] === "mymemory")
       ? "mymemory"
       : "lordsbook";
   if (provider === "lordsbook") recordLordsbookTextSuccess();
   return markProvider({
-    translatedText: results.map((result) => result.translatedText).join(""),
-    ...(results[0]?.detectedLanguage
-      ? { detectedLanguage: results[0].detectedLanguage }
+    translatedText: restoredResults.map((result) => result.translatedText).join(""),
+    ...(restoredResults[0]?.detectedLanguage
+      ? { detectedLanguage: restoredResults[0].detectedLanguage }
       : {}),
-    ...(chunks.length === 1 && results[0]?.alternatives
-      ? { alternatives: results[0].alternatives }
+    ...(chunks.length === 1 && restoredResults[0]?.alternatives
+      ? { alternatives: restoredResults[0].alternatives }
       : {}),
     source,
     target,
@@ -766,7 +807,8 @@ const translateBatchUncached = async ({ q, ...options }) => {
             markLordsbookTargetUnsupported(options.target);
           }
           if (isFirstFailure && !error.providerQueueOverload) {
-            console.warn(
+            warnProvider(
+              `lordsbook-batch:${options.target}`,
               `[Translation] Lordsbook batch failed for ${options.target}; falling back to LibreTranslate: ${error.message}`,
             );
           }
@@ -871,7 +913,8 @@ const translateBatchUncached = async ({ q, ...options }) => {
     return await translateWithLibre();
   } catch (error) {
     if (!canUseMyMemory(options) || error?.providerQueueOverload) throw error;
-    console.warn(
+    warnProvider(
+      `libre-batch:${options.target}`,
       `[Translation] LibreTranslate batch failed for ${options.target}; using MyMemory fallback: ${error.message}`,
     );
     const fallbackResults = await mapWithConcurrency(
@@ -991,8 +1034,12 @@ export const translateBatch = async ({ q, ...options }) => {
   await Promise.all([...unique.values()].map(async (item) => {
     resolved.set(item.key, await item.promise);
   }));
-  const translations = q.map((text) =>
-    resolved.get(getTranslationCacheKey({ q: text, ...options })));
+  const translations = q.map((text) => {
+    const result = resolved.get(getTranslationCacheKey({ q: text, ...options }));
+    return result
+      ? { ...result, translatedText: restoreReferenceMarkers(result.translatedText, text) }
+      : result;
+  });
   return {
     translations,
     targetLanguage: options.target,

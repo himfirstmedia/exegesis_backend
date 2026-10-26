@@ -30,7 +30,10 @@ const addOptions = (record, entries) => {
 
 const translateEntries = async (entries, lang) => {
   if (!entries.length) return;
-  const translated = await translateMany(entries.map(entry => entry.value), lang, { throwOnFailure: true });
+  const translated = await translateMany(entries.map(entry => entry.value), lang, {
+    throwOnFailure: true,
+    retryUnchanged: true,
+  });
   translated.forEach((value, index) => entries[index]?.setValue(value));
 };
 

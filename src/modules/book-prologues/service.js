@@ -81,7 +81,12 @@ const getTranslationTimeoutMs = () => {
 const translateWithinBudget = async (values, target) => {
   let timeout;
   const result = await Promise.race([
-    translateMany(values, target, { throwOnFailure: true }).catch(() => null),
+    translateMany(values, target, {
+      // Translate as much as possible. A single flaky field used to reject the
+      // whole prologue and return the entire page in English.
+      throwOnFailure: false,
+      retryUnchanged: true,
+    }).catch(() => null),
     new Promise((resolve) => {
       timeout = setTimeout(() => resolve(null), getTranslationTimeoutMs());
     }),
@@ -155,7 +160,9 @@ const translateBookPrologue = async (prologue, lang = 'en') => {
   }
 
   const values = await translateWithinBudget(entries.map(entry => entry.value), target);
-  if (!values) return prologue;
+  if (!values) return withContentLanguage(prologue, 'en');
+  const changed = entries.some((entry, index) => values[index] !== entry.value);
+  if (!changed) return withContentLanguage(prologue, 'en');
   entries.forEach((entry, index) => entry.setValue(values[index]));
   return withContentLanguage(translated, target);
 };

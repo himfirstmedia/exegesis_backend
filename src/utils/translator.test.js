@@ -96,6 +96,20 @@ describe("LibreTranslate compatibility adapter", () => {
     expect(translateBatchWithLibre.mock.calls[0][0].q).toHaveLength(90);
   });
 
+  test("retries long English echoes when retryUnchanged is enabled", async () => {
+    const sentence = "Unique sentence that the provider echoes back unchanged.";
+    translateBatchWithLibre.mockImplementationOnce(async ({ q }) => ({
+      translations: q.map((text) => ({ translatedText: text })),
+    }));
+
+    await expect(
+      translateMany([sentence], "ar", { retryUnchanged: true }),
+    ).resolves.toEqual([`ar:${sentence}`]);
+    expect(translateWithLibre).toHaveBeenCalledWith(
+      expect.objectContaining({ q: sentence, target: "ar", requireChanged: true }),
+    );
+  });
+
   test("returns original text when LibreTranslate is unavailable", async () => {
     const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
     translateWithLibre.mockRejectedValueOnce(new Error("offline"));

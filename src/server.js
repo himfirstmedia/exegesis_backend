@@ -14,6 +14,7 @@ import journalRouter from "./modules/journal/route.js";
 import { formatApiResponse } from "./utils/helpers.js";
 import { errorHandler } from "./middlewares/errorHandler.middleware.js";
 import { absoluteMediaUrl } from "./middlewares/absoluteMediaUrl.middleware.js";
+import { localizeResponseMessage } from "./middlewares/localizeResponseMessage.middleware.js";
 import { startEmailScheduler } from "./services/emailScheduler.js";
 import { startPopularSearchCleanup } from "./services/popularSearchCleanup.js";
 import { startPushScheduler } from "./services/pushNotificationScheduler.js";
@@ -176,6 +177,10 @@ app.use(
 // clients can render profilePhotoUrl / coverPhotoUrl directly. Must run before
 // the route handlers so every response is transformed.
 app.use(absoluteMediaUrl);
+
+// Translate API envelope messages ("Incorrect username or password", "Plan
+// deleted successfully", …) into the language the app sends as `lang`.
+app.use(localizeResponseMessage());
 
 app.use("/auth", authRouter);
 app.use("/admin", adminRouter);

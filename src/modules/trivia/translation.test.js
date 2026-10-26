@@ -44,7 +44,7 @@ describe('trivia response translation', () => {
       'David',
       'Paul',
       'Noah obeyed God.',
-    ], 'ar', { throwOnFailure: true });
+    ], 'ar', { throwOnFailure: true, retryUnchanged: true });
     expect(result).toEqual({
       ...item,
       contentLanguage: 'ar',

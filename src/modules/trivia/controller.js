@@ -124,6 +124,12 @@ export const getUserStats = async (req, res) => {
 export const getCurrentUserPerformance = async (req, res) => {
   try {
     const result = await triviaService.getCurrentUserPerformance(req.user.id, req.body);
+    if (Array.isArray(result.data?.answers)) {
+      result.data.answers = await translateTriviaQuestions(
+        result.data.answers,
+        req.body?.lang || 'en',
+      );
+    }
     return res.status(result.status).json(formatApiResponse(result));
   } catch (error) {
     console.error('[TriviaController] getCurrentUserPerformance error:', error);

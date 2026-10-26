@@ -108,6 +108,25 @@ function initFirebaseAdmin() {
 // ── Token registry ───────────────────────────────────────────────────────────
 
 /**
+ * Prisma's upsert is not atomic at the database level. Two concurrent
+ * register-token calls for the same user can both see "no row" and then race
+ * to insert, producing P2002 on the push_settings primary key. Retry the
+ * losing request as a plain update so registration stays idempotent.
+ */
+const upsertPushSetting = async ({ userId, create, update }) => {
+  try {
+    return await prisma.pushSetting.upsert({
+      where: { userId },
+      create,
+      update,
+    });
+  } catch (error) {
+    if (error?.code !== "P2002") throw error;
+    return prisma.pushSetting.update({ where: { userId }, data: update });
+  }
+};
+
+/**
  * Register (or refresh) a device push token for a user.
  * Idempotent: re-registering the same token re-points it at the current user
  * (handles shared devices where one browser logs into different accounts).
@@ -119,8 +138,10 @@ export const registerToken = async (userId, token, platform = "web", timezone) =
     update: { userId, platform, lastSeenAt: new Date() },
   });
   if (isValidTimeZone(timezone)) {
-    await prisma.pushSetting.upsert({
-      where: { userId }, create: { userId, timezone }, update: {},
+    await upsertPushSetting({
+      userId,
+      create: { userId, timezone },
+      update: {},
     });
   }
 };
@@ -137,8 +158,10 @@ export const initializePushService = () => verifyPushCredentials();
 export const getSettings = async (userId) => {
   let settings = await prisma.pushSetting.findUnique({ where: { userId } });
   if (!settings) {
-    settings = await prisma.pushSetting.create({
-      data: { userId, timezone: "UTC" },
+    settings = await upsertPushSetting({
+      userId,
+      create: { userId, timezone: "UTC" },
+      update: {},
     });
   }
   return settings;
@@ -159,8 +182,8 @@ export const updateSettings = async (userId, patch) => {
     allowed.timezone = patch.timezone;
   }
 
-  const settings = await prisma.pushSetting.upsert({
-    where: { userId },
+  const settings = await upsertPushSetting({
+    userId,
     create: { userId, ...allowed },
     update: allowed,
   });

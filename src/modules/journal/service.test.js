@@ -156,7 +156,7 @@ describe("journal public content translation", () => {
       "Patience matters.",
       "Listen first.",
       "faith,trust",
-    ], "hi", { throwOnFailure: true });
+    ], "hi", { throwOnFailure: true, retryUnchanged: true });
     expect(result.returnData).toMatchObject({
       id: 21,
       title: "hi:A faithful day",
@@ -191,7 +191,7 @@ describe("journal public content translation", () => {
     expect(translateMany).toHaveBeenCalledWith(
       ["A faithful day", "I learned to trust God."],
       "fr",
-      { throwOnFailure: true },
+      { throwOnFailure: true, retryUnchanged: true },
     );
     expect(result.returnData.entries[0]).toMatchObject({
       title: "fr:A faithful day",

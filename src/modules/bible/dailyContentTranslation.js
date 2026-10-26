@@ -179,7 +179,7 @@ const translateEntries = async (entries, lang, timeBudgetMs) => {
       translateMany(
         group.map((entry) => entry.value),
         lang,
-        { throwOnFailure: true },
+        { throwOnFailure: true, retryUnchanged: true },
       ),
       remaining,
     );

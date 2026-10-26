@@ -189,7 +189,7 @@ describe("daily content translation", () => {
     expect(translateMany).toHaveBeenCalledWith(
       ["Original", "Original content"],
       "pt",
-      { throwOnFailure: true },
+      { throwOnFailure: true, retryUnchanged: true },
     );
     warning.mockRestore();
   });

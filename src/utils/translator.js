@@ -36,7 +36,8 @@ const getMaxTextLength = () => {
 
 const getCacheKey = (text, lang) => {
   const model = process.env.LIBRETRANSLATE_MODEL_VERSION || "1.9.6";
-  return `v4:libretranslate:${model}:en:${lang}:${hashText(text)}`;
+  // v6 drops English echoes that older runs accepted as translations.
+  return `v6:libretranslate:${model}:en:${lang}:${hashText(text)}`;
 };
 
 const setMemoryCache = (key, value) => {
@@ -53,6 +54,19 @@ const warnProviderFailure = (lang, message) => {
   console.warn(`[translator] LibreTranslate temporarily failed for ${lang}:`, message);
 };
 
+/**
+ * A provider can report success while echoing a whole sentence back in the
+ * source language. Short labels and proper nouns legitimately survive, but a
+ * multi-word sentence should be retried through the fallback chain instead of
+ * being cached as a valid translation.
+ */
+const isLikelyUntranslated = (source, translated) =>
+  typeof source === "string" &&
+  typeof translated === "string" &&
+  source.trim() === translated.trim() &&
+  source.length >= 24 &&
+  source.trim().split(/\s+/).length >= 4;
+
 const resolveProviderPromise = async (
   promise,
   sourceText,
@@ -68,7 +82,7 @@ const resolveProviderPromise = async (
   }
 };
 
-const translateChunk = async (text, lang, { throwOnFailure = false } = {}) => {
+const translateChunk = async (text, lang, { throwOnFailure = false, requireChanged = false } = {}) => {
   const cacheKey = getCacheKey(text, lang);
   if (memoryCache.has(cacheKey)) return memoryCache.get(cacheKey);
   if (inFlight.has(cacheKey)) {
@@ -91,6 +105,7 @@ const translateChunk = async (text, lang, { throwOnFailure = false } = {}) => {
       q: text,
       source: "en",
       target: lang,
+      ...(requireChanged ? { requireChanged: true } : {}),
     });
     const translated = result.translatedText || text;
     setMemoryCache(cacheKey, translated);
@@ -199,10 +214,42 @@ export const translateMany = async (texts = [], lang = "en", options = {}) => {
         const value = values[itemIndex];
         translated[item.batchIndex] = value;
         if (success) {
-          setMemoryCache(item.cacheKey, value);
-          void cache.set("translations", item.cacheKey, value, CACHE_TTL);
+          // Do not persist an English sentence as a successful translation;
+          // that would make the gap permanent for the cache TTL.
+          if (!isLikelyUntranslated(item.text, value)) {
+            setMemoryCache(item.cacheKey, value);
+            void cache.set("translations", item.cacheKey, value, CACHE_TTL);
+          }
         }
       });
+
+      if (success && options.retryUnchanged) {
+        const unchanged = missing.filter((item, itemIndex) =>
+          isLikelyUntranslated(item.text, values[itemIndex]),
+        );
+        await Promise.all(
+          unchanged.map(async (item) => {
+            try {
+              // Bypass the translator cache: the echoed English value may
+              // already be cached from the batch above.
+              const result = await translateWithLibre({
+                q: item.text,
+                source: "en",
+                target,
+                requireChanged: true,
+              });
+              const retried = result?.translatedText;
+              if (retried && retried !== item.text) {
+                translated[item.batchIndex] = retried;
+                setMemoryCache(item.cacheKey, retried);
+                void cache.set("translations", item.cacheKey, retried, CACHE_TTL);
+              }
+            } catch {
+              // Keep the provider's original value when every provider echoes.
+            }
+          }),
+        );
+      }
     }
 
     results.push(...translated);

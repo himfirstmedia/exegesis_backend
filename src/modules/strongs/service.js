@@ -5,6 +5,16 @@ import { translateSearchPage } from './searchTranslation.js';
 
 const CACHE_TTL = 86400;
 
+// URL callers often pass "g25" or "G25" while the dictionary stores zero-padded
+// ids such as "G0025". Normalizing here keeps both forms resolvable.
+const normalizeStrongsId = (value) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  const match = trimmed.match(/^([GHgh])\s*0*(\d+)$/);
+  if (!match) return trimmed.toUpperCase();
+  return `${match[1].toUpperCase()}${match[2].padStart(4, '0')}`;
+};
+
 const translateResponse = async (response, lang, translate = translateStrongsData) => {
   if (response.data === undefined) return response;
   return { ...response, data: await translate(response.data, lang) };
@@ -78,7 +88,8 @@ const addCrossReferenceTexts = async (entries, translation) => {
 };
 
 export const getStrongsEntry = async (strongsId, lang) => {
-  const cacheKey = `v3:${strongsId}`;
+  const normalizedId = normalizeStrongsId(strongsId);
+  const cacheKey = `v3:${normalizedId}`;
 
   const cached = await cache.get('strongs', cacheKey);
   if (cached) {
@@ -86,7 +97,7 @@ export const getStrongsEntry = async (strongsId, lang) => {
   }
 
   const entry = await prisma.strongsDictionary.findUnique({
-    where: { strongsId },
+    where: { strongsId: normalizedId },
     include: {
       verseExplanationWordStudies: {
         orderBy: { sortOrder: 'asc' },
@@ -289,7 +300,7 @@ export const searchStrongs = async (query, limit = 2, offset = 0, lang = 'en', l
 export const getRelatedWords = async (strongsId, lang) => {
   // Find lemmas for this Strong's number via VerseWord table
   const verseWordLemmas = await prisma.verseWord.findMany({
-    where: { strongsId },
+    where: { strongsId: normalizeStrongsId(strongsId) },
     distinct: ['lemma'],
     select: { lemma: true },
   });
@@ -332,6 +343,7 @@ export const getRelatedWords = async (strongsId, lang) => {
 };
 
 export const getVersesByStrongs = async (strongsId, translation = 'Berean', limit = 50, lang) => {
+  strongsId = normalizeStrongsId(strongsId);
   const cacheKey = `${strongsId}:${translation}:${limit}`;
 
   const cached = await cache.get('strongs-verses', cacheKey);

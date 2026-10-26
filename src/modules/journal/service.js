@@ -17,6 +17,11 @@ const JOURNAL_ENTRY_TEXT_FIELDS = [
 ];
 const JOURNAL_LIST_TEXT_FIELDS = ["title", "content"];
 
+const getTranslationTimeoutMs = () => {
+  const value = Number.parseInt(process.env.JOURNAL_TRANSLATION_TIMEOUT_MS, 10);
+  return Number.isInteger(value) && value > 0 ? value : 6000;
+};
+
 const localizeJournalEntries = async (
   records,
   requestedLanguage,
@@ -40,18 +45,27 @@ const localizeJournalEntries = async (
       });
     });
     if (values.length > 0) {
-      try {
-        const translated = await translateMany(values, language, {
+      // Journal lists can contain hundreds of long entries. A slow provider must
+      // not hold the request open, so the response uses canonical English after
+      // a short budget while the translation keeps warming the cache.
+      let timeout;
+      const translated = await Promise.race([
+        translateMany(values, language, {
           throwOnFailure: true,
-        });
+          retryUnchanged: true,
+        }).catch(() => null),
+        new Promise((resolve) => {
+          timeout = setTimeout(() => resolve(null), getTranslationTimeoutMs());
+        }),
+      ]).finally(() => clearTimeout(timeout));
+
+      if (Array.isArray(translated)) {
         fields.forEach(([entry, field], index) => {
           entry[field] = translated[index];
         });
         entries.forEach((entry) => {
           entry.contentLanguage = language;
         });
-      } catch {
-        // Preserve canonical English content and report its actual language.
       }
     } else {
       entries.forEach((entry) => {
