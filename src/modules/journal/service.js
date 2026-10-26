@@ -4,12 +4,7 @@ import { cache } from "../../services/cacheService.js";
 import { parseLocalDate } from "../../utils/dates.js";
 import { normalizeLanguage, translateMany } from "../../utils/translator.js";
 import PDFDocument from "pdfkit";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const moduleFilename = fileURLToPath(import.meta.url);
-const moduleDirname = path.dirname(moduleFilename);
-const LOGO_PATH = path.join(moduleDirname, "../../../src/assets/logo.png");
+import { EMAIL_LOGO_URL } from "../../utils/emailTemplates.js";
 
 const JOURNAL_ENTRY_TEXT_FIELDS = [
   "title",
@@ -1370,7 +1365,11 @@ export const exportOneEntry = async (id, userId, format, requestedLanguage = "en
 
     // ── Header with logo ──
     try {
-      doc.image(LOGO_PATH, marginX, headerY, { width: 48 });
+      const response = await fetch(EMAIL_LOGO_URL, { signal: AbortSignal.timeout(5000) });
+      if (response.ok) {
+        const logo = Buffer.from(await response.arrayBuffer());
+        doc.image(logo, marginX, headerY, { width: 48 });
+      }
     } catch (e) {}
     doc.x = marginX + 65;
 

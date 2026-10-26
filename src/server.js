@@ -163,7 +163,7 @@ app.get(/^\/media\/(.+)$/, async (req, res) => {
   }
 });
 
-// Serve static assets (e.g. /assets/logo.png used in email templates)
+// Serve remaining static assets. Email branding is hosted on Cloudflare R2.
 app.use(
   "/assets",
   express.static(path.join(__dirname, "assets"), {
