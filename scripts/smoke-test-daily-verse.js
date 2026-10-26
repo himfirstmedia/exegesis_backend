@@ -2,10 +2,11 @@
  * Smoke test for the daily-verse "Translation not found" fix.
  *
  * Verifies:
- *  1. Aliased ids (NKJV → NKJ) resolve and fetch real verse text.
+ *  1. Retired ids (NKJV → Tyndale) resolve and fetch real verse text.
  *  2. Case variants (kjv, DARBY) resolve.
  *  3. Unbundled translations (WEB) fall back to KJV text instead of empty.
  *  4. Repeated fallback calls warn only once (no log spam).
+ *  5. Retired ids display the replacement translation's name.
  *
  * Run: node scripts/smoke-test-daily-verse.js
  */
@@ -26,7 +27,7 @@ console.log('1) Alias resolution — NKJV must fetch real text:');
 {
   const verse = await translations.getVerse('NKJV', 'Genesis', 1, 1);
   check('NKJV Genesis 1:1 returns text', verse.text.length > 0, `got "${verse.text}"`);
-  check('NKJV is the KJV XML content', verse.text.includes('In the beginning'));
+  check('NKJV resolves to the Tyndale replacement text', verse.text.includes('In the beginning'));
 }
 
 console.log('2) Case-insensitive ids:');
@@ -96,7 +97,7 @@ console.log('6) Existing seeded translation (NKJ) still fetches via getVerse:');
 console.log('7) getTranslationDisplayName for stored id:');
 {
   const name = translations.getTranslationDisplayName('NKJV');
-  check('NKJV displays as "New King James Version"', name === 'New King James Version', `got "${name}"`);
+  check('NKJV resolves to "Tyndale Bible"', name === 'Tyndale Bible', `got "${name}"`);
 }
 
 console.log('');

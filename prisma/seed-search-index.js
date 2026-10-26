@@ -9,14 +9,15 @@
  *
  * Options:
  *   --translations  Comma-separated list of translation short IDs (default: Berean)
- *                   e.g. --translations=Berean,KJV,ESV
- *   --all           Index all 28 translations (takes ~2-3 minutes)
+ *                   e.g. --translations=Berean,KJV,Tyndale
+ *   --all           Index every translation in the curated catalogue
  */
 import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { parseString } from 'xml2js';
+import { discoverBibles } from '../src/modules/bible-translations/discovery.js';
 
 const prisma = new PrismaClient();
 
@@ -25,35 +26,20 @@ const __dirname = path.dirname(__filename);
 
 const XML_DIR = path.join(__dirname, '..', 'src', 'modules', 'bible-translations', 'Holy-Bible-XML-Format');
 
-const SHORT_IDS = {
-  'ASV': 'EnglishASVBible',
-  'Amplified': 'EnglishAmplifiedBible',
-  'AmplifiedClassic': 'EnglishAmplifiedClassicBible',
-  'Berean': 'EnglishBereanBible',
-  'CSB': 'EnglishCSBBible',
-  'Darby': 'EnglishDarbyBible',
-  'EASY': 'EnglishEASYBible',
-  'ERV': 'EnglishERVBible',
-  'ESV': 'EnglishESVBible',
-  'GNT': 'EnglishGNTBible',
-  'GW': 'EnglishGWBible',
-  'HCSB': 'EnglishHCSBBible',
-  'KJV': 'EnglishKJBible',
-  'LSB': 'EnglishLSBBible',
-  'MEV': 'EnglishMEVBible',
-  'NASB': 'EnglishNASBBible',
-  'NASU': 'EnglishNASUBible',
-  'NET': 'EnglishNETBible',
-  'NIRV': 'EnglishNIRVBible',
-  'NIV': 'EnglishNIVBible',
-  'NKJ': 'EnglishNKJBible',
-  'NLT': 'EnglishNLTBible',
-  'NRSV': 'EnglishNRSVBible',
-  'Passion': 'EnglishPassionBible',
-  'RSV': 'EnglishRSVBible',
-  'TL': 'EnglishTLBible',
-  'Tyndale': 'EnglishTyndale1537Bible',
-  'YLT': 'EnglishYLTBible',
+// Build the seed map from the same curated catalogue the API serves. This keeps
+// the search index aligned with the shipped XML files: non-free or missing
+// translations can never be indexed by mistake.
+const SHORT_IDS = Object.fromEntries(
+  discoverBibles(XML_DIR).map(({ shortId, fileId }) => [shortId, fileId]),
+);
+
+// Translations retired for licence reasons. Their text is no longer shipped;
+// old CLI invocations index the free Tyndale replacement instead.
+const RETIRED_ALIASES = {
+  NKJ: 'Tyndale',
+  NKJV: 'Tyndale',
+  TL: 'Tyndale',
+  LIVING: 'Tyndale',
 };
 
 const BOOK_NAMES = {
@@ -166,11 +152,16 @@ async function main() {
   } else {
     const customIdx = args.indexOf('--translations');
     if (customIdx !== -1 && args[customIdx + 1]) {
-      translations = args[customIdx + 1].split(',').map(s => s.trim());
+      translations = args[customIdx + 1]
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(id => RETIRED_ALIASES[id] || id);
     } else {
       translations = ['Berean'];
     }
   }
+  translations = [...new Set(translations)];
 
   console.log(`\n📖 Seeding search index for ${translations.length} translation(s):`);
   console.log(`   ${translations.join(', ')}\n`);
