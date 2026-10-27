@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { AppError, ValidationError } from "../../utils/AppError.js";
 import { cache } from "../../services/cacheService.js";
 import { translateLordsbookText } from "../../services/lordsbookGateway.js";
+import { canUseGoogleFree, translateGoogleFree, resetGoogleFreeCooldown } from '../../services/googleFreeTranslation.js';
 import {
   mapWithConcurrency,
   normalizeTranslationText,
@@ -81,10 +82,18 @@ const isLordsbookTextEnabled = () =>
 const isMyMemoryEnabled = () =>
   (process.env.MYMEMORY_TRANSLATE_ENABLE ?? "true").trim().toLowerCase() !== "false";
 
+// No language bypasses Lordsbook by default. An explicit deployment override
+// can opt into a different order; leave this list empty for Lordsbook primary.
+const libreUnsupportedOnly = () => (process.env.TRANSLATION_LIBRE_UNSUPPORTED_ONLY ?? 'true').trim().toLowerCase() !== 'false';
+const isLibreFirst = target => !libreUnsupportedOnly() && (process.env.TRANSLATION_LIBRE_FIRST_LANGUAGES ?? '')
+  .split(',').some(code => code.trim().toLowerCase() === String(target || '').toLowerCase());
+
 const getTranslationCacheKey = ({ q, source = "auto", target, format = "text", alternatives, requireChanged = false }) => {
   const provider = [
+    ...(isLibreFirst(target) ? ['libre'] : []),
     ...(isLordsbookTextEnabled() ? ["lordsbook"] : []),
-    "libre",
+    ...(!isLibreFirst(target) ? ['libre'] : []),
+    ...(canUseGoogleFree({ format }) ? ['google-free'] : []),
     ...(isMyMemoryEnabled() ? ["mymemory"] : []),
   ].join("+");
   const versions = {
@@ -138,10 +147,10 @@ const getCachedTranslation = async (key) => {
     cached?.version === 2 &&
     cached.result?.translatedText &&
     typeof cached.result.translatedText === "string" &&
-    ["lordsbook", "libre", "mymemory"].includes(cached.provider)
+    ["lordsbook", "libre", "google-free", "mymemory"].includes(cached.provider)
   ) {
     const config = getConfig();
-    const ttl = isLordsbookTextEnabled() && cached.provider !== "lordsbook"
+    const ttl = isLordsbookTextEnabled() && cached.provider !== "lordsbook" && !isLibreFirst(cached.result.target)
       ? config.fallbackCacheTtl
       : config.cacheTtl;
     setMemoryCache(key, cached.result, cached.provider, ttl);
@@ -153,7 +162,7 @@ const getCachedTranslation = async (key) => {
 const cacheTranslation = (key, result) => {
   const config = getConfig();
   const provider = result[RESULT_PROVIDER] || "libre";
-  const ttl = isLordsbookTextEnabled() && provider !== "lordsbook"
+  const ttl = isLordsbookTextEnabled() && provider !== "lordsbook" && !isLibreFirst(result.target)
     ? config.fallbackCacheTtl
     : config.cacheTtl;
   setMemoryCache(key, result, provider, ttl);
@@ -238,6 +247,7 @@ const assertSupportedTarget = async (target) => {
 };
 
 export const __resetTranslationProviderCache = () => {
+  resetGoogleFreeCooldown();
   supportedLanguagesCache.at = 0;
   supportedLanguagesCache.codes = null;
   supportedLanguagesCache.errorUntil = 0;
@@ -330,6 +340,12 @@ const isLordsbookTargetUnsupported = (target) => {
   return true;
 };
 
+const assertLibreAllowed = target => {
+  if (isLordsbookTextEnabled() && libreUnsupportedOnly() && !isLordsbookTargetUnsupported(target)) {
+    throw new AppError(503, 'Primary translation provider unavailable; LibreTranslate is reserved for unsupported languages');
+  }
+};
+
 // Only a client-side rejection means "this target is not offered"; upstream
 // failures (5xx, timeouts) are the breaker's job, not a capability signal.
 const isLordsbookTargetRejection = (error) =>
@@ -346,6 +362,7 @@ const markLordsbookTargetUnsupported = (target) => {
 };
 
 const providerLimiters = {
+  'google-free': { active: 0, queue: [], startGate: Promise.resolve(), lastStart: 0 },
   libre: { active: 0, queue: [], startGate: Promise.resolve(), lastStart: 0 },
   lordsbook: { active: 0, queue: [], startGate: Promise.resolve(), lastStart: 0 },
   mymemory: { active: 0, queue: [], startGate: Promise.resolve(), lastStart: 0 },
@@ -353,6 +370,9 @@ const providerLimiters = {
 
 const getProviderLimit = (provider) => {
   const config = getConfig();
+  if (provider === 'google-free') {
+    return { maxConcurrency: 1, minDelayMs: 400, queueMax: config.providerQueueMax, queueWaitMs: config.providerQueueWaitMs };
+  }
   if (provider === "lordsbook") {
     return {
         maxConcurrency: config.lordsbookMaxConcurrency,
@@ -448,13 +468,14 @@ const withProviderLimit = (provider, job) =>
     runNextProviderRequest(provider);
   });
 
-const libreRequest = async (path, options = {}) => {
+const libreRequest = async (path, options = {}, overrides = {}) => {
   const config = getConfig();
+  const attempts = overrides.retryAttempts ?? config.retryAttempts;
   let lastError;
 
-  for (let attempt = 1; attempt <= config.retryAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), overrides.timeoutMs ?? config.timeoutMs);
     try {
       const response = await fetch(`${config.baseUrl}${path}`, {
         ...options,
@@ -498,7 +519,7 @@ const libreRequest = async (path, options = {}) => {
       clearTimeout(timeout);
     }
 
-    if (!lastError.retryable || attempt === config.retryAttempts) break;
+    if (!lastError.retryable || attempt === attempts) break;
     await new Promise((resolve) =>
       setTimeout(resolve, config.retryDelayMs * attempt),
     );
@@ -587,12 +608,74 @@ const translateWithMyMemory = async (item, options) => {
   }, "mymemory");
 };
 
+// Keep Lordsbook/LibreTranslate first. A keyless fallback serves languages
+// missing from Libre's model list without relying solely on MyMemory's quota.
+const translateFallbackItems = async (items, options, libreError) => {
+  if (libreError?.providerQueueOverload) throw libreError;
+  if (canUseGoogleFree(options)) {
+    try {
+      const values = await withProviderLimit('google-free', () =>
+        translateGoogleFree(items.map(item => item.value), options));
+      return items.map((item, index) => markProvider({
+        translatedText: `${item.leading}${values[index]}${item.trailing}`,
+        source: options.source || 'auto', target: options.target,
+        characterCount: item.original?.length ?? item.value.length, chunkCount: 1,
+      }, 'google-free'));
+    } catch (error) {
+      if (error?.providerQueueOverload || !canUseMyMemory(options)) throw error;
+      warnProvider(`google-free:${options.target}`,
+        `[Translation] Free Google failed for ${options.target}; using MyMemory fallback: ${error.message}`);
+    }
+  } else if (!canUseMyMemory(options)) {
+    throw libreError;
+  }
+  warnProvider(`libre:${options.target}`,
+    `[Translation] LibreTranslate failed for ${options.target}; using MyMemory fallback: ${libreError.message}`);
+  const results = await mapWithConcurrency(items, getConfig().myMemoryMaxConcurrency,
+    item => translateWithMyMemory(item, options));
+  if (options.requireChanged && results.some((result, index) =>
+    result.translatedText?.trim() === items[index].value.trim())) {
+    throw new AppError(502, 'Translation provider returned untranslated text');
+  }
+  return results;
+};
+
+const requestPreferredLibre = async (q, options) => {
+  const config = getConfig();
+  // One bounded attempt; no capability probe or retry waterfall before the
+  // other providers get a chance if this preferred deployment is unavailable.
+  const result = await withProviderLimit('libre', () => libreRequest('/translate', {
+    method: 'POST',
+    body: JSON.stringify({ q, source: toLibreLanguageCode(options.source || 'auto'),
+      target: toLibreLanguageCode(options.target), format: options.format || 'text',
+      ...(options.alternatives ? { alternatives: options.alternatives } : {}),
+      ...(config.apiKey ? { api_key: config.apiKey } : {}),
+    }),
+  }, { timeoutMs: readPositiveInt('TRANSLATION_PREFERRED_PROVIDER_TIMEOUT_MS', 5000), retryAttempts: 1 }));
+  const sources = Array.isArray(q) ? q : [q];
+  const values = Array.isArray(q) ? result?.translatedText : [result?.translatedText];
+  if (!Array.isArray(values) || values.length !== sources.length || values.some((text, index) =>
+    typeof text !== 'string' || !text.trim() || (options.requireChanged && text.trim() === sources[index].trim()))) {
+    throw new AppError(502, 'Preferred translation provider returned incomplete or untranslated text');
+  }
+  return result;
+};
+
 const translateChunk = async (chunk, options) => {
   const { leading, value, trailing } = preserveOuterWhitespace(chunk);
   if (!value) return { translatedText: chunk };
 
   const config = getConfig();
-  
+  let preferredLibreError;
+  if (isLibreFirst(options.target)) {
+    try {
+      const result = await requestPreferredLibre(value, options);
+      return markProvider({ ...result, translatedText: `${leading}${result.translatedText}${trailing}` }, 'libre');
+    } catch (error) {
+      preferredLibreError = error;
+    }
+  }
+
   // Try Lordsbook first ONLY if explicitly enabled, the upstream is believed
   // healthy (see circuit breaker above), and this target is not already known
   // to be outside Lordsbook's language list.
@@ -624,13 +707,15 @@ const translateChunk = async (chunk, options) => {
         recordLordsbookTextFailure();
       }
       if (!e.providerQueueOverload) {
-        warnProvider(`lordsbook:${options.target}`, `[Translation] Lordsbook failed, falling back to LibreTranslate: ${e.message}`);
+        warnProvider(`lordsbook:${options.target}`, `[Translation] Lordsbook failed; trying an available fallback: ${e.message}`);
       }
     }
   }
 
   const item = { original: chunk, leading, value, trailing };
   const translateWithLibre = async () => {
+    if (preferredLibreError) throw preferredLibreError;
+    assertLibreAllowed(options.target);
     await assertSupportedTarget(options.target);
     const payload = {
       q: value,
@@ -674,16 +759,7 @@ const translateChunk = async (chunk, options) => {
   try {
     return await translateWithLibre();
   } catch (error) {
-    if (!canUseMyMemory(options) || error?.providerQueueOverload) throw error;
-    warnProvider(
-      `libre:${options.target}`,
-      `[Translation] LibreTranslate failed for ${options.target}; using MyMemory fallback: ${error.message}`,
-    );
-    const fallback = await translateWithMyMemory(item, options);
-    if (options.requireChanged && fallback.translatedText?.trim() === value.trim()) {
-      throw new AppError(502, "Translation provider returned untranslated text");
-    }
-    return fallback;
+    return (await translateFallbackItems([item], options, error))[0];
   }
 };
 
@@ -727,7 +803,9 @@ const translateTextUncached = async ({ q, source = "auto", target, format = "tex
     return result;
   });
 
-  const provider = restoredResults.some((result) => result[RESULT_PROVIDER] === "libre")
+  const provider = restoredResults.some((result) => result[RESULT_PROVIDER] === 'google-free')
+    ? 'google-free'
+    : restoredResults.some((result) => result[RESULT_PROVIDER] === "libre")
     ? "libre"
     : restoredResults.some((result) => result[RESULT_PROVIDER] === "mymemory")
       ? "mymemory"
@@ -774,6 +852,20 @@ const translateBatchUncached = async ({ q, ...options }) => {
     return { original: text, ...preserveOuterWhitespace(normalized) };
   });
 
+  let preferredLibreError;
+  if (isLibreFirst(options.target)) {
+    try {
+      const result = await requestPreferredLibre(prepared.map(item => item.value), options);
+      return { translations: prepared.map((item, index) => markProvider({
+        translatedText: `${item.leading}${result.translatedText[index]}${item.trailing}`,
+        source: options.source || 'auto', target: options.target,
+        characterCount: item.original.length, chunkCount: 1,
+      }, 'libre')), itemCount: q.length, characterCount: totalCharacters, provider: 'libre' };
+    } catch (error) {
+      preferredLibreError = error;
+    }
+  }
+
   let lordsbookResults = null;
   if (
     isLordsbookTextEnabled() &&
@@ -809,7 +901,7 @@ const translateBatchUncached = async ({ q, ...options }) => {
           if (isFirstFailure && !error.providerQueueOverload) {
             warnProvider(
               `lordsbook-batch:${options.target}`,
-              `[Translation] Lordsbook batch failed for ${options.target}; falling back to LibreTranslate: ${error.message}`,
+              `[Translation] Lordsbook batch failed for ${options.target}; trying an available fallback: ${error.message}`,
             );
           }
           return { result: null, error };
@@ -844,6 +936,8 @@ const translateBatchUncached = async ({ q, ...options }) => {
     .map((_, index) => index)
     .filter((index) => !lordsbookResults?.[index]?.result?.translatedText);
   const translateWithLibre = async () => {
+    if (preferredLibreError) throw preferredLibreError;
+    assertLibreAllowed(options.target);
     await assertSupportedTarget(options.target);
     const payload = {
       q: libreIndexes.map((index) => prepared[index].value),
@@ -912,16 +1006,7 @@ const translateBatchUncached = async ({ q, ...options }) => {
   try {
     return await translateWithLibre();
   } catch (error) {
-    if (!canUseMyMemory(options) || error?.providerQueueOverload) throw error;
-    warnProvider(
-      `libre-batch:${options.target}`,
-      `[Translation] LibreTranslate batch failed for ${options.target}; using MyMemory fallback: ${error.message}`,
-    );
-    const fallbackResults = await mapWithConcurrency(
-      libreIndexes,
-      config.myMemoryMaxConcurrency,
-      (index) => translateWithMyMemory(prepared[index], options),
-    );
+    const fallbackResults = await translateFallbackItems(libreIndexes.map(index => prepared[index]), options, error);
     let fallbackIndex = 0;
     const translations = prepared.map((item, index) => {
       const lordsbook = lordsbookResults?.[index]?.result;
@@ -940,7 +1025,7 @@ const translateBatchUncached = async ({ q, ...options }) => {
       translations,
       itemCount: translations.length,
       characterCount: totalCharacters,
-      provider: "mymemory",
+      provider: fallbackResults[0]?.[RESULT_PROVIDER] || 'mymemory',
     };
   }
 };

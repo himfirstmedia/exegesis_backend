@@ -11,6 +11,7 @@ jest.mock("@aws-sdk/client-s3", () => {
 
 import fs from "fs";
 import path from "path";
+import { gzipSync, gunzipSync } from 'zlib';
 import {
   contentTypeForExtension,
   deleteObject,
@@ -20,6 +21,10 @@ import {
   storedMediaLocation,
   uploadObject,
   validateObjectStorageConfig,
+  readHeadingPackObject,
+  writeHeadingPackObject,
+  resolveHeadingPackUrl,
+  getHeadingPackObjectStream,
 } from "../objectStorage.js";
 
 const s3 = require("@aws-sdk/client-s3");
@@ -55,6 +60,73 @@ describe("object storage", () => {
     expect(contentTypeForExtension("JPG")).toBe("image/jpeg");
     expect(contentTypeForExtension("webp")).toBe("image/webp");
     expect(contentTypeForExtension("bin")).toBe("application/octet-stream");
+  });
+
+  it("writes and reads development heading JSON without treating it as media", async () => {
+    setR2Env(false);
+    const key = "heading-packs/bsb-123456789abc/fr.json";
+    const value = { language: "fr", books: {} };
+    await writeHeadingPackObject(key, value);
+    expect(await readHeadingPackObject(key)).toEqual(value);
+    expect(isMediaObjectKey(key)).toBe(false);
+    fs.rmSync(path.join(UPLOADS_ROOT, key), { force: true });
+  });
+
+  it("stores heading JSON in R2 with the JSON content type", async () => {
+    setR2Env(true);
+    const key = "heading-packs/bsb-123456789abc/sw-partial.json";
+    await writeHeadingPackObject(key, { books: {} });
+    expect(s3.__send).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({
+      Key: key, ContentType: "application/json",
+    }) }));
+    s3.__send.mockResolvedValueOnce({ Body: { transformToString: async () => '{"books":{}}' } });
+    expect(await readHeadingPackObject(key)).toEqual({ books: {} });
+  });
+
+  it('publishes gzip-compressed heading files with immutable caching', async () => {
+    setR2Env(true);
+    const key = 'heading-packs/bsb-123456789abc/fr.json';
+    const value = { language: 'fr', books: {} };
+    await writeHeadingPackObject(key, value, { compress: true, cacheControl: 'public, max-age=31536000, immutable' });
+    const input = s3.__send.mock.calls[0][0].input;
+    expect(input.ContentEncoding).toBe('gzip');
+    expect(input.CacheControl).toBe('public, max-age=31536000, immutable');
+    expect(JSON.parse(gunzipSync(input.Body).toString())).toEqual(value);
+    s3.__send.mockResolvedValueOnce({
+      ContentEncoding: 'gzip', Body: { transformToByteArray: async () => gzipSync(JSON.stringify(value)) },
+    });
+    expect(await readHeadingPackObject(key)).toEqual(value);
+  });
+
+  it('uses a public CDN when configured and a revisioned file route otherwise', () => {
+    setR2Env(true);
+    const key = 'heading-packs/bsb-123456789abc/fr.json';
+    expect(resolveHeadingPackUrl(key, 'fr', '123456789abc')).toBe('/translations/heading-packs/fr/file?revision=123456789abc');
+    process.env.R2_PUBLIC_BASE_URL = 'https://cdn.example.com/';
+    expect(resolveHeadingPackUrl(key, 'fr', '123456789abc')).toBe(`https://cdn.example.com/${key}`);
+  });
+
+  it('preserves compressed stream metadata for the private-bucket fallback', async () => {
+    setR2Env(true);
+    const body = {};
+    s3.__send.mockResolvedValueOnce({ Body: body, ContentEncoding: 'gzip', ContentLength: 120 });
+    expect(await getHeadingPackObjectStream('heading-packs/bsb-123456789abc/fr.json')).toEqual({
+      body, contentEncoding: 'gzip', contentLength: 120,
+    });
+  });
+
+  it("distinguishes missing heading packs from storage outages", async () => {
+    setR2Env(true);
+    const key = "heading-packs/bsb-123456789abc/fr.json";
+    s3.__send.mockRejectedValueOnce(Object.assign(new Error("missing"), { name: "NoSuchKey" }));
+    expect(await readHeadingPackObject(key)).toBeNull();
+    s3.__send.mockRejectedValueOnce(new Error("unavailable"));
+    await expect(readHeadingPackObject(key)).rejects.toThrow("unavailable");
+  });
+
+  it("rejects arbitrary storage keys on heading access", async () => {
+    await expect(readHeadingPackObject("heading-packs/../../secret.json")).rejects.toThrow("Invalid heading pack key");
+    await expect(writeHeadingPackObject(TEST_KEY, {})).rejects.toThrow("Invalid heading pack key");
   });
 
   it("reports unconfigured without R2 credentials", () => {

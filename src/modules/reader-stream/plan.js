@@ -20,21 +20,21 @@ const reference = /^(?:[1-3]\s+)?[A-Za-z][A-Za-z ]+\s+\d+(?::[\d,; :–—-]+)?$
 const isReferenceList = value => value.trim().split(/\s*[;\n]\s*/).filter(Boolean)
   .every(part => reference.test(part.trim()));
 
-export function splitReaderText(value) {
+export function splitReaderText(value, maxCharacters = CHUNK_CHARACTERS) {
   const chunks = [];
   let rest = value.trim();
   let separator = '';
   while (rest) {
     const paragraph = rest.search(/\r?\n[ \t]*\r?\n+/);
     let end = paragraph < 0 ? rest.length : paragraph;
-    if (end > CHUNK_CHARACTERS) {
-      const window = rest.slice(0, CHUNK_CHARACTERS);
+    if (end > maxCharacters) {
+      const window = rest.slice(0, maxCharacters);
       const sentences = [...window.matchAll(/[.!?。！？]["'”’)]*(?=\s|$)/g)];
       const sentence = sentences.at(-1);
-      end = sentence && sentence.index >= CHUNK_CHARACTERS / 3
+      end = sentence && sentence.index >= maxCharacters / 3
         ? sentence.index + sentence[0].length
         : Math.max(window.lastIndexOf(' '), window.lastIndexOf('\n'));
-      if (end < 1) end = CHUNK_CHARACTERS;
+      if (end < 1) end = maxCharacters;
       const last = rest.charCodeAt(end - 1);
       if (last >= 0xd800 && last <= 0xdbff) end -= 1;
     }
@@ -47,7 +47,7 @@ export function splitReaderText(value) {
 }
 
 /** Only allowlisted reader fields leave the server; source prose never does. */
-export function buildReaderPlan(source, fields, atomicFields = []) {
+export function buildReaderPlan(source, fields, atomicFields = [], { chunkCharacters = CHUNK_CHARACTERS } = {}) {
   const jobs = [];
   const literal = (value, display = false) => ({ kind: 'literal', value, display });
   const build = (value, key, field, atomic = false) => {
@@ -68,7 +68,7 @@ export function buildReaderPlan(source, fields, atomicFields = []) {
         /^<[^>]+>$/.test(part) || !part.trim() ? part : {
           node: build(part.trim(), key, field, atomic), before: part.match(/^\s*/)?.[0] || '', after: part.match(/\s*$/)?.[0] || '',
         }) };
-      return { kind: 'text', atomic, chunks: splitReaderText(value).map(chunk => {
+      return { kind: 'text', atomic, chunks: splitReaderText(value, chunkCharacters).map(chunk => {
         const index = jobs.length;
         jobs.push({ text: chunk.text, field, key });
         return { index, separator: chunk.separator };
@@ -138,5 +138,5 @@ export function buildReaderPlan(source, fields, atomicFields = []) {
     return { ...metadata, ...Object.fromEntries(nodes.map(([field, node]) => [field, read(node).value])) };
   };
   return { jobs, fields: nodes.map(([field]) => field), render,
-    sourceVersion: createHash('sha256').update(JSON.stringify([metadata, fields, source])).digest('hex') };
+    sourceVersion: createHash('sha256').update(JSON.stringify([metadata, fields, source, chunkCharacters])).digest('hex') };
 }

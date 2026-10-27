@@ -51,7 +51,7 @@ const warnProviderFailure = (lang, message) => {
   const now = Date.now();
   if (now - (warningTimes.get(lang) || 0) < 30000) return;
   warningTimes.set(lang, now);
-  console.warn(`[translator] LibreTranslate temporarily failed for ${lang}:`, message);
+  console.warn(`[translator] Translation providers failed for ${lang}:`, message);
 };
 
 /**

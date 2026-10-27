@@ -14,7 +14,7 @@ const getConfig = () => ({
   timeoutMs: readPositiveInt("LORDSBOOK_TIMEOUT_MS", 30000),
   retryAttempts: readPositiveInt("LORDSBOOK_RETRY_ATTEMPTS", 3),
   retryDelayMs: readPositiveInt("LORDSBOOK_RETRY_DELAY_MS", 500),
-  textTimeoutMs: readPositiveInt("LORDSBOOK_TEXT_TIMEOUT_MS", 8000),
+  textTimeoutMs: readPositiveInt("LORDSBOOK_TEXT_TIMEOUT_MS", 20000),
   textRetryAttempts: readPositiveInt("LORDSBOOK_TEXT_RETRY_ATTEMPTS", 1),
   ttsTimeoutMs: readPositiveInt("LORDSBOOK_TTS_TIMEOUT_MS", 25000),
   ttsRetryAttempts: readPositiveInt("LORDSBOOK_TTS_RETRY_ATTEMPTS", 1),

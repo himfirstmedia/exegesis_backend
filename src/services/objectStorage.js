@@ -13,6 +13,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { gzipSync, gunzipSync } from 'zlib';
 import {
   S3Client,
   PutObjectCommand,
@@ -113,6 +114,90 @@ const getClient = () => {
     },
   });
   return client;
+};
+
+// Heading pack keys are separate from user-uploaded media. Only completed
+// packs are advertised through the public CDN; checkpoints are never linked.
+const assertHeadingPackKey = (key) => {
+  if (!/^heading-packs\/bsb-[a-f0-9]{12}\/[a-z]{2,3}(?:-[A-Za-z]{2,4})?(?:-(?:partial|manifest))?\.json$/.test(key)) {
+    throw new Error("Invalid heading pack key");
+  }
+};
+
+export const readHeadingPackObject = async (key) => {
+  assertHeadingPackKey(key);
+  if (!isObjectStorageConfigured()) {
+    validateObjectStorageConfig();
+    try {
+      return JSON.parse(await fs.promises.readFile(path.join(UPLOADS_ROOT, key), "utf8"));
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+  }
+  try {
+    const result = await getClient().send(new GetObjectCommand({ Bucket: readR2Config().bucket, Key: key }));
+    if (result.ContentEncoding === 'gzip') {
+      return JSON.parse(gunzipSync(await result.Body.transformToByteArray()).toString('utf8'));
+    }
+    return JSON.parse(await result.Body.transformToString());
+  } catch (error) {
+    if (error.name === "NoSuchKey" || error.$metadata?.httpStatusCode === 404) return null;
+    throw error;
+  }
+};
+
+export const writeHeadingPackObject = async (key, value, options = {}) => {
+  assertHeadingPackKey(key);
+  const buffer = Buffer.from(JSON.stringify(value));
+  if (isObjectStorageConfigured()) {
+    await getClient().send(new PutObjectCommand({
+      Bucket: readR2Config().bucket, Key: key, Body: options.compress ? gzipSync(buffer) : buffer,
+      ContentType: "application/json",
+      ...(options.compress ? { ContentEncoding: 'gzip' } : {}),
+      CacheControl: options.cacheControl || 'no-store',
+    }));
+    return;
+  }
+  validateObjectStorageConfig();
+  const target = path.join(UPLOADS_ROOT, key);
+  await fs.promises.mkdir(path.dirname(target), { recursive: true });
+  // Atomic replacement: readers never observe a partially written checkpoint.
+  const temporary = `${target}.${process.pid}.tmp`;
+  await fs.promises.writeFile(temporary, buffer);
+  await fs.promises.rename(temporary, target);
+};
+
+export const resolveHeadingPackUrl = (key, language, revision) => {
+  assertHeadingPackKey(key);
+  if (isObjectStorageConfigured() && readR2Config().publicBaseUrl) {
+    return `${readR2Config().publicBaseUrl}/${key}`;
+  }
+  // Revision stays in the URL so private-bucket/local downloads are immutable
+  // too, including when the backend later deploys a new source revision.
+  return `/translations/heading-packs/${language}/file?revision=${revision}`;
+};
+
+export const getHeadingPackObjectStream = async (key) => {
+  assertHeadingPackKey(key);
+  if (!isObjectStorageConfigured()) {
+    validateObjectStorageConfig();
+    const target = path.join(UPLOADS_ROOT, key);
+    try {
+      const stat = await fs.promises.stat(target);
+      return { body: fs.createReadStream(target), contentLength: stat.size };
+    } catch (error) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+  try {
+    const result = await getClient().send(new GetObjectCommand({ Bucket: readR2Config().bucket, Key: key }));
+    return { body: result.Body, contentEncoding: result.ContentEncoding, contentLength: result.ContentLength };
+  } catch (error) {
+    if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) return null;
+    throw error;
+  }
 };
 
 /** Build the client-facing URL for a stored object. */

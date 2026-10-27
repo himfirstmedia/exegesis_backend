@@ -2,7 +2,7 @@ jest.mock('../../services/cacheService.js', () => ({ cache: { get: jest.fn(), se
 jest.mock('../text-to-text-translation/service.js', () => ({ translateText: jest.fn() }));
 import { cache } from '../../services/cacheService.js';
 import { translateText } from '../text-to-text-translation/service.js';
-import { streamReaderTranslation } from './service.js';
+import { streamReaderTranslation, getReaderChunkCharacters } from './service.js';
 import { buildReaderPlan, splitReaderText } from './plan.js';
 
 const source = { id: '7', bookName: 'Genesis', chapter: 1, title: 'Authored title',
@@ -18,6 +18,42 @@ it('bounds chunks to 250 characters and preserves every word/separator', () => {
   const chunks = splitReaderText(text);
   expect(chunks.every(chunk => chunk.text.length <= 250)).toBe(true);
   expect(chunks.map(chunk => chunk.separator + chunk.text).join('')).toBe(text);
+});
+
+it('supports smaller sentence-aware chunks without losing text or emoji', () => {
+  const text = `${source.content}\n\n${'x'.repeat(119)}😀${'y'.repeat(200)}`;
+  const chunks = splitReaderText(text, 120);
+  expect(chunks.every(chunk => chunk.text.length <= 120)).toBe(true);
+  expect(chunks.map(chunk => chunk.separator + chunk.text).join('')).toBe(text);
+  expect(chunks.every(chunk => !/[\uD800-\uDBFF]$/.test(chunk.text))).toBe(true);
+});
+
+it('bounds the streaming configuration and versions plans by chunk size', () => {
+  const original = process.env.READER_TRANSLATION_CHUNK_CHARACTERS;
+  try {
+    delete process.env.READER_TRANSLATION_CHUNK_CHARACTERS;
+    expect(getReaderChunkCharacters()).toBe(180);
+    process.env.READER_TRANSLATION_CHUNK_CHARACTERS = '120';
+    expect(getReaderChunkCharacters()).toBe(120);
+    for (const value of ['0', '-1', '251', 'NaN', '100.5']) {
+      process.env.READER_TRANSLATION_CHUNK_CHARACTERS = value;
+      expect(getReaderChunkCharacters()).toBe(180);
+    }
+  } finally {
+    if (original === undefined) delete process.env.READER_TRANSLATION_CHUNK_CHARACTERS;
+    else process.env.READER_TRANSLATION_CHUNK_CHARACTERS = original;
+  }
+  expect(buildReaderPlan(source, ['content'], [], { chunkCharacters: 120 }).sourceVersion)
+    .not.toBe(buildReaderPlan(source, ['content']).sourceVersion);
+});
+
+it('streams prose in smaller chunks and still publishes the complete document', async () => {
+  const events = [];
+  await streamReaderTranslation({ kind: 'daily-devotion', source, fields: ['content'], language: 'ml',
+    emit: async (event, data) => { events.push({ event, data }); } });
+  expect(translateText.mock.calls.every(([request]) => request.q.length <= getReaderChunkCharacters())).toBe(true);
+  expect(events.at(-1).event).toBe('done');
+  expect(events.filter(item => item.event === 'patch').length).toBeGreaterThan(1);
 });
 
 it('strips unknown/source fields and never renders prose across an unconfirmed gap', () => {
@@ -117,6 +153,47 @@ it('uses cached completed documents without invoking a provider or charging tran
   expect(translateText).not.toHaveBeenCalled(); expect(reserveCharacters).not.toHaveBeenCalled();
   expect(events.map(item => item.event)).toEqual(['meta', 'done']);
   expect(events[0].data.data.localizationIncomplete).toBe(false);
+});
+
+it('checkpoints before cancellation and resumes without translating the completed prefix again', async () => {
+  const stored = new Map();
+  cache.get.mockImplementation(async (_namespace, key) => stored.get(key) || null);
+  cache.set.mockImplementation(async (_namespace, key, value) => { stored.set(key, value); });
+  const controller = new AbortController();
+  const original = { introduction: 'First paragraph.', summary: 'Second paragraph.', purpose: 'Third paragraph.' };
+  const options = { kind: 'book-overview', source: original, fields: ['introduction', 'summary', 'purpose'], language: 'fr' };
+  await expect(streamReaderTranslation({ ...options, signal: controller.signal,
+    emit: async event => { if (event === 'patch') controller.abort(); },
+  })).rejects.toMatchObject({ name: 'AbortError' });
+  const partial = [...stored.entries()].find(([key]) => key.endsWith(':partial'))[1];
+  expect(partial.values).toEqual(['FR:First paragraph.']);
+  translateText.mockClear();
+  const events = []; const reserveCharacters = jest.fn();
+  await streamReaderTranslation({ ...options, reserveCharacters, emit: async (event, data) => events.push({ event, data }) });
+  expect(events[0]).toMatchObject({ event: 'meta', data: { completed: 1, resumed: true,
+    data: { introduction: 'FR:First paragraph.', summary: '' } } });
+  expect(translateText.mock.calls.map(([request]) => request.q)).toEqual(['Second paragraph.', 'Third paragraph.']);
+  expect(reserveCharacters).toHaveBeenCalledWith('Second paragraph.'.length + 'Third paragraph.'.length);
+  expect(events.at(-1).event).toBe('done');
+});
+
+it('discards invalid checkpoints and cannot reuse partial prose across source revisions', async () => {
+  const stored = new Map();
+  cache.get.mockImplementation(async (_namespace, key) => stored.get(key) || null);
+  cache.set.mockImplementation(async (_namespace, key, value) => { stored.set(key, value); });
+  const original = { introduction: 'Original paragraph.' };
+  await streamReaderTranslation({ kind: 'book-overview', source: original, fields: ['introduction'], language: 'fr', emit: async () => {} });
+  translateText.mockClear();
+  const events = [];
+  await streamReaderTranslation({ kind: 'book-overview', source: { introduction: 'Edited paragraph.' }, fields: ['introduction'],
+    language: 'fr', emit: async (event, data) => events.push({ event, data }) });
+  expect(events[0].data.completed).toBe(0);
+  expect(translateText).toHaveBeenCalledWith(expect.objectContaining({ q: 'Edited paragraph.' }));
+  cache.get.mockImplementation(async (_namespace, key) => key.endsWith(':partial') ? { language: 'fr', values: [''] } : null);
+  const invalidEvents = [];
+  await streamReaderTranslation({ kind: 'book-overview', source: original, fields: ['introduction'], language: 'fr',
+    emit: async (event, data) => invalidEvents.push({ event, data }) });
+  expect(invalidEvents[0].data.completed).toBe(0);
 });
 
 it('localizes book names left in translated prose before publishing and caching', async () => {

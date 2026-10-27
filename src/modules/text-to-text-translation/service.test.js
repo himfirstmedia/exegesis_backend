@@ -43,6 +43,8 @@ describe("text-to-text translation service", () => {
       LORDSBOOK_TEXT_RETRY_ATTEMPTS: "1",
       LORDSBOOK_GATEWAY_URL: "https://lordsbook.test",
       MYMEMORY_TRANSLATE_ENABLE: "false",
+      GOOGLE_FREE_TRANSLATE_ENABLE: 'false',
+      TRANSLATION_LIBRE_UNSUPPORTED_ONLY: 'false',
     };
     __resetTranslationProviderCache();
     cache.get.mockReset().mockResolvedValue(null);
@@ -116,6 +118,126 @@ describe("text-to-text translation service", () => {
       translateBatch({ q: ["x".repeat(101), "y".repeat(100)], target: "ar" }),
     ).rejects.toMatchObject({ status: 400 });
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('uses free Google for Malayalam when Libre has no model, without spending MyMemory quota', async () => {
+    process.env.GOOGLE_FREE_TRANSLATE_ENABLE = 'true';
+    process.env.MYMEMORY_TRANSLATE_ENABLE = 'true';
+    global.fetch.mockImplementation(async url => url.startsWith('https://clients5.google.com/')
+      ? jsonResponse(['ദൈവം സ്നേഹമാണ്', 'സമാധാനം'])
+      : jsonResponse({ error: 'ml is not supported' }, 400));
+    const result = await translateBatch({ q: ['God is love', 'Peace'], source: 'en', target: 'ml' });
+    expect(result.translations.map(item => item.translatedText)).toEqual(['ദൈവം സ്നേഹമാണ്', 'സമാധാനം']);
+    expect(result.provider).toBe('google-free');
+    expect(global.fetch.mock.calls.some(([url]) => url.includes('mymemory'))).toBe(false);
+    expect(cache.set).toHaveBeenCalledWith('text-translations', expect.any(String),
+      expect.objectContaining({ provider: 'google-free' }), expect.any(Number));
+  });
+
+  test('free fallback preserves source whitespace and strict validation', async () => {
+    process.env.GOOGLE_FREE_TRANSLATE_ENABLE = 'true';
+    global.fetch.mockImplementation(async url => url.startsWith('https://clients5.google.com/')
+      ? jsonResponse(['സമാധാനം']) : jsonResponse({ error: 'no model' }, 400));
+    await expect(translateText({ q: ' Peace ', source: 'en', target: 'ml', requireChanged: true }))
+      .resolves.toMatchObject({ translatedText: ' സമാധാനം ' });
+  });
+
+  test('never caches empty output or strict English echoes from the free fallback', async () => {
+    process.env.GOOGLE_FREE_TRANSLATE_ENABLE = 'true';
+    let output = '';
+    global.fetch.mockImplementation(async url => url.startsWith('https://clients5.google.com/')
+      ? jsonResponse([output]) : jsonResponse({ error: 'no model' }, 400));
+    await expect(translateText({ q: 'Peace', source: 'en', target: 'ml' })).rejects.toMatchObject({ status: 502 });
+    output = 'Peace';
+    await expect(translateText({ q: 'Peace', source: 'en', target: 'ml', requireChanged: true })).rejects.toMatchObject({ status: 502 });
+    expect(cache.set).not.toHaveBeenCalled();
+  });
+
+  test('backs off after free Google rate limits and still permits the MyMemory fallback', async () => {
+    process.env.GOOGLE_FREE_TRANSLATE_ENABLE = 'true';
+    process.env.MYMEMORY_TRANSLATE_ENABLE = 'true';
+    global.fetch.mockImplementation(async url => url.startsWith('https://clients5.google.com/')
+      ? jsonResponse({}, 429)
+      : url.includes('mymemory')
+        ? jsonResponse({ responseStatus: 200, responseData: { translatedText: 'സമാധാനം' } })
+        : jsonResponse({ error: 'no model' }, 400));
+    await translateText({ q: 'Peace', source: 'en', target: 'ml' });
+    await translateText({ q: 'Love', source: 'en', target: 'ml' });
+    expect(global.fetch.mock.calls.filter(([url]) => url.startsWith('https://clients5.google.com/'))).toHaveLength(1);
+  });
+
+  test('keeps Lordsbook primary for Bengali despite a Libre-first override under the unsupported-only policy', async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = 'true';
+    process.env.TRANSLATION_LIBRE_UNSUPPORTED_ONLY = 'true';
+    process.env.TRANSLATION_LIBRE_FIRST_LANGUAGES = 'bn';
+    global.fetch.mockResolvedValue(jsonResponse({ translatedText: 'শান্তি' }));
+    await translateText({ q: 'Peace', source: 'en', target: 'bn' });
+    expect(global.fetch.mock.calls.map(([url]) => url)).toEqual(['https://lordsbook.test/translate']);
+  });
+
+  test('does not send a supported language to Libre when Lordsbook times out', async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = 'true';
+    process.env.TRANSLATION_LIBRE_UNSUPPORTED_ONLY = 'true';
+    process.env.GOOGLE_FREE_TRANSLATE_ENABLE = 'true';
+    global.fetch.mockImplementation(async url => url.startsWith('https://clients5.google.com/')
+      ? jsonResponse(['শান্তি']) : jsonResponse({ message: 'unavailable' }, 503));
+    await expect(translateText({ q: 'Peace', source: 'en', target: 'bn' })).resolves.toMatchObject({ translatedText: 'শান্তি' });
+    expect(global.fetch.mock.calls.some(([url]) => url.startsWith('https://translate.test/'))).toBe(false);
+  });
+
+  test('uses Libre for a language outside Lordsbook support under the unsupported-only policy', async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = 'true';
+    process.env.TRANSLATION_LIBRE_UNSUPPORTED_ONLY = 'true';
+    global.fetch.mockResolvedValue(jsonResponse({ translatedText: '平和' }));
+    await translateText({ q: 'Peace', source: 'en', target: 'ja' });
+    expect(global.fetch.mock.calls.map(([url]) => url)).toEqual(['https://translate.test/translate']);
+  });
+
+  test('routes Bengali single chunks to Libre first without a Lordsbook wait or capability probe', async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = 'true';
+    process.env.TRANSLATION_LIBRE_FIRST_LANGUAGES = 'bn';
+    process.env.TRANSLATION_ENFORCE_SUPPORTED_LANGS = 'true';
+    global.fetch.mockResolvedValue(jsonResponse({ translatedText: 'ঈশ্বর আমাদের শান্তি দেন।' }));
+    const request = { q: 'God gives us peace.', source: 'en', target: 'bn' };
+    await expect(translateText(request)).resolves.toMatchObject({ translatedText: 'ঈশ্বর আমাদের শান্তি দেন।' });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toBe('https://translate.test/translate');
+    expect(cache.set).toHaveBeenLastCalledWith('text-translations', expect.any(String),
+      expect.objectContaining({ provider: 'libre' }), 60);
+    await translateText(request);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('translates Bengali batches directly through Libre and preserves whitespace', async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = 'true';
+    process.env.TRANSLATION_LIBRE_FIRST_LANGUAGES = 'bn';
+    global.fetch.mockResolvedValue(jsonResponse({ translatedText: ['শান্তি', 'ভালোবাসা'] }));
+    const result = await translateBatch({ q: [' Peace ', 'Love'], source: 'en', target: 'bn' });
+    expect(result.provider).toBe('libre');
+    expect(result.translations.map(item => item.translatedText)).toEqual([' শান্তি ', 'ভালোবাসা']);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).q).toEqual(['Peace', 'Love']);
+  });
+
+  test('still uses Lordsbook when the preferred Bengali provider fails, without retrying Libre', async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = 'true';
+    process.env.TRANSLATION_LIBRE_FIRST_LANGUAGES = 'bn';
+    global.fetch.mockImplementation(async url => url.startsWith('https://lordsbook.test')
+      ? jsonResponse({ translatedText: 'শান্তি' }) : jsonResponse({ error: 'unavailable' }, 503));
+    await expect(translateText({ q: 'Peace', source: 'en', target: 'bn' })).resolves.toMatchObject({ translatedText: 'শান্তি' });
+    expect(global.fetch.mock.calls.map(([url]) => url)).toEqual(['https://translate.test/translate', 'https://lordsbook.test/translate']);
+  });
+
+  test('falls back to the free provider for Bengali when both preferred providers fail', async () => {
+    process.env.LORDSBOOK_TEXT_ENABLE = 'true';
+    process.env.TRANSLATION_LIBRE_FIRST_LANGUAGES = 'bn';
+    process.env.GOOGLE_FREE_TRANSLATE_ENABLE = 'true';
+    global.fetch.mockImplementation(async url => url.startsWith('https://clients5.google.com/')
+      ? jsonResponse(['শান্তি']) : jsonResponse({ error: 'unavailable', message: 'unavailable' }, 503));
+    const result = await translateBatch({ q: ['Peace'], source: 'en', target: 'bn' });
+    expect(result.provider).toBe('google-free');
+    expect(result.translations[0].translatedText).toBe('শান্তি');
+    expect(global.fetch.mock.calls.filter(([url]) => url === 'https://translate.test/translate')).toHaveLength(1);
   });
 
   test("translates a batch in one provider request", async () => {
@@ -596,6 +718,7 @@ describe("capability enforcement (TRANSLATION_ENFORCE_SUPPORTED_LANGS)", () => {
 
   beforeEach(() => {
     process.env.TRANSLATION_ENFORCE_SUPPORTED_LANGS = "true";
+    process.env.GOOGLE_FREE_TRANSLATE_ENABLE = 'false';
     process.env.LORDSBOOK_TEXT_ENABLE = "false";
     process.env.MYMEMORY_TRANSLATE_ENABLE = "false";
     __resetTranslationProviderCache();

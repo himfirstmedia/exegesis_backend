@@ -7,6 +7,13 @@ import { isGrammarCognate } from './grammar.js';
 export const MAX_READER_CHARACTERS = 100_000;
 export const MAX_READER_CHUNKS = 600;
 
+// Smaller prose chunks improve time-to-first-text without multiplying requests
+// as aggressively as word-by-word translation. Keep provider concurrency at two.
+export const getReaderChunkCharacters = () => {
+  const value = Number(process.env.READER_TRANSLATION_CHUNK_CHARACTERS);
+  return Number.isInteger(value) && value >= 80 && value <= 250 ? value : 180;
+};
+
 const abortError = () => Object.assign(new Error('Reader stream cancelled'), { name: 'AbortError' });
 const checkAbort = signal => { if (signal?.aborted) throw abortError(); };
 export function abortable(promise, signal) {
@@ -23,7 +30,10 @@ export function abortable(promise, signal) {
 /** One ordered stream; provider calls/cache stay entirely on the server. */
 export async function streamReaderTranslation({ source, fields, atomicFields, availableScopes,
   kind, scope, language, signal, emit, reserveCharacters = () => {}, translate = translateText }) {
-  const plan = buildReaderPlan(source, fields, atomicFields);
+  let plan = buildReaderPlan(source, fields, atomicFields, { chunkCharacters: getReaderChunkCharacters() });
+  // Preserve the existing document size support: near the job-count limit use
+  // the previous chunk size rather than rejecting a previously valid document.
+  if (plan.jobs.length > MAX_READER_CHUNKS) plan = buildReaderPlan(source, fields, atomicFields);
   const characters = plan.jobs.reduce((sum, job) => sum + job.text.length, 0);
   if (characters > MAX_READER_CHARACTERS || plan.jobs.length > MAX_READER_CHUNKS) {
     throw Object.assign(new Error('Reader document is too large'), { status: 413 });
@@ -42,7 +52,18 @@ export async function streamReaderTranslation({ source, fields, atomicFields, av
     await emit('done', { ...common, complete: true, completed: plan.jobs.length, pendingFields: [] });
     return;
   }
-  await reserveCharacters(language === 'en' ? 0 : characters);
+  // Checkpoints contain only validated, ordered translations and are scoped to
+  // the source revision, language and chunk size by `key`. Never trust client
+  // prose or counters for resumption.
+  const checkpointKey = `${key}:partial`;
+  const checkpoint = language === 'en' ? null : await cache.get('reader-stream', checkpointKey).catch(() => null);
+  checkAbort(signal);
+  const values = checkpoint?.language === language && Array.isArray(checkpoint.values) &&
+    checkpoint.values.length <= plan.jobs.length && checkpoint.values.every(value => typeof value === 'string' && value.trim())
+    ? [...checkpoint.values] : [];
+  const resumeAt = values.length;
+  const remainingCharacters = plan.jobs.slice(resumeAt).reduce((sum, job) => sum + job.text.length, 0);
+  await reserveCharacters(language === 'en' ? 0 : remainingCharacters);
   checkAbort(signal);
   if (language === 'en') {
     const data = Object.fromEntries([...new Set([...Object.keys(plan.render([])), ...fields])]
@@ -51,9 +72,9 @@ export async function streamReaderTranslation({ source, fields, atomicFields, av
     await emit('done', { ...common, complete: true, completed: plan.jobs.length, pendingFields: [] });
     return;
   }
-  let current = plan.render([]);
-  await emit('meta', { ...common, data: stamp(current, plan.jobs.length > 0), completed: 0, pendingFields: pendingFields(0) });
-  const values = [];
+  let current = plan.render(values);
+  await emit('meta', { ...common, data: stamp(current, resumeAt < plan.jobs.length), completed: resumeAt,
+    pendingFields: pendingFields(resumeAt), ...(resumeAt ? { resumed: true } : {}) });
   // At most two chunks of bounded look-ahead, but publish strictly in order.
   const inflight = new Map();
   const start = index => {
@@ -65,8 +86,8 @@ export async function streamReaderTranslation({ source, fields, atomicFields, av
       return translate({ q: text, source: 'en', target: language, format: 'text' });
     }).then(result => ({ result }), error => ({ error })));
   };
-  start(0); start(1);
-  for (let index = 0; index < plan.jobs.length; index += 1) {
+  start(resumeAt); start(resumeAt + 1);
+  for (let index = resumeAt; index < plan.jobs.length; index += 1) {
     checkAbort(signal);
     let { result, error } = await abortable(inflight.get(index), signal);
     inflight.delete(index);
@@ -124,6 +145,11 @@ export async function streamReaderTranslation({ source, fields, atomicFields, av
       } else changes[field] = next[field];
     }
     current = next;
+    // Persist before emitting: leaving during/just after the patch cannot lose
+    // an already validated chunk. Separate keys keep a partial writer from
+    // overwriting a completed document produced by another connection.
+    await cache.set('reader-stream', checkpointKey, { language, values: [...values] }, 7 * 86400).catch(() => {});
+    checkAbort(signal);
     await emit('patch', { ...common, changes, append, completed: index + 1, pendingFields: pendingFields(index + 1) });
     start(index + 2);
   }

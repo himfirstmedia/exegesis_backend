@@ -190,6 +190,13 @@ const acquireLock = async (name, ttlSeconds = 60) => {
     return {
       acquired: true,
       degraded: false,
+      renew: async () => {
+        const result = await c.eval(
+          'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("expire", KEYS[1], ARGV[2]) else return 0 end',
+          1, key, token, ttlSeconds,
+        );
+        return result === 1;
+      },
       release: async () => {
         try {
           await c.eval(RELEASE_LOCK_SCRIPT, 1, key, token);
@@ -205,7 +212,19 @@ const acquireLock = async (name, ttlSeconds = 60) => {
   }
 };
 
-export const cache = { get, set, getOrSet, del, acquireLock, isReady: () => ready };
+export const cache = { get, set, getOrSet, del, acquireLock, isReady: () => ready,
+  // CLI builders start immediately after import, before the eager connection
+  // may be ready. Let them wait for Redis before acquiring distributed locks.
+  waitUntilReady: async () => {
+    try {
+      const c = getClient();
+      if (!c) return false;
+      await c.ping();
+      return ready;
+    } catch { return false; }
+  },
+  disconnect: () => { client?.disconnect(); ready = false; },
+};
 
 // Eagerly connect at module load. Without this the client is never created:
 // get/set short-circuit on `ready` before getClient() is ever called, so Redis

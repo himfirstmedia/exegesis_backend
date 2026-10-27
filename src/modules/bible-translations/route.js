@@ -24,6 +24,7 @@ import {
 } from "./controller.js";
 import { authenticate } from "../../middlewares/auth.middleware.js";
 import { requireTier } from "../../middlewares/gating.middleware.js";
+import { downloadHeadingPack, getHeadingPackManifest, downloadHeadingPackFile } from './heading-packs.js';
 
 const router = express.Router();
 
@@ -33,6 +34,9 @@ router.post("/", listTranslations);
 
 // New public catalog endpoints (no auth — public metadata for on-device downloads)
 router.get("/catalog", listCatalog);
+router.get('/heading-packs/:language', downloadHeadingPack);
+router.get('/heading-packs/:language/manifest', getHeadingPackManifest);
+router.get('/heading-packs/:language/file', downloadHeadingPackFile);
 
 const authAndTier = [authenticate, requireTier('legacy_sower')];
 
