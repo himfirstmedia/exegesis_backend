@@ -25,6 +25,9 @@ import {
   writeHeadingPackObject,
   resolveHeadingPackUrl,
   getHeadingPackObjectStream,
+  readUiPackObject,
+  writeUiPackObject,
+  resolveUiPackUrl,
 } from "../objectStorage.js";
 
 const s3 = require("@aws-sdk/client-s3");
@@ -127,6 +130,22 @@ describe("object storage", () => {
   it("rejects arbitrary storage keys on heading access", async () => {
     await expect(readHeadingPackObject("heading-packs/../../secret.json")).rejects.toThrow("Invalid heading pack key");
     await expect(writeHeadingPackObject(TEST_KEY, {})).rejects.toThrow("Invalid heading pack key");
+  });
+
+  it('stores UI packs compressed under a separate safe namespace with CDN/private URLs', async () => {
+    setR2Env(true);
+    const key = 'ui-packs/app-123456789abc/fr.json';
+    const value = { schemaVersion: 1, language: 'fr', translations: ['Assistance'] };
+    await writeUiPackObject(key, value, { compress: true, cacheControl: 'public, max-age=31536000, immutable' });
+    const input = s3.__send.mock.calls[0][0].input;
+    expect(input.ContentEncoding).toBe('gzip');
+    expect(JSON.parse(gunzipSync(input.Body).toString())).toEqual(value);
+    s3.__send.mockResolvedValueOnce({ ContentEncoding: 'gzip', Body: { transformToByteArray: async () => gzipSync(JSON.stringify(value)) } });
+    expect(await readUiPackObject(key)).toEqual(value);
+    expect(resolveUiPackUrl(key, 'fr', '123456789abc')).toBe('/translation/ui-packs/fr/file?revision=123456789abc');
+    process.env.R2_PUBLIC_BASE_URL = 'https://cdn.example.com';
+    expect(resolveUiPackUrl(key, 'fr', '123456789abc')).toBe(`https://cdn.example.com/${key}`);
+    await expect(readUiPackObject('ui-packs/../../secret')).rejects.toThrow('Invalid heading pack key');
   });
 
   it("reports unconfigured without R2 credentials", () => {

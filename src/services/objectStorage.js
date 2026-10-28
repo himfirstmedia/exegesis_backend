@@ -119,7 +119,7 @@ const getClient = () => {
 // Heading pack keys are separate from user-uploaded media. Only completed
 // packs are advertised through the public CDN; checkpoints are never linked.
 const assertHeadingPackKey = (key) => {
-  if (!/^heading-packs\/bsb-[a-f0-9]{12}\/[a-z]{2,3}(?:-[A-Za-z]{2,4})?(?:-(?:partial|manifest))?\.json$/.test(key)) {
+  if (!/^(?:(?:heading-packs\/bsb-|ui-packs\/app-)[a-f0-9]{12}\/[a-z]{2,3}(?:-[A-Za-z]{2,4})?(?:-(?:partial|manifest))?\.json|book-packs\/(?:manifest\.json|[a-f0-9]{12}\/catalog\.json))$/.test(key)) {
     throw new Error("Invalid heading pack key");
   }
 };
@@ -175,7 +175,17 @@ export const resolveHeadingPackUrl = (key, language, revision) => {
   }
   // Revision stays in the URL so private-bucket/local downloads are immutable
   // too, including when the backend later deploys a new source revision.
+  if (key.startsWith('book-packs/')) return `/translations/book-packs/file?revision=${revision}`;
   return `/translations/heading-packs/${language}/file?revision=${revision}`;
+};
+
+// Same compressed/atomic storage path as heading packs; a separate namespace.
+export const readUiPackObject = readHeadingPackObject;
+export const writeUiPackObject = writeHeadingPackObject;
+export const resolveUiPackUrl = (key, language, revision) => {
+  assertHeadingPackKey(key);
+  if (isObjectStorageConfigured() && readR2Config().publicBaseUrl) return `${readR2Config().publicBaseUrl}/${key}`;
+  return `/translation/ui-packs/${language}/file?revision=${revision}`;
 };
 
 export const getHeadingPackObjectStream = async (key) => {

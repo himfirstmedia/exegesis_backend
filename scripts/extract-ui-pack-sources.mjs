@@ -1,0 +1,54 @@
+// Build-time only: scan authored source, never user data, credentials or API responses.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import ts from 'typescript';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const app = path.join(root, 'app/src');
+const sources = new Set();
+const add = value => { if (typeof value === 'string' && value.trim() && /[A-Za-z]/.test(value)) sources.add(value); };
+const walkValues = value => {
+  if (typeof value === 'string') add(value);
+  else if (value && typeof value === 'object') Object.values(value).forEach(walkValues);
+};
+const localeRoot = path.join(app, 'component/language-translation');
+walkValues(JSON.parse(fs.readFileSync(path.join(localeRoot, 'en.json'), 'utf8')));
+const bundles = path.join(localeRoot, 'screenLocales');
+for (const name of fs.readdirSync(bundles)) {
+  const file = path.join(bundles, name, 'en.json');
+  if (fs.existsSync(file)) walkValues(JSON.parse(fs.readFileSync(file, 'utf8')));
+}
+const scan = dir => {
+  for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, item.name);
+    if (item.isDirectory()) { if (!['assets', 'language-translation', 'services', 'theme', 'types'].includes(item.name)) scan(file); continue; }
+    if (!/\.tsx?$/.test(item.name) || /\.(test|spec)\./.test(item.name)) continue;
+    const parsed = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const visit = node => {
+      if (ts.isJsxText(node)) add(node.text.trim());
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+        const value = node.text;
+        // Curated locale JSON is exhaustive. Supplement authored screen copy,
+        // including support FAQ answers, while excluding paths, keys and code.
+        if (/^[A-Z][A-Za-z]*(?:[ .!?…:,]|$)/.test(value) && !/https?:|#[0-9a-f]{3,8}\b|^(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i.test(value) && !/^(?:\.\.?\/|\/|\\)/.test(value) && value.length < 10000) add(value);
+        const parent = node.parent;
+        if (ts.isCallExpression(parent) && /^(?:t|text|tt|useTranslation)$/.test(parent.expression.getText(parsed)) && parent.arguments[0] === node) add(value);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parsed);
+  }
+};
+for (const name of ['features', 'component', 'reusable', 'hooks']) scan(path.join(app, name));
+const texts = [...sources].sort();
+const revision = createHash('sha256').update(`ui-v1:${JSON.stringify(texts)}`).digest('hex').slice(0, 12);
+const catalog = JSON.stringify({ schemaVersion: 1, revision, texts }, null, 2) + '\n';
+const targets = [path.join(app, 'services/translation/ui-pack-source.json'), path.join(root, 'backend/src/modules/text-to-text-translation/ui-pack-source.json')];
+if (process.argv.includes('--check')) {
+  if (targets.some(file => !fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== catalog)) {
+    console.error('UI catalogue is stale. Run npm run extract:ui-packs in backend before building both releases.'); process.exitCode = 1;
+  }
+} else for (const target of targets) fs.writeFileSync(target, catalog);
+console.log(`UI sources: ${texts.length}; revision ${revision}`);

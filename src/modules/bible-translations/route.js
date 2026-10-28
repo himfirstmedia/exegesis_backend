@@ -1,4 +1,5 @@
 import express from "express";
+import { getBookPackManifest, downloadBookPack } from './book-packs.js';
 import {
   listTranslations,
   getTranslation,
@@ -34,6 +35,8 @@ router.post("/", listTranslations);
 
 // New public catalog endpoints (no auth — public metadata for on-device downloads)
 router.get("/catalog", listCatalog);
+router.get('/book-packs/manifest', getBookPackManifest);
+router.get('/book-packs/file', downloadBookPack);
 router.get('/heading-packs/:language', downloadHeadingPack);
 router.get('/heading-packs/:language/manifest', getHeadingPackManifest);
 router.get('/heading-packs/:language/file', downloadHeadingPackFile);
