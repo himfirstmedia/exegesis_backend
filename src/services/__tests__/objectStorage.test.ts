@@ -148,6 +148,20 @@ describe("object storage", () => {
     await expect(readUiPackObject('ui-packs/../../secret')).rejects.toThrow('Invalid heading pack key');
   });
 
+  it('isolates overview manifests, immutable files and checkpoints with public/private URLs', async () => {
+    setR2Env(true);
+    const key = 'book-overview-packs/123456abcdef/fr.json';
+    await writeHeadingPackObject(key, { complete: true }, { compress: true });
+    expect(s3.__send.mock.calls[0][0].input.ContentEncoding).toBe('gzip');
+    expect(resolveHeadingPackUrl(key, 'fr', '123456abcdef')).toBe('/book-prologues/packs/fr/file?revision=123456abcdef');
+    process.env.R2_PUBLIC_BASE_URL = 'https://cdn.example.com';
+    expect(resolveHeadingPackUrl(key, 'fr', '123456abcdef')).toBe(`https://cdn.example.com/${key}`);
+    await writeHeadingPackObject('book-overview-packs/manifests/fr.json', {});
+    await writeHeadingPackObject('book-overview-packs/books/123456abcdef/fr-partial.json', {});
+    await expect(readHeadingPackObject('book-overview-packs/../../secret')).rejects.toThrow('Invalid heading pack key');
+    await expect(readHeadingPackObject('book-overview-packs/books/123456abcdef/../../fr.json')).rejects.toThrow('Invalid heading pack key');
+  });
+
   it("reports unconfigured without R2 credentials", () => {
     setR2Env(false);
     expect(isObjectStorageConfigured()).toBe(false);

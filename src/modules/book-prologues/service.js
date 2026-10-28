@@ -2,6 +2,7 @@ import { prisma } from '../../config/db.js';
 import { serializeBigInt } from '../../utils/helpers.js';
 import { normalizeLanguage, translateMany } from '../../utils/translator.js';
 import { withContentLanguage } from '../../utils/contentLanguage.js';
+import { requestOverviewPackPublication } from './pack-worker.js';
 
 const TRANSLATABLE_FIELDS = [
   'summary',
@@ -266,6 +267,7 @@ export const upsertBookPrologue = async (userId, body) => {
     update: { ...data, updatedBy: userId },
   });
 
+  requestOverviewPackPublication();
   return { status: 200, message: 'Book prologue saved', data: serializeBigInt(prologue) };
 };
 
@@ -277,5 +279,6 @@ export const deleteBookPrologue = async (body) => {
   if (!existing) return { status: 404, message: 'Book prologue not found' };
 
   await prisma.bookPrologue.delete({ where: { bookName } });
+  requestOverviewPackPublication();
   return { status: 200, message: 'Book prologue deleted' };
 };

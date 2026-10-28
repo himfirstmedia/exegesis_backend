@@ -11,6 +11,7 @@
     "check:ui-packs": "node scripts/extract-ui-pack-sources.mjs --check",
     "build:ui-packs": "node scripts/build-ui-packs.mjs",
     "build:book-packs": "node scripts/build-book-packs.mjs",
+    "build:book-overview-packs": "node scripts/build-book-overview-packs.mjs",
     "test:smoke:daily-verse": "node scripts/smoke-test-daily-verse.js",
     "predev": "prisma generate",
     "dev": "nodemon src/bootstrap.js",

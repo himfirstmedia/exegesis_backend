@@ -26,6 +26,7 @@ import exegesisRouter from "./modules/exegesis/route.js";
 import triviaRouter from "./modules/trivia/route.js";
 import studyToolsRouter from "./modules/study-tools/route.js";
 import bookProloguesRouter from "./modules/book-prologues/route.js";
+import { startOverviewPackPublisher, stopOverviewPackPublisher } from './modules/book-prologues/pack-worker.js';
 import verseResourcesRouter from "./modules/verse-resources/route.js";
 import subscriptionsRouter from "./modules/subscriptions/routes.js";
 import popularSearchesRouter from "./modules/popular-searches/route.js";
@@ -248,6 +249,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   // Pre-connect the Edge TTS sockets so the first voice request after boot
   // doesn't pay the ~2s WebSocket handshake.
   warmUpTTS();
+  startOverviewPackPublisher();
 });
 
 initRealtime(server);
@@ -283,6 +285,7 @@ process.on("uncaughtException", async (error) => {
 
 process.on("SIGTERM", async () => {
   console.log("SIGTERM received, shutting down gracefully...");
+  await stopOverviewPackPublisher();
   server.close(async () => {
     await disconnectDB();
     process.exit(0);

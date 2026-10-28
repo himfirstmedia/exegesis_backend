@@ -1,6 +1,8 @@
 import { prisma } from '../../config/db.js';
 import { translateMany } from '../../utils/translator.js';
-import { getAllBookPrologues, getBookPrologue } from './service.js';
+import { getAllBookPrologues, getBookPrologue, upsertBookPrologue, deleteBookPrologue } from './service.js';
+import { requestOverviewPackPublication } from './pack-worker.js';
+jest.mock('./pack-worker.js', () => ({ requestOverviewPackPublication: jest.fn() }));
 
 jest.mock('../../config/db.js', () => ({
   prisma: {
@@ -8,6 +10,8 @@ jest.mock('../../config/db.js', () => ({
       findUnique: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
+      upsert: jest.fn(),
+      delete: jest.fn(),
     },
   },
 }));
@@ -46,6 +50,17 @@ const makePrologue = (overrides = {}) => ({
   updatedBy: 'admin-2',
   updatedOn: new Date('2026-02-01T00:00:00.000Z'),
   ...overrides,
+});
+
+test('successful admin additions/edits and deletions wake the overview publisher', async () => {
+  jest.clearAllMocks();
+  prisma.bookPrologue.upsert.mockResolvedValue(makePrologue());
+  await upsertBookPrologue('admin-id', { bookName: 'Genesis', summary: 'New source' });
+  expect(requestOverviewPackPublication).toHaveBeenCalledTimes(1);
+  prisma.bookPrologue.findUnique.mockResolvedValue(makePrologue());
+  prisma.bookPrologue.delete.mockResolvedValue(makePrologue());
+  await deleteBookPrologue({ bookName: 'Genesis' });
+  expect(requestOverviewPackPublication).toHaveBeenCalledTimes(2);
 });
 
 describe('book prologue translation', () => {

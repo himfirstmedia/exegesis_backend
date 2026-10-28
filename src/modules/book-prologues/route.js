@@ -1,8 +1,11 @@
 import express from 'express';
 import * as bookPrologueController from './controller.js';
 import { authenticate, requireAdmin } from '../../middlewares/auth.middleware.js';
+import { getOverviewPackManifest, downloadOverviewPack } from './packs.js';
 
 const router = express.Router();
+router.get('/packs/:language/manifest', getOverviewPackManifest);
+router.get('/packs/:language/file', downloadOverviewPack);
 
 router.post('/get', bookPrologueController.getBookPrologue);
 router.post('/get-all', bookPrologueController.getAllBookPrologues);

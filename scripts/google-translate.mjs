@@ -85,6 +85,10 @@ const chunkTexts = (texts) => {
   return groups;
 };
 
+// Explicit build/background-only free entry point, independent of Cloud credentials
+// and without mutating GOOGLE_TRANSLATE_MODE for other running requests.
+export const translateWithGoogleFree = (texts, language, onProgress = () => {}) => translateGoogle(texts, language, onProgress, 'free');
+
 const translateFree = async (texts, language, attempt = 1) => {
   const target = FREE_LANGUAGE_CODES[language] || language;
   const params = new URLSearchParams();
@@ -187,8 +191,9 @@ const translateCloud = async (texts, language, attempt = 1) => {
  * matches `texts` position for position. Throws on failure so the builder stops
  * on an incomplete pack instead of publishing a partial one.
  */
-export const translateWithGoogle = async (texts, language, onProgress = () => {}) => {
-  const mode = getGoogleTranslateMode();
+export const translateWithGoogle = (texts, language, onProgress = () => {}) => translateGoogle(texts, language, onProgress, getGoogleTranslateMode());
+
+const translateGoogle = async (texts, language, onProgress, mode) => {
   const delay = readPositiveInt(
     mode === 'free' ? 'GOOGLE_TRANSLATE_FREE_DELAY_MS' : 'GOOGLE_TRANSLATE_CLOUD_DELAY_MS',
     mode === 'free' ? 400 : 0,
