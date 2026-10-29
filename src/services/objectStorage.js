@@ -119,6 +119,7 @@ const getClient = () => {
 // Heading pack keys are separate from user-uploaded media. Only completed
 // packs are advertised through the public CDN; checkpoints are never linked.
 const assertHeadingPackKey = (key) => {
+  if (/^number-packs\/(?:manifests\/[a-z]{2,3}|[a-f0-9]{12}\/[a-z]{2,3})\.json$/.test(key)) return;
   if (!/^(?:(?:heading-packs\/bsb-|ui-packs\/app-)[a-f0-9]{12}\/[a-z]{2,3}(?:-[A-Za-z]{2,4})?(?:-(?:partial|manifest))?\.json|book-packs\/(?:manifest\.json|[a-f0-9]{12}\/catalog\.json)|book-overview-packs\/(?:manifests\/[a-z]{2,3}|[a-f0-9]{12}\/[a-z]{2,3}|books\/[a-f0-9]{12}\/[a-z]{2,3}(?:-partial)?)\.json)$/.test(key)) {
     throw new Error("Invalid heading pack key");
   }
@@ -177,6 +178,7 @@ export const resolveHeadingPackUrl = (key, language, revision) => {
   // too, including when the backend later deploys a new source revision.
   if (key.startsWith('book-packs/')) return `/translations/book-packs/file?revision=${revision}`;
   if (key.startsWith('book-overview-packs/')) return `/book-prologues/packs/${language}/file?revision=${revision}`;
+  if (key.startsWith('number-packs/')) return `/translation/number-packs/${language}/file?revision=${revision}`;
   return `/translations/heading-packs/${language}/file?revision=${revision}`;
 };
 

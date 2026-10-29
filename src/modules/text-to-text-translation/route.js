@@ -1,5 +1,6 @@
 import express from "express";
 import { getUiPackManifest, downloadUiPack, getUiPackSource } from './ui-packs.js';
+import { getNumberPackManifest, downloadNumberPack } from './number-packs.js';
 import { optionalAuth } from "../../middlewares/auth.middleware.js";
 import {
   translationCharacterLimiter,
@@ -14,6 +15,8 @@ import {
 } from "./validation.js";
 
 const router = express.Router();
+router.get('/number-packs/:language/manifest', getNumberPackManifest);
+router.get('/number-packs/:language/file', downloadNumberPack);
 router.get('/ui-packs/source', getUiPackSource);
 router.get('/ui-packs/:language/manifest', getUiPackManifest);
 router.get('/ui-packs/:language/file', downloadUiPack);
