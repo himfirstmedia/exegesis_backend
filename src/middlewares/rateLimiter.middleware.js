@@ -23,6 +23,10 @@ const registerLimiter = rateLimit({
   message: rateLimitResponse,
 });
 
+export const bibleSearchLimiter = rateLimit({
+  windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false, message: rateLimitResponse,
+});
+
 const readPositiveInt = (name, fallback) => {
   const value = Number.parseInt(process.env[name], 10);
   return Number.isInteger(value) && value > 0 ? value : fallback;

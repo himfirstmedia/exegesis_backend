@@ -232,6 +232,26 @@ export const getVerseByRef = async (req, res) => {
   }
 };
 
+// Literal, single-edition Bible text search is a free reading capability.
+// Advanced FTS/cross-edition tools retain their existing subscription guards.
+export const basicSearch = async (req, res) => {
+  const { translationId, query, bookName, covenant, limit = 5, offset = 0 } = req.body || {};
+  if (typeof translationId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(translationId) ||
+      typeof query !== 'string' || query.trim().length < 3 || query.length > 200 ||
+      (bookName !== undefined && !Object.values(BOOK_NAMES).includes(bookName)) ||
+      (covenant !== undefined && !['all', 'ot', 'nt'].includes(covenant)) ||
+      !Number.isInteger(limit) || limit < 1 || limit > 50 || !Number.isInteger(offset) || offset < 0 || offset > 100000) {
+    return res.status(400).json(formatApiResponse({ status: 400, message: 'Invalid Bible search request' }));
+  }
+  try {
+    const result = await searchXmlVerses(translationId, query.trim(), { bookName, covenant, limit, offset });
+    if (!result) return res.status(404).json(formatApiResponse({ status: 404, message: 'Bible edition unavailable' }));
+    return res.json(formatApiResponse({ status: 200, message: 'OK', data: { query: query.trim(), total: result.total, page: Math.floor(offset / limit) + 1, limit, data: result.data } }));
+  } catch {
+    return res.status(503).json(formatApiResponse({ status: 503, message: 'Bible search temporarily unavailable' }));
+  }
+};
+
 export const search = async (req, res) => {
   try {
     const { translationId } = req.params;

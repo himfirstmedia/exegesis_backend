@@ -86,6 +86,13 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+test('checkout refuses unknown billing intervals before any Stripe call', async () => {
+  const res = makeRes();
+  await createCheckoutSession({ user: { id: 'u' }, body: { tier: 'legacy_sower', interval: 'week' } }, res);
+  expect(res.status).toHaveBeenCalledWith(400);
+  expect(stripeInstance.checkout.sessions.create).not.toHaveBeenCalled();
+});
+
 describe("getSubscriptionStatus — single-response guarantee", () => {
   test("free user with NO Stripe customers gets exactly one response (no double send)", async () => {
     const prisma = getPrisma();
@@ -412,6 +419,8 @@ describe("listTiers field-safe translation", () => {
     );
     expect(res.body.returnData.tiers[0]).toEqual({
       ...tier,
+      checkoutAvailable: true,
+      source: 'database',
       name: "Sembrador legado",
       description: "Para lectores comprometidos",
       features: ["Estudio avanzado", "Insignia legado"],
@@ -466,6 +475,6 @@ describe("listTiers field-safe translation", () => {
     const res = makeRes();
     await listTiers({ body: { lang: "fr" } }, res);
 
-    expect(res.body.returnData.tiers).toEqual([tier]);
+    expect(res.body.returnData.tiers).toEqual([{ ...tier, checkoutAvailable: false, source: 'database' }]);
   });
 });

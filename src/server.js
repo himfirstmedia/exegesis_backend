@@ -14,6 +14,7 @@ import journalRouter from "./modules/journal/route.js";
 import { formatApiResponse } from "./utils/helpers.js";
 import { errorHandler } from "./middlewares/errorHandler.middleware.js";
 import { absoluteMediaUrl } from "./middlewares/absoluteMediaUrl.middleware.js";
+import { privateCache } from './middlewares/privateCache.middleware.js';
 import { localizeResponseMessage } from "./middlewares/localizeResponseMessage.middleware.js";
 import { startEmailScheduler } from "./services/emailScheduler.js";
 import { startPopularSearchCleanup } from "./services/popularSearchCleanup.js";
@@ -103,6 +104,7 @@ const corsOptions = {
 app.options("/{*path}", cors(corsOptions));
 
 app.use(cors(corsOptions));
+app.use(privateCache);
 
 // Stripe must receive the untouched request body for signature verification.
 // Register this before the global JSON parser consumes req.body.
@@ -150,7 +152,7 @@ app.get(/^\/media\/(.+)$/, async (req, res) => {
     // immutable because every key is a content-unique UUID.
     res.setHeader(
       "Cache-Control",
-      isPrivate ? "private, max-age=300" : "public, max-age=2592000, immutable",
+      isPrivate ? "private, no-store" : "public, max-age=2592000, immutable",
     );
     await pipeline(object.body, res);
   } catch (error) {

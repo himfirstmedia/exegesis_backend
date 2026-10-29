@@ -74,6 +74,7 @@ const getPriceId = async (tier, interval) => {
   const tierRecord = await prisma.subscriptionTier.findUnique({
     where: { id: tierId },
   });
+  if (tierRecord?.isActive === false) return null;
   if (tierRecord?.stripePriceId) return tierRecord.stripePriceId;
 
   // 2. Fallback to env var map
@@ -138,6 +139,9 @@ export const createCheckoutSession = async (req, res) => {
   try {
     const { tier, interval } = req.body;
     const userId = req.user.id;
+    if (interval !== undefined && !['month', 'year'].includes(interval)) {
+      return res.status(400).json(formatApiResponse({ status: 400, message: 'Invalid billing interval' }));
+    }
     const billingInterval = interval === "month" ? "month" : "year";
 
     if (!tier || !["legacy_sower", "covenant_sower"].includes(tier)) {
@@ -450,12 +454,15 @@ async function buildTiersFromStripe() {
     }
 
     const product = yearlyPrice.product;
+    if (!yearlyPrice.active || !product || product.deleted || !product.active ||
+        yearlyPrice.unit_amount == null || yearlyPrice.recurring?.interval !== 'year') continue;
 
     // Parse features from product metadata (expected as JSON string array)
     let features = [];
     try {
       if (product.metadata?.features) {
-        features = JSON.parse(product.metadata.features);
+        const parsed = JSON.parse(product.metadata.features);
+        features = Array.isArray(parsed) ? parsed.filter(value => typeof value === 'string' && value.trim()) : [];
       }
     } catch {
       // non-fatal; leave features empty
@@ -491,9 +498,13 @@ async function buildTiersFromStripe() {
     if (monthlyPriceId) {
       try {
         const monthlyPrice = await stripe.prices.retrieve(monthlyPriceId);
+        if (!monthlyPrice.active || monthlyPrice.unit_amount == null ||
+            monthlyPrice.recurring?.interval !== 'month' ||
+            (typeof monthlyPrice.product === 'string' ? monthlyPrice.product : monthlyPrice.product?.id) !== product.id) continue;
         tiers.push({
           id: `${tierId}_monthly`,
           ...shared,
+          currency: monthlyPrice.currency,
           price: monthlyPrice.unit_amount / 100,
           interval: monthlyPrice.recurring?.interval || "month",
           stripePriceId: monthlyPrice.id,
@@ -604,7 +615,7 @@ export const listTiers = async (req, res) => {
         formatApiResponse({
           status: 200,
           message: "Tiers retrieved",
-          data: { tiers },
+           data: { tiers: tiers.map(tier => ({ ...tier, checkoutAvailable: tier.id !== 'free', source: 'stripe' })) },
         }),
       );
     }
@@ -619,7 +630,7 @@ export const listTiers = async (req, res) => {
         formatApiResponse({
           status: 200,
           message: "Tiers retrieved",
-          data: { tiers },
+           data: { tiers: tiers.map(tier => ({ ...tier, checkoutAvailable: tier.isActive !== false && Boolean(tier.stripePriceId || process.env[(tier.interval === 'month' ? MONTHLY_PRICE_ENV : YEARLY_PRICE_ENV)[BASE_TIER(tier.id)]]), source: 'database' })) },
         }),
       );
     }
@@ -630,7 +641,7 @@ export const listTiers = async (req, res) => {
       formatApiResponse({
         status: 200,
         message: "Tiers retrieved (fallback)",
-        data: { tiers },
+         data: { tiers: tiers.map(tier => ({ ...tier, checkoutAvailable: false, source: 'fallback' })) },
       }),
     );
   } catch (error) {
@@ -640,7 +651,7 @@ export const listTiers = async (req, res) => {
       formatApiResponse({
         status: 200,
         message: "Tiers retrieved (fallback)",
-        data: { tiers },
+         data: { tiers: tiers.map(tier => ({ ...tier, checkoutAvailable: false, source: 'fallback' })) },
       }),
     );
   }

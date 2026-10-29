@@ -7,6 +7,7 @@ export const requireTier = (minimumTier) => {
     try {
       // Admin users bypass subscription checks entirely
       if (Number(req.user?.userRole) === 1) return next();
+      if (!req.user?.id) return res.status(401).json({ returnCode: 401, returnMessage: 'Sign in required' });
 
       const user = await prisma.systemUser.findUnique({
         where: { id: req.user.id },
@@ -17,7 +18,7 @@ export const requireTier = (minimumTier) => {
         return res.status(401).json({ returnCode: 401, returnMessage: "User not found" });
       }
 
-      if (TIER_ORDER[user.subscriptionTier] < TIER_ORDER[minimumTier]) {
+      if (!Object.hasOwn(TIER_ORDER, user.subscriptionTier) || !Object.hasOwn(TIER_ORDER, minimumTier) || TIER_ORDER[user.subscriptionTier] < TIER_ORDER[minimumTier]) {
         return res.status(403).json({
           returnCode: 403,
           returnMessage: "Subscription required",
@@ -28,7 +29,7 @@ export const requireTier = (minimumTier) => {
 
       // Only check expiry if accessExpiresAt is explicitly set.
       // null means the subscription has no expiry (e.g. lifetime or untracked).
-      if (user.accessExpiresAt !== null && new Date() > new Date(user.accessExpiresAt)) {
+      if (user.accessExpiresAt != null && (!Number.isFinite(new Date(user.accessExpiresAt).getTime()) || new Date() >= new Date(user.accessExpiresAt))) {
         return res.status(403).json({
           returnCode: 403,
           returnMessage: "Subscription expired",
@@ -60,11 +61,11 @@ export const checkTier = (minimumTier) => {
       });
 
       // accessExpiresAt null = no expiry (always valid)
-      const notExpired = user?.accessExpiresAt === null ||
-        !user?.accessExpiresAt ||
-        new Date() <= new Date(user.accessExpiresAt);
+      const notExpired = user?.accessExpiresAt == null ||
+        (Number.isFinite(new Date(user.accessExpiresAt).getTime()) && new Date() < new Date(user.accessExpiresAt));
 
       const hasAccess = user &&
+        Object.hasOwn(TIER_ORDER, user.subscriptionTier) && Object.hasOwn(TIER_ORDER, minimumTier) &&
         TIER_ORDER[user.subscriptionTier] >= TIER_ORDER[minimumTier] &&
         notExpired;
 

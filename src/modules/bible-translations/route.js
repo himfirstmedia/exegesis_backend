@@ -10,6 +10,7 @@ import {
   listVersesBatch,
   getVerseByRef,
   search,
+  basicSearch,
   searchFTS,
   searchCross,
   getChapterRangeVerses,
@@ -25,6 +26,7 @@ import {
 } from "./controller.js";
 import { authenticate } from "../../middlewares/auth.middleware.js";
 import { requireTier } from "../../middlewares/gating.middleware.js";
+import { bibleSearchLimiter } from '../../middlewares/rateLimiter.middleware.js';
 import { downloadHeadingPack, getHeadingPackManifest, downloadHeadingPackFile } from './heading-packs.js';
 
 const router = express.Router();
@@ -32,6 +34,7 @@ const router = express.Router();
 router.post("/translate-text", getTranslationText);
 router.get("/books/names", getBookNames);
 router.post("/", listTranslations);
+router.post('/basic-search', bibleSearchLimiter, basicSearch);
 
 // New public catalog endpoints (no auth — public metadata for on-device downloads)
 router.get("/catalog", listCatalog);

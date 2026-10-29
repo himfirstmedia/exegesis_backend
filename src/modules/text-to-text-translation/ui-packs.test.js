@@ -1,9 +1,14 @@
 jest.mock('../../services/objectStorage.js', () => ({ readUiPackObject: jest.fn(), resolveUiPackUrl: jest.fn(() => 'https://cdn.example/ui.json'), getHeadingPackObjectStream: jest.fn() }));
-import { getUiPackManifest, downloadUiPack } from './ui-packs.js';
+import { getUiPackManifest, downloadUiPack, getUiPackSource } from './ui-packs.js';
 import { uiSource } from './ui-pack-data.js';
 import { readUiPackObject, getHeadingPackObjectStream } from '../../services/objectStorage.js';
 const response = () => { const res = { status: jest.fn(), json: jest.fn(), set: jest.fn() }; res.status.mockReturnValue(res); return res; };
 beforeEach(() => jest.clearAllMocks());
+test('browser source index is read-only authored copy and needs no R2 or login', () => {
+  const res = response(); getUiPackSource({}, res);
+  expect(res.json).toHaveBeenCalledWith(uiSource);
+  expect(readUiPackObject).not.toHaveBeenCalled();
+});
 test('ready manifest supplies immutable file URL and unchanged revision', async () => {
   readUiPackObject.mockResolvedValue({ language: 'fr', revision: uiSource.revision, totalTexts: uiSource.texts.length });
   const res = response();

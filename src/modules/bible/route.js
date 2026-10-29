@@ -1,6 +1,6 @@
 import express from "express";
 import * as bibleController from "./controller.js";
-import { authenticate } from "../../middlewares/auth.middleware.js";
+import { authenticate, requireAdmin } from "../../middlewares/auth.middleware.js";
 
 const router = express.Router();
 
@@ -26,6 +26,7 @@ router.post("/get-verse-explanation", bibleController.getVerseExplanation);
 router.post(
   "/add-verse-explanation",
   authenticate,
+  requireAdmin,
   bibleController.addVerseExplanation,
 );
 router.post(
@@ -35,6 +36,7 @@ router.post(
 router.post(
   "/delete-verse-explanation",
   authenticate,
+  requireAdmin,
   bibleController.deleteVerseExplanation,
 );
 router.post("/add-verse-note", authenticate, bibleController.addVerseNote);

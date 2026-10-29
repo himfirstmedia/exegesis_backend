@@ -1,6 +1,13 @@
 import { readUiPackObject, resolveUiPackUrl, getHeadingPackObjectStream } from '../../services/objectStorage.js';
 import { uiSource, uiLanguages, uiPackKeys } from './ui-pack-data.js';
 
+// Public authored copy only. Browsers use this revisioned index to consume the
+// same published packs as native clients without coupling their release dates.
+export function getUiPackSource(_req, res) {
+  res.set('Cache-Control', 'public, max-age=300');
+  return res.json(uiSource);
+}
+
 export async function getUiPackManifest(req, res) {
   const { language } = req.params;
   if (!uiLanguages.includes(language)) return res.status(400).json({ status: 'unsupported' });

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { createHash } from 'node:crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { parseString } from 'xml2js';
@@ -1194,6 +1195,8 @@ export const getBibleMetadata = async (id) => {
   if (!entry) throw new Error('Translation not found');
   if (_metadataCache.has(entry.fileId)) return _metadataCache.get(entry.fileId);
   const books = await getBooks(entry.fileId);
+  const hash = createHash('sha256');
+  for await (const chunk of fs.createReadStream(entry.filePath)) hash.update(chunk);
   const totalChapters = books.reduce((s, b) => s + b.chaptersCount, 0);
   const totalVerses = books.reduce((s, b) => s + b.totalVerses, 0);
   const meta = {
@@ -1203,6 +1206,7 @@ export const getBibleMetadata = async (id) => {
     languageName: entry.languageName,
     ...getCatalogPresentation(entry),
     fileSize: entry.fileSize,
+    sha256: hash.digest('hex'),
     bookCount: books.length,
     chapterCount: totalChapters,
     verseCount: totalVerses,
