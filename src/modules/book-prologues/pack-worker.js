@@ -2,6 +2,7 @@ import { isObjectStorageConfigured, readHeadingPackObject } from '../../services
 import { overviewLanguages, overviewManifestKey, readOverviewSnapshot } from './pack-data.js';
 import { buildOverviewPack, overviewFailureReason } from './pack-builder.js';
 import { cache } from '../../services/cacheService.js';
+import { makeOverviewFreeProvider } from './pack-provider.js';
 
 let running;
 let timer;
@@ -13,8 +14,8 @@ const enabled = () => process.env.BOOK_OVERVIEW_PACK_AUTO_PUBLISH !== 'false' &&
 export async function overviewTranslator(provider = process.env.BOOK_OVERVIEW_PACK_PROVIDER || 'google-free') {
   if (provider === 'runtime') return undefined;
   if (provider !== 'google-free') throw new Error('Overview provider must be runtime or google-free');
-  const { translateWithGoogleFree } = await import('../../../scripts/google-translate.mjs');
-  return translateWithGoogleFree;
+  const { translateWithGoogleFree, translateWithGoogleFreeAlternative } = await import('../../../scripts/google-translate.mjs');
+  return makeOverviewFreeProvider(translateWithGoogleFree, translateWithGoogleFreeAlternative);
 }
 
 export function publishPendingOverviewPacks() {

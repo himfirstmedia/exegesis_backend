@@ -17,6 +17,7 @@
 // `q` parameters and Google returns one translated string per input, in order.
 
 import { GoogleAuth } from 'google-auth-library';
+import { freeProviderError, waitForFreeProvider } from './free-translation-session.mjs';
 
 const FREE_URL = 'https://clients5.google.com/translate_a/t';
 const CLOUD_URL = 'https://translation.googleapis.com/language/translate/v2';
@@ -87,9 +88,34 @@ const chunkTexts = (texts) => {
 
 // Explicit build/background-only free entry point, independent of Cloud credentials
 // and without mutating GOOGLE_TRANSLATE_MODE for other running requests.
-export const translateWithGoogleFree = (texts, language, onProgress = () => {}) => translateGoogle(texts, language, onProgress, 'free');
+export const translateWithGoogleFree = (texts, language, onProgress = () => {}, options = {}) => translateGoogle(texts, language, onProgress, 'free', options);
 
-const translateFree = async (texts, language, attempt = 1) => {
+/** Build-only single-item recovery endpoint. No key, Cloud auth or runtime mode change.
+ * Some widget batches return HTTP 200 with empty strings; retry those items with
+ * Google's other free response format instead of replaying the same failed batch.
+ */
+export const translateWithGoogleFreeAlternative = async (texts, language, options = {}) => {
+  const results = [];
+  for (const text of texts) {
+    const url = new URL('https://translate.googleapis.com/translate_a/single');
+    url.search = new URLSearchParams({ client: 'gtx', sl: 'en', tl: FREE_LANGUAGE_CODES[language] || language, dt: 't', q: text }).toString();
+    const timeout = AbortSignal.timeout(30000);
+    const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
+    const response = await (options.fetch || fetch)(url, { headers: { 'User-Agent': USER_AGENT }, signal, credentials: 'omit' });
+    if (!response.ok) throw freeProviderError(`HTTP_${response.status}`);
+    let payload;
+    try { payload = await response.json(); }
+    catch { const error = freeProviderError('INVALID_RESPONSE'); throw options.onFailure?.(error) || error; }
+    if (!Array.isArray(payload?.[0])) { const error = freeProviderError('INVALID_RESPONSE'); throw options.onFailure?.(error) || error; }
+    const value = decodeHtmlEntities(payload[0].map(segment => typeof segment?.[0] === 'string' ? segment[0] : '').join(''));
+    if (!value.trim() && options.onFailure) throw options.onFailure(freeProviderError('EMPTY_RESPONSE'));
+    if (value.trim()) options.onSuccess?.();
+    results.push(value);
+  }
+  return results;
+};
+
+const translateFree = async (texts, language, attempt = 1, options = {}) => {
   const target = FREE_LANGUAGE_CODES[language] || language;
   const params = new URLSearchParams();
   params.set('client', 'dict-chrome-ex');
@@ -99,24 +125,36 @@ const translateFree = async (texts, language, attempt = 1) => {
 
   let response;
   try {
-    response = await fetch(`${FREE_URL}?${params}`, {
+    const timeout = AbortSignal.timeout(60000);
+    response = await (options.fetch || fetch)(`${FREE_URL}?${params}`, {
       headers: { 'User-Agent': USER_AGENT, Accept: '*/*' },
-      signal: AbortSignal.timeout(60000),
+      signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout,
     });
   } catch (error) {
+    if (options.failFast || options.signal?.aborted || error?.code === 'FREE_PROVIDER_COOLDOWN') throw error;
     if (attempt < 5) {
       await sleep(Math.min(30000, 1000 * 2 ** (attempt - 1)));
-      return translateFree(texts, language, attempt + 1);
+      return translateFree(texts, language, attempt + 1, options);
     }
     throw new Error(`Google Translate request failed: ${error.message}`);
   }
 
-  const raw = await response.text();
+  let raw;
+  try { raw = await response.text(); }
+  catch (failure) {
+    if (!options.failFast) throw failure;
+    const error = freeProviderError(failure?.name === 'TimeoutError' || failure?.name === 'AbortError' ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR');
+    throw options.onFailure?.(error) || error;
+  }
   if (!response.ok || /<html/i.test(raw)) {
+    if (options.failFast) {
+      const error = freeProviderError(response.ok ? 'INVALID_RESPONSE' : `HTTP_${response.status}`);
+      throw options.onFailure?.(error) || error;
+    }
     // 429/403 from the widget endpoint is a rate limit; back off and retry.
     if (attempt < 6) {
       await sleep(Math.min(60000, 1500 * 2 ** (attempt - 1)));
-      return translateFree(texts, language, attempt + 1);
+      return translateFree(texts, language, attempt + 1, options);
     }
     throw new Error(`Google Translate is rate limiting this network (HTTP ${response.status})`);
   }
@@ -125,9 +163,10 @@ const translateFree = async (texts, language, attempt = 1) => {
   try {
     payload = JSON.parse(raw);
   } catch {
+    if (options.failFast) { const error = freeProviderError('INVALID_RESPONSE'); throw options.onFailure?.(error) || error; }
     if (attempt < 6) {
       await sleep(Math.min(60000, 1500 * 2 ** (attempt - 1)));
-      return translateFree(texts, language, attempt + 1);
+      return translateFree(texts, language, attempt + 1, options);
     }
     throw new Error('Google Translate returned a non-JSON response');
   }
@@ -135,8 +174,10 @@ const translateFree = async (texts, language, attempt = 1) => {
   const results = (Array.isArray(payload) ? payload : [payload])
     .map((item) => (Array.isArray(item) ? item.join('') : String(item ?? '')));
   if (results.length !== texts.length) {
+    if (options.failFast) { const error = freeProviderError('INVALID_RESPONSE'); throw options.onFailure?.(error) || error; }
     throw new Error(`Google Translate returned ${results.length} results for ${texts.length} inputs`);
   }
+  if (results.some(value => value.trim())) options.onSuccess?.();
   return results;
 };
 
@@ -193,7 +234,7 @@ const translateCloud = async (texts, language, attempt = 1) => {
  */
 export const translateWithGoogle = (texts, language, onProgress = () => {}) => translateGoogle(texts, language, onProgress, getGoogleTranslateMode());
 
-const translateGoogle = async (texts, language, onProgress, mode) => {
+const translateGoogle = async (texts, language, onProgress, mode, options = {}) => {
   const delay = readPositiveInt(
     mode === 'free' ? 'GOOGLE_TRANSLATE_FREE_DELAY_MS' : 'GOOGLE_TRANSLATE_CLOUD_DELAY_MS',
     mode === 'free' ? 400 : 0,
@@ -202,10 +243,10 @@ const translateGoogle = async (texts, language, onProgress, mode) => {
   for (const group of chunkTexts(texts)) {
     const translated = mode === 'cloud'
       ? await translateCloud(group, language)
-      : await translateFree(group, language);
+      : await translateFree(group, language, 1, options);
     for (const item of translated) results.push(item);
     onProgress(results.length, texts.length);
-    if (delay) await sleep(delay);
+    if (delay) await waitForFreeProvider(delay, options.signal);
   }
   return results;
 };

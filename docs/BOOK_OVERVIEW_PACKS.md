@@ -145,3 +145,80 @@ Automatic logs use `[overview-packs]` and retry pending languages on later
 sweeps. Check DB/R2 connectivity and provider availability if publication remains
 pending. Inspect `--dry-run` to distinguish missing source records from missing
 translations. Do not delete another publisher's active Redis locks.
+
+### Repeated failures at the same Genesis counts
+
+The original validator rejected legitimate unchanged person-name headings such
+as `Abraham`, `Isaac`, `Jacob`, and a French genealogy
+`Abraham → Isaac → Jacob → Joseph`. It now recognizes name-only text derived
+from that prologue's `keyPeople`/`author` metadata. It still rejects unchanged
+sentences, unknown unverified names, empty output and damaged placeholders.
+Warnings identify the book, chunk index, field and rejection reason without
+printing raw provider errors or credentials. Source revisions/checkpoints are
+unchanged by this validator fix. After updating the builder, resume the affected
+languages:
+
+```bash
+npm run build:book-overview-packs -- --languages fr,de,fil,id,ro --concurrency 2 --provider google-free
+```
+
+They resume their valid checkpoints, then continue with any remaining books.
+The AWS SDK's Node-version warning and the explicitly missing DB source books
+are independent of these translation validation failures.
+
+### Empty Google widget results in later books
+
+The widget endpoint can return HTTP 200 with individual empty strings, even
+though it successfully translated other items in the same batch. The builder
+now checkpoints every successful batch before retrying failures individually.
+With `google-free`, recovery uses Google's alternate free single-item endpoint
+(no API key/Cloud billing) with up to three bounded attempts/backoff. Longer
+failed prose is retried in smaller validated chunks. A short contrast heading
+such as Tagalog `Pride versus humility` can be translated by its meaningful
+contrast parts; paragraphs are never translated word by word. Empty results,
+altered placeholders and unchanged prose remain invalid.
+
+The CLI prints `retry 1/3` diagnostics with book, field and chunk index. If a
+book still fails, the builder continues and caches the other books, but it does
+not replace the live language manifest until the whole snapshot is complete.
+This avoids a rerun stopping at a different book each time. Existing source
+revisions/checkpoints stay compatible. For the four languages affected by this
+failure pattern, resume with lower concurrency:
+
+```bash
+npm run build:book-overview-packs -- --languages fr,de,fil,id --concurrency 1 --provider google-free
+```
+
+No free provider has guaranteed availability; a persistent outage still exits
+nonzero and retains valid work for later retry rather than publishing English
+fallbacks as completed translations. Runtime provider priority is unchanged.
+
+### Repeated `PROVIDER_ERROR` across consecutive chunks/books
+
+The build-only free provider now serializes actual HTTP requests across both
+Google endpoints and all language workers in the same process, at least one
+second apart. Optional `BOOK_OVERVIEW_PACK_REQUEST_DELAY_MS` can increase this
+delay; no actual `.env` changes are required. This does not select a paid API or
+change runtime provider priority.
+
+Safe diagnostics distinguish `HTTP_403`, `HTTP_429`, `HTTP_503`, `NETWORK_ERROR`,
+`REQUEST_TIMEOUT`, `INVALID_RESPONSE`, and `EMPTY_RESPONSE`. Raw bodies, URLs,
+keys and provider error messages are never printed. A 403/429 pauses immediately;
+three consecutive transport/response failures also open a shared circuit.
+No HTTP is issued during cooldown. The server's `Retry-After` is respected
+(numeric seconds/date, bounded to an hour); otherwise cooldown is at least 60s.
+
+The CLI prints the reason/wait time and automatically retries the interrupted
+language from its checkpoints after cooldown. There are at most **two shared
+cooldown waits per invocation**, not two per chunk/book/language. If the provider
+is still unavailable, the build stops nonzero instead of hammering every field
+of every later book. Completed chunks are already checkpointed, owned locks are
+released before waiting, and no incomplete manifest is published. Ctrl+C aborts
+both active requests and cooldown waits. The automatic publisher respects the
+same circuit and resumes on a later reconciliation sweep.
+
+Use only one publisher process (avoid a running auto-publisher plus a manual
+CLI build), because separate processes have separate free-provider request
+governors. Confirmed provider/IP blocks cannot be fixed by loosening translation
+validation or repeatedly restarting the CLI. Wait for availability or explicitly
+choose `--provider runtime` to use the existing configured provider chain.

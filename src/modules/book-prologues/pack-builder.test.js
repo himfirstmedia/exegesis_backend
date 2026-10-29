@@ -39,6 +39,17 @@ test('English copies source without a provider and identical builds reuse immuta
   expect((await buildOverviewPack('en', { translate })).reused).toBe(true);
   expect(objects.get(overviewPackKey(first.revision, 'en')).books.Genesis.summary).toBe(row().summary);
 });
+test('publishes when valid person-name headings/genealogy are unchanged, without accepting prose echoes', async () => {
+  prisma.bookPrologue.findMany.mockResolvedValue([{ ...row(), summary: 'Abraham → Isaac → Jacob → Joseph',
+    keyPeople: ['Abraham and Sarah', 'Isaac and Rebekah', 'Jacob and Esau', 'Joseph'],
+    structure: [{ range: '12-25', title: 'Abraham' }, { range: '26-27', title: 'Isaac' }, { range: '28-36', title: 'Jacob' }] }]);
+  const names = jest.fn(async texts => texts.map(text => ['Abraham', 'Isaac', 'Jacob', 'Abraham → Isaac → Jacob → Joseph'].includes(text) ? text : `traduit:${text}`));
+  const result = await buildOverviewPack('fr', { translate: names });
+  const pack = objects.get(overviewPackKey(result.revision, 'fr'));
+  expect(pack.books.Genesis.summary).toBe('Abraham → Isaac → Jacob → Joseph');
+  expect(pack.books.Genesis.structure[0].title).toBe('Abraham');
+  expect(result.bookCount).toBe(1);
+});
 test('new books change the revision but reuse completed unchanged-book translations', async () => {
   const first = await buildOverviewPack('fr', { translate });
   translate.mockClear();
@@ -50,8 +61,35 @@ test('new books change the revision but reuse completed unchanged-book translati
 });
 test('failed translations save successful chunks without replacing the live manifest', async () => {
   const partial = jest.fn(async texts => texts.map(text => text.includes('creation of the world') ? '' : `traduit:${text}`));
-  await expect(buildOverviewPack('fr', { translate: partial })).rejects.toThrow('Incomplete overview translation: Genesis');
+  await expect(buildOverviewPack('fr', { translate: partial, retryDelayMs: 0 })).rejects.toThrow('Incomplete overview translation: Genesis');
   expect(writeHeadingPackObject.mock.calls.some(([key]) => key.endsWith('-partial.json'))).toBe(true);
+  expect(objects.has(overviewManifestKey('fr'))).toBe(false);
+  expect((await cache.acquireLock.mock.results[0].value).release).toHaveBeenCalled();
+});
+test('checkpoints successful batch items before recovery and uses the free-mode retry adapter only for failures', async () => {
+  const primary = jest.fn(async texts => texts.map(text => text === row().summary ? '' : `traduit:${text}`));
+  primary.retry = jest.fn(async texts => texts.map(text => `traduit:${text}`));
+  const result = await buildOverviewPack('fr', { translate: primary, retryDelayMs: 0 });
+  expect(primary.retry).toHaveBeenCalledWith([row().summary], 'fr');
+  expect(writeHeadingPackObject.mock.invocationCallOrder[0]).toBeLessThan(primary.retry.mock.invocationCallOrder[0]);
+  expect(objects.has(overviewManifestKey('fr'))).toBe(true);
+  expect(result.bookCount).toBe(1);
+});
+test('a persistently failing book does not prevent caching later books, but no incomplete language manifest is published', async () => {
+  prisma.bookPrologue.findMany.mockResolvedValue([row(), row('Exodus', 'God delivers Israel.')]);
+  const translate = jest.fn(async texts => texts.map(text => text === row().summary ? '' : `traduit:${text}`));
+  await expect(buildOverviewPack('fr', { translate, retryDelayMs: 0 })).rejects.toThrow('Incomplete overview translation: Genesis');
+  expect([...objects.values()].some(value => value.complete === true && value.data?.bookName === 'Exodus')).toBe(true);
+  expect(objects.has(overviewManifestKey('fr'))).toBe(false);
+});
+test('an outage cooldown stops the language after its checkpoint instead of hammering later books', async () => {
+  prisma.bookPrologue.findMany.mockResolvedValue([row(), row('Exodus', 'God delivers Israel.')]);
+  const primary = jest.fn(async texts => texts.map(text => text === row().summary ? '' : `traduit:${text}`));
+  primary.retry = jest.fn().mockRejectedValue(Object.assign(new Error('cooldown'), { code: 'FREE_PROVIDER_COOLDOWN', providerReason: 'HTTP_429' }));
+  await expect(buildOverviewPack('fr', { translate: primary, retryDelayMs: 0 })).rejects.toMatchObject({ code: 'FREE_PROVIDER_COOLDOWN' });
+  expect(primary.retry).toHaveBeenCalledTimes(1);
+  expect(primary).toHaveBeenCalledTimes(1);
+  expect([...objects.keys()].some(key => key.endsWith('-partial.json'))).toBe(true);
   expect(objects.has(overviewManifestKey('fr'))).toBe(false);
   expect((await cache.acquireLock.mock.results[0].value).release).toHaveBeenCalled();
 });

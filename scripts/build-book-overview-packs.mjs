@@ -42,21 +42,23 @@ if (args.includes('--help')) {
       const { overviewTranslator } = await import('../src/modules/book-prologues/pack-worker.js');
       const { buildOverviewPack, overviewFailureReason } = await import('../src/modules/book-prologues/pack-builder.js');
       const translate = await overviewTranslator(provider);
-      const pending = [...languages]; let failed = 0;
-      await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, async () => {
-        while (pending.length && !controller.signal.aborted) {
-          const language = pending.shift();
-          try {
-            const result = await buildOverviewPack(language, { snapshot, translate, signal: controller.signal,
-              onProgress: item => console.log(`[${language}] ${item.bookName}: ${item.completed}/${item.total}`) });
-            console.log(`[${language}] Published ${result.bookCount} overviews; ${result.revision}${result.reused ? ' (reused)' : ''}`);
-          } catch (error) {
-            failed++;
-            console.error(`[${language}] FAILED: ${overviewFailureReason(error)}; checkpoint retained. Retry the same command.`);
-          }
-        }
-      }));
-      if (failed) process.exitCode = 1;
+      const { runOverviewBuildQueue } = await import('./overview-build-queue.mjs');
+      const result = await runOverviewBuildQueue({ languages, concurrency, signal: controller.signal,
+        waitForCooldown: translate?.waitForCooldown,
+        onProviderWait: item => console.warn(`Google free cooldown ${item.cooldown}/${item.maxCooldowns}: ${item.reason}; waiting ${Math.ceil(item.milliseconds / 1000)} seconds before retrying. No requests during cooldown. Ctrl+C is safe.`),
+        build: language => buildOverviewPack(language, { snapshot, translate, signal: controller.signal,
+          onProgress: item => console.log(`[${language}] ${item.bookName}: ${item.completed}/${item.total}`),
+          onRetry: item => console.log(`[${language}] ${item.bookName}: retry ${item.attempt}/3 for chunk #${item.index} ${item.field}.${item.key} (${item.reason})`),
+          onWarning: item => console.warn(`[${language}] ${item.bookName}: chunk #${item.index} ${item.field}.${item.key} — ${item.reason}`),
+        }),
+        onResult: (language, value) => console.log(`[${language}] Published ${value.bookCount} overviews; ${value.revision}${value.reused ? ' (reused)' : ''}`),
+        onFailure: (language, error, details) => {
+          if (details?.cooldownExhausted) console.error(`[${language}] PROVIDER_COOLDOWN: provider still unavailable after bounded cooldowns. Checkpoints retained; retry later, not in a tight loop.`);
+          else console.error(`[${language}] FAILED: ${overviewFailureReason(error)}; checkpoint retained. Retry the same command.`);
+        },
+      });
+      if (result.providerStopped) console.error(`${result.unattempted} language(s) remain after provider shutdown. Re-run the same command later to resume.`);
+      if (result.failed) process.exitCode = 1;
     }
   } catch {
     // DB/provider errors can embed connection strings. Never echo raw errors.
