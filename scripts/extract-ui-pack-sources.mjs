@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
+import vm from 'node:vm';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const app = path.join(root, 'app/src');
@@ -42,6 +43,30 @@ const scan = dir => {
   }
 };
 for (const name of ['features', 'component', 'reusable', 'hooks']) scan(path.join(app, name));
+// Legal screens request bounded chunks, not just the full source literals.
+// Evaluate only these pure authored modules so constants/interpolations and the
+// exact same sentence/word splitting used by the app are preserved in the pack.
+const readPureModule = relative => {
+  const file = path.join(app, relative);
+  const { outputText } = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    fileName: file,
+  });
+  const exports = {};
+  vm.runInNewContext(outputText, { exports }, { filename: file, timeout: 1000 });
+  return exports;
+};
+const { TERMS_OF_SERVICE, PRIVACY_POLICY, LEGAL_CHUNK_CHARACTERS } = readPureModule('features/legal/content.ts');
+const { splitTranslationText } = readPureModule('services/translation/textChunks.ts');
+add('Last updated');
+for (const document of [TERMS_OF_SERVICE, PRIVACY_POLICY]) {
+  for (const section of document.sections) {
+    for (const text of [section.heading, ...section.paragraphs, ...(section.bullets || [])]) {
+      add(text);
+      for (const chunk of splitTranslationText(text, LEGAL_CHUNK_CHARACTERS)) add(chunk.text);
+    }
+  }
+}
 const texts = [...sources].sort();
 const revision = createHash('sha256').update(`ui-v1:${JSON.stringify(texts)}`).digest('hex').slice(0, 12);
 const catalog = JSON.stringify({ schemaVersion: 1, revision, texts }, null, 2) + '\n';
