@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { BIBLE_BOOK_NAMES } from '../bible/bookNames.js';
 import { getCatalog, getBooksWithMaxChapters } from './service.js';
-import { writeHeadingPackObject } from '../../services/objectStorage.js';
+import { writeHeadingPackObject, readHeadingPackObject } from '../../services/objectStorage.js';
 
 export function validateBookPack(pack) {
   if (pack?.schemaVersion !== 1 || !pack.editions?.length || !pack.names?.en) throw new Error('Incomplete book metadata');
@@ -35,8 +35,13 @@ export async function buildBookPack(onProgress = () => {}) {
   const content = validateBookPack({ schemaVersion: 1, names: BIBLE_BOOK_NAMES, editions });
   const revision = createHash('sha256').update(JSON.stringify(content)).digest('hex').slice(0, 12);
   const pack = { ...content, revision };
+  // The revision is a content hash, so a matching immutable object already holds
+  // the exact same data. Skip re-uploading it and only refresh the manifest.
+  const key = `book-packs/${revision}/catalog.json`;
+  const existing = await readHeadingPackObject(key).catch(() => null);
+  const reused = Boolean(existing);
   // Immutable content first; an interrupted build never advertises partial data.
-  await writeHeadingPackObject(`book-packs/${revision}/catalog.json`, pack, { compress: true, cacheControl: 'public, max-age=31536000, immutable' });
+  if (!reused) await writeHeadingPackObject(key, pack, { compress: true, cacheControl: 'public, max-age=31536000, immutable' });
   await writeHeadingPackObject('book-packs/manifest.json', { schemaVersion: 1, revision, editionCount: editions.length }, { cacheControl: 'no-cache' });
-  return { revision, editionCount: editions.length };
+  return { revision, editionCount: editions.length, reused };
 }

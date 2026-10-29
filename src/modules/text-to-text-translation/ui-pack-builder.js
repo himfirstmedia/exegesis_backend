@@ -2,7 +2,7 @@
 import { cache } from '../../services/cacheService.js';
 import { readUiPackObject, writeUiPackObject } from '../../services/objectStorage.js';
 import { translateBatch } from './service.js';
-import { uiSource, uiLanguages, uiPackKeys, validUiText, completeUiPack } from './ui-pack-data.js';
+import { uiSource, uiLanguages, uiPackKeys, validUiText, completeUiPack, uiCarryKey, uiTranslationMap } from './ui-pack-data.js';
 import { protectUiText, translateUiSpans, abortable } from './ui-pack-translation.js';
 
 export async function buildUiPack(language, onProgress = () => {}, options = {}) {
@@ -31,6 +31,17 @@ export async function buildUiPack(language, onProgress = () => {}, options = {})
     const translations = checkpoint?.revision === uiSource.revision && checkpoint.language === language && Array.isArray(checkpoint.translations)
       ? [...checkpoint.translations] : Array(uiSource.texts.length).fill(null);
     translations.length = uiSource.texts.length;
+    if (!reused) {
+      // Carry validated strings from the previously published revision. The
+      // source list is sorted, so unchanged copy keeps its translation and only
+      // added or edited strings reach the provider.
+      const carried = uiTranslationMap(options.carry ?? await readUiPackObject(uiCarryKey(language)));
+      if (carried.size) uiSource.texts.forEach((text, index) => {
+        if (validUiText(text, translations[index])) return;
+        const value = carried.get(text);
+        if (validUiText(text, value)) translations[index] = value;
+      });
+    }
     const pack = { schemaVersion: 1, revision: uiSource.revision, language, translations };
     const failures = [];
     for (let start = 0; start < uiSource.texts.length;) {
@@ -80,6 +91,14 @@ export async function buildUiPack(language, onProgress = () => {}, options = {})
     await writeUiPackObject(keys.final, pack, { compress: true, cacheControl: 'public, max-age=31536000, immutable' });
     assertActive();
     if (!owned) throw new Error('UI pack generation lock lost before manifest publication');
+    // Record source→translation for the next revision. English needs no carry:
+    // its pack is always its own source.
+    if (language !== 'en') {
+      await writeUiPackObject(uiCarryKey(language), { schemaVersion: 1, revision: uiSource.revision, language,
+        texts: uiSource.texts, translations });
+      assertActive();
+      if (!owned) throw new Error('UI pack generation lock lost before manifest publication');
+    }
     const manifest = { schemaVersion: 1, language, revision: uiSource.revision, totalTexts: uiSource.texts.length, bytes: Buffer.byteLength(JSON.stringify(pack)) };
     await writeUiPackObject(keys.manifest, manifest);
     return { ...manifest, reused };

@@ -5,7 +5,7 @@ jest.mock('../../services/objectStorage.js', () => ({
 jest.mock('../../utils/translator.js', () => ({ translateMany: jest.fn() }));
 
 import { buildHeadingPack } from './heading-pack-builder.js';
-import { headingSource, makeHeadingPack, headingPackKeys, HEADING_PACK_REVISION } from './heading-pack-data.js';
+import { headingSource, makeHeadingPack, headingPackKeys, HEADING_PACK_REVISION, headingCarryKey, headingTexts } from './heading-pack-data.js';
 import { cache } from '../../services/cacheService.js';
 import { readHeadingPackObject, writeHeadingPackObject } from '../../services/objectStorage.js';
 import { translateMany } from '../../utils/translator.js';
@@ -23,11 +23,8 @@ test('builds 66 books, compresses the final file and publishes the manifest last
   expect(result.totalBooks).toBe(66);
   expect(translateMany).toHaveBeenCalledTimes(66);
   const calls = writeHeadingPackObject.mock.calls;
-  expect(calls.at(-2)).toEqual([
-    headingPackKeys('fr').final,
-    expect.objectContaining({ books: expect.objectContaining({ Genesis: expect.any(Object) }) }),
-    { compress: true, cacheControl: 'public, max-age=31536000, immutable' },
-  ]);
+  const final = calls.find(([key, , options]) => key === headingPackKeys('fr').final && options?.compress);
+  expect(final[1]).toEqual(expect.objectContaining({ books: expect.objectContaining({ Genesis: expect.any(Object) }) }));
   expect(calls.at(-1)).toEqual([headingPackKeys('fr').manifest, expect.objectContaining({ totalBooks: 66 })]);
 });
 
@@ -35,7 +32,7 @@ test('publishes previously generated packs without translating them again', asyn
   readHeadingPackObject.mockResolvedValue(makeHeadingPack('fr', headingSource));
   expect((await buildHeadingPack('fr')).reused).toBe(true);
   expect(translateMany).not.toHaveBeenCalled();
-  expect(writeHeadingPackObject).toHaveBeenCalledTimes(2);
+  expect(writeHeadingPackObject).toHaveBeenCalledTimes(3);
 });
 
 test('resumes completed books from checkpoints', async () => {
@@ -75,4 +72,31 @@ test('duplicate builders fail clearly rather than claiming a pack was published'
   cache.acquireLock.mockResolvedValue({ acquired: false });
   await expect(buildHeadingPack('it')).rejects.toThrow('Another builder');
   expect(translateMany).not.toHaveBeenCalled();
+});
+
+test('reuses unchanged headings from the previous revision and translates only the rest', async () => {
+  const book = Object.keys(headingSource)[0];
+  const chapter = Object.keys(headingSource[book])[0];
+  const carriedHeading = headingSource[book][chapter][0].heading;
+  const carry = { schemaVersion: 1, revision: '000000000000', language: 'fr',
+    texts: [carriedHeading], translations: ['CARRIED'] };
+  readHeadingPackObject.mockImplementation(async key => key === headingCarryKey('fr') ? carry : null);
+  await buildHeadingPack('fr');
+  const sent = translateMany.mock.calls.flatMap(([texts]) => texts);
+  expect(sent).not.toContain(carriedHeading);
+  const pack = writeHeadingPackObject.mock.calls.find(([key]) => key === headingPackKeys('fr').final)[1];
+  expect(pack.books[book][chapter][0].heading).toBe('CARRIED');
+});
+
+test('records a per-language carry so future heading revisions reuse translations', async () => {
+  await buildHeadingPack('fr');
+  const call = writeHeadingPackObject.mock.calls.find(([key]) => key === headingCarryKey('fr'));
+  expect(call).toBeTruthy();
+  expect(call[1]).toMatchObject({ schemaVersion: 1, revision: HEADING_PACK_REVISION, language: 'fr', texts: headingTexts() });
+  expect(call[1].translations).toHaveLength(headingTexts().length);
+});
+
+test('English publishes no heading carry object', async () => {
+  await buildHeadingPack('en');
+  expect(writeHeadingPackObject.mock.calls.some(([key]) => key === headingCarryKey('en'))).toBe(false);
 });

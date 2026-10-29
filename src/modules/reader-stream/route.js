@@ -69,8 +69,13 @@ export async function readerStreamController(req, res) {
     });
   } catch (error) {
     if (error.name !== 'AbortError' && !res.writableEnded && !res.destroyed) {
-      if (!res.headersSent) res.status(error.status || 500).json({ returnCode: error.status || 500, returnMessage: 'Reader content unavailable' });
-      else await emit('error', { code: 'STREAM_FAILED' }).catch(() => {});
+      if (!res.headersSent) {
+        const status = error.status || 500;
+        res.status(status).json({
+          returnCode: status,
+          returnMessage: status === 404 ? 'Reader content not found' : 'Reader content unavailable',
+        });
+      } else await emit('error', { code: 'STREAM_FAILED' }).catch(() => {});
     }
   } finally {
     clearTimeout(deadline); clearInterval(heartbeat);

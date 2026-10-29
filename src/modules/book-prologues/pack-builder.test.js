@@ -5,13 +5,13 @@ jest.mock('../text-to-text-translation/service.js', () => ({ translateBatch: jes
 import { prisma } from '../../config/db.js';
 import { cache } from '../../services/cacheService.js';
 import { readHeadingPackObject, writeHeadingPackObject } from '../../services/objectStorage.js';
-import { makeOverviewSnapshot, overviewManifestKey, overviewPackKey } from './pack-data.js';
+import { makeOverviewSnapshot, overviewManifestKey, overviewPackKey, overviewBookKey, validTranslatedOverview } from './pack-data.js';
 import { buildOverviewPack } from './pack-builder.js';
 
 let objects;
 const row = (bookName = 'Genesis', summary = 'The creation of the world.') => ({ bookName, summary, author: 'Moses',
   structure: [{ range: '1-2', title: 'Creation' }], applications: ['Trust God.'],
-  keyScripture: [{ bookName: 'Genesis', chapter: 1, verse: 1, translation: 'KJV', text: 'In the beginning God created.' }],
+  keyScripture: [{ bookName: 'Genesis', chapter: 1, verse: 1, translation: 'KJV', reference: 'Genesis 1:1 (KJV)', text: 'In the beginning God created.' }],
   keyVerses: ['Genesis 1:1'], createdBy: 'private-user-id' });
 const translate = jest.fn(async texts => texts.map(text => `traduit:${text}`));
 beforeEach(() => {
@@ -21,15 +21,22 @@ beforeEach(() => {
   readHeadingPackObject.mockImplementation(async key => objects.get(key) || null);
   writeHeadingPackObject.mockImplementation(async (key, data) => { objects.set(key, JSON.parse(JSON.stringify(data))); });
 });
-test('reads DB directly, omits private columns, preserves quoted Scripture and publishes manifest last', async () => {
+test('reads DB directly, omits private columns, translates quoted verse text while keeping citations, and publishes manifest last', async () => {
   const result = await buildOverviewPack('fr', { translate });
   const pack = objects.get(overviewPackKey(result.revision, 'fr'));
   expect(pack.books.Genesis.summary).toBe('traduit:The creation of the world.');
-  expect(pack.books.Genesis.keyScripture).toEqual(row().keyScripture);
+  // Quoted verse text is translated; the citation keeps its original edition.
+  expect(pack.books.Genesis.keyScripture).toEqual([
+    { ...row().keyScripture[0], text: 'traduit:In the beginning God created.' },
+  ]);
+  // Pure reference lists in Key Verses stay canonical and never reach a provider.
   expect(pack.books.Genesis.keyVerses).toEqual(row().keyVerses);
   expect(pack.books.Genesis.createdBy).toBeUndefined();
   expect(pack.missingBooks).toHaveLength(65);
-  expect(translate.mock.calls.flatMap(([texts]) => texts).join(' ')).not.toContain('In the beginning');
+  const sent = translate.mock.calls.flatMap(([texts]) => texts);
+  expect(sent).toContain('In the beginning God created.');
+  expect(sent).not.toContain('Genesis 1:1 (KJV)');
+  expect(sent).not.toContain('Genesis 1:1');
   expect(writeHeadingPackObject.mock.calls.at(-1)[0]).toBe(overviewManifestKey('fr'));
   expect(cache.acquireLock.mock.calls[0][0]).toBe('book-overview-pack:fr');
 });
@@ -119,4 +126,38 @@ test('source revisions ignore private/admin-only changes but include edits and r
   expect(makeOverviewSnapshot([{ ...row(), createdBy: 'different', updatedOn: new Date() }]).revision).toBe(first.revision);
   expect(makeOverviewSnapshot([row('Genesis', 'Changed')]).revision).not.toBe(first.revision);
   expect(makeOverviewSnapshot([]).revision).not.toBe(first.revision);
+});
+test('a translated overview is valid while quoted text may change but citations stay canonical', () => {
+  const source = makeOverviewSnapshot([row()]).books.Genesis;
+  const translated = { ...source, keyScripture: source.keyScripture.map(item => ({ ...item, text: 'Traduit' })) };
+  expect(validTranslatedOverview(translated, source)).toBe(true);
+  const altered = { ...source, keyScripture: source.keyScripture.map(item => ({ ...item, reference: 'Genèse 1:1' })) };
+  expect(validTranslatedOverview(altered, source)).toBe(false);
+  expect(validTranslatedOverview({ ...source, keyVerses: ['Genèse 1:1'] }, source)).toBe(true);
+});
+test('a field-set change tops up only the new fields and reuses already-translated prose', async () => {
+  const snapshot = makeOverviewSnapshot([row()]);
+  const bookRevision = snapshot.bookRevisions.Genesis;
+  // A pack written before keyScripture/keyVerses were translated: prose already
+  // translated, but Scripture still in the source language (no `fields` marker).
+  objects.set(overviewBookKey(bookRevision, 'fr'), { complete: true, revision: bookRevision, language: 'fr',
+    data: { ...snapshot.books.Genesis, summary: 'Résumé traduit' } });
+  const result = await buildOverviewPack('fr', { snapshot, translate });
+  const pack = objects.get(overviewPackKey(result.revision, 'fr'));
+  expect(pack.books.Genesis.summary).toBe('Résumé traduit');
+  expect(pack.books.Genesis.keyScripture[0].text).toBe('traduit:In the beginning God created.');
+  const sent = translate.mock.calls.flatMap(([texts]) => texts);
+  // Only the newly added fields were sent to the provider.
+  expect(sent).not.toContain('The creation of the world.');
+  expect(sent).not.toContain('Résumé traduit');
+  expect(sent).toContain('In the beginning God created.');
+});
+test('an unchanged field set reuses the saved pack without translating again', async () => {
+  const snapshot = makeOverviewSnapshot([row()]);
+  await buildOverviewPack('fr', { snapshot, translate });
+  translate.mockClear();
+  const result = await buildOverviewPack('fr', { snapshot, translate });
+  expect(translate).not.toHaveBeenCalled();
+  expect(objects.get(overviewPackKey(result.revision, 'fr')).books.Genesis.keyScripture[0].text)
+    .toBe('traduit:In the beginning God created.');
 });

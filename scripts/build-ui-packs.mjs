@@ -3,7 +3,7 @@ import 'dotenv/config';
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
   console.log('Usage: npm run build:ui-packs -- --languages en,fr,sw [--concurrency 2] [--provider runtime|google-free]');
-  console.log('Explicit --all builds all languages. Runtime uses the /translation/batch service chain. Existing checkpoints are resumed.');
+  console.log('Explicit --all builds all languages. Runtime uses the /translation/batch service chain. Existing checkpoints are resumed, and unchanged strings are reused from the previous revision so only new or edited copy is translated.');
 } else {
   let cache;
   const controller = new AbortController();

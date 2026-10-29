@@ -2,7 +2,7 @@ jest.mock('../../services/cacheService.js', () => ({ cache: { acquireLock: jest.
 jest.mock('../../services/objectStorage.js', () => ({ readUiPackObject: jest.fn(), writeUiPackObject: jest.fn() }));
 jest.mock('./service.js', () => ({ translateBatch: jest.fn() }));
 import { buildUiPack } from './ui-pack-builder.js';
-import { uiSource, uiPackKeys, completeUiPack, validUiText } from './ui-pack-data.js';
+import { uiSource, uiPackKeys, completeUiPack, validUiText, uiCarryKey } from './ui-pack-data.js';
 import { cache } from '../../services/cacheService.js';
 import { readUiPackObject, writeUiPackObject } from '../../services/objectStorage.js';
 import { translateBatch } from './service.js';
@@ -23,15 +23,15 @@ test('builds bounded batches, checkpoints, compresses final object and publishes
     expect(request.target).toBe('fr');
   }
   const calls = writeUiPackObject.mock.calls;
-  expect(completeUiPack(calls.at(-2)[1], 'fr')).toBe(true);
-  expect(calls.at(-2)[2].compress).toBe(true);
+  const final = calls.find(([key, , options]) => key === uiPackKeys('fr').final && options?.compress);
+  expect(completeUiPack(final[1], 'fr')).toBe(true);
   expect(calls.at(-1)[0]).toBe(uiPackKeys('fr').manifest);
 });
 test('reuses complete packs without invoking providers', async () => {
   readUiPackObject.mockResolvedValue(fixture('fr'));
   expect((await buildUiPack('fr')).reused).toBe(true);
   expect(translateBatch).not.toHaveBeenCalled();
-  expect(writeUiPackObject).toHaveBeenCalledTimes(2);
+  expect(writeUiPackObject).toHaveBeenCalledTimes(3);
 });
 test('English needs no provider', async () => {
   await buildUiPack('en');
@@ -79,7 +79,7 @@ test('automatically repairs provider-mangled placeholders using literal spans', 
   readUiPackObject.mockImplementation(async key => key.endsWith('-partial.json') ? checkpoint : null);
   const translate = jest.fn(async texts => texts.map(text => text.includes('ZXQPH') ? '-- Seleccione {campo} --' : text.replace('Select', 'Seleccione')));
   await buildUiPack('es', () => {}, { translate });
-  const pack = writeUiPackObject.mock.calls.at(-2)[1];
+  const pack = writeUiPackObject.mock.calls.find(([key]) => key === uiPackKeys('es').final)[1];
   expect(pack.translations[index]).toBe('-- Seleccione {field} --');
   expect(translate).toHaveBeenCalledTimes(2);
   expect(completeUiPack(pack, 'es')).toBe(true);
@@ -107,4 +107,36 @@ test('abort while translating releases the lock without publishing a manifest', 
   const lock = await cache.acquireLock.mock.results[0].value;
   expect(lock.release).toHaveBeenCalledTimes(1);
   expect(writeUiPackObject).not.toHaveBeenCalled();
+});
+
+test('reuses unchanged strings from the previous revision and translates only added or edited copy', async () => {
+  const indexes = [0, 1, 2];
+  const carriedTexts = indexes.map(index => uiSource.texts[index]);
+  const carry = { schemaVersion: 1, revision: '000000000000', language: 'fr',
+    texts: carriedTexts, translations: indexes.map(index => `carried:${index}`) };
+  readUiPackObject.mockImplementation(async key => key === uiCarryKey('fr') ? carry : null);
+  const translate = jest.fn(async texts => texts.map(text => `translated:${text}`));
+  const result = await buildUiPack('fr', () => {}, { translate });
+  const sent = translate.mock.calls.flatMap(([texts]) => texts);
+  for (const text of carriedTexts) expect(sent).not.toContain(text);
+  // Duplicate source strings may legitimately share one carried translation.
+  expect(sent.length).toBeLessThanOrEqual(uiSource.texts.length - indexes.length);
+  expect(result.reused).toBe(false);
+  const pack = writeUiPackObject.mock.calls.find(([key]) => key === uiPackKeys('fr').final)[1];
+  indexes.forEach(index => expect(pack.translations[index]).toBe(`carried:${index}`));
+  expect(completeUiPack(pack, 'fr')).toBe(true);
+});
+
+test('records a per-language carry so the next revision can reuse translations', async () => {
+  await buildUiPack('fr');
+  const call = writeUiPackObject.mock.calls.find(([key]) => key === uiCarryKey('fr'));
+  expect(call).toBeTruthy();
+  expect(call[1]).toMatchObject({ schemaVersion: 1, revision: uiSource.revision, language: 'fr', texts: uiSource.texts });
+  expect(call[1].translations).toHaveLength(uiSource.texts.length);
+  expect(uiSource.texts.every((text, index) => validUiText(text, call[1].translations[index]))).toBe(true);
+});
+
+test('English publishes no carry object', async () => {
+  await buildUiPack('en');
+  expect(writeUiPackObject.mock.calls.some(([key]) => key === uiCarryKey('en'))).toBe(false);
 });

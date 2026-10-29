@@ -1,8 +1,8 @@
 jest.mock('./service.js', () => ({ getCatalog: jest.fn(), getBooksWithMaxChapters: jest.fn() }));
-jest.mock('../../services/objectStorage.js', () => ({ writeHeadingPackObject: jest.fn() }));
+jest.mock('../../services/objectStorage.js', () => ({ writeHeadingPackObject: jest.fn(), readHeadingPackObject: jest.fn() }));
 import { buildBookPack } from './book-pack-builder.js';
 import { getCatalog, getBooksWithMaxChapters } from './service.js';
-import { writeHeadingPackObject } from '../../services/objectStorage.js';
+import { writeHeadingPackObject, readHeadingPackObject } from '../../services/objectStorage.js';
 
 const book = (bookNumber, maxChapter) => ({ bookNumber, bookName: bookNumber === 1 ? 'Genesis' : 'Matthew',
   testament: bookNumber === 1 ? 'Old' : 'New', chaptersCount: maxChapter, maxChapter, totalVerses: 100 });
@@ -10,6 +10,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   getCatalog.mockReturnValue([{ id: 'full', fileId: 'FullBible' }, { id: 'nt', fileId: 'NTBible' }]);
   getBooksWithMaxChapters.mockImplementation(async id => id === 'nt' ? [book(40, 28)] : [book(1, 50), book(40, 28)]);
+  readHeadingPackObject.mockResolvedValue(null);
   writeHeadingPackObject.mockResolvedValue(undefined);
 });
 test('preserves edition availability, names and chapter counts; publishes manifest last', async () => {
@@ -36,4 +37,11 @@ test('failed immutable upload never replaces the manifest', async () => {
   writeHeadingPackObject.mockRejectedValueOnce(new Error('storage unavailable'));
   await expect(buildBookPack()).rejects.toThrow('storage unavailable');
   expect(writeHeadingPackObject).toHaveBeenCalledTimes(1);
+});
+test('reuses an already published immutable catalog without re-uploading it', async () => {
+  readHeadingPackObject.mockResolvedValue({ schemaVersion: 1 });
+  const result = await buildBookPack();
+  expect(result.reused).toBe(true);
+  expect(writeHeadingPackObject).toHaveBeenCalledTimes(1);
+  expect(writeHeadingPackObject.mock.calls[0][0]).toBe('book-packs/manifest.json');
 });

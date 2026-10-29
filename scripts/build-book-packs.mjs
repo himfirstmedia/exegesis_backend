@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 if (process.argv.includes('--help')) {
-  console.log('Usage: npm run build:book-packs (all catalogued editions and localized names; existing .env R2 settings)');
+  console.log('Rebuilds all catalogued editions and localized names using existing .env R2 settings. An already published revision is reused instead of rewritten.');
 } else {
   let cache;
   try {

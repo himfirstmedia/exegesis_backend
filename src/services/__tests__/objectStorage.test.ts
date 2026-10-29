@@ -162,6 +162,15 @@ describe("object storage", () => {
     await expect(readHeadingPackObject('book-overview-packs/books/123456abcdef/../../fr.json')).rejects.toThrow('Invalid heading pack key');
   });
 
+  it('accepts per-language carry records used to reuse unchanged copy across revisions', async () => {
+    setR2Env(true);
+    await writeHeadingPackObject('ui-packs/carry/fr.json', { revision: '123456789abc' });
+    await writeHeadingPackObject('heading-packs/carry/doi.json', { revision: '123456789abc' });
+    expect(s3.__send).toHaveBeenCalledTimes(2);
+    await expect(writeHeadingPackObject('ui-packs/carry/../../secret.json', {})).rejects.toThrow('Invalid heading pack key');
+    await expect(writeHeadingPackObject('heading-packs/carry/toolong.json', {})).rejects.toThrow('Invalid heading pack key');
+  });
+
   it("reports unconfigured without R2 credentials", () => {
     setR2Env(false);
     expect(isObjectStorageConfigured()).toBe(false);

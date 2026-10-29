@@ -8,12 +8,26 @@ export const overviewBooks = Object.keys(BIBLE_BOOK_NAMES.en);
 export const overviewFields = ['author', 'authorDetail', 'audience', 'dateWritten', 'locationWritten',
   'purpose', 'keyTheme', 'summary', 'background', 'lessons', 'chapters', 'structure',
   'applications', 'keyScripture', 'mainThemes', 'keyPeople', 'keyVerses', 'christConnection'];
-// Quotes/references keep their original edition and attribution. Translate commentary, not Scripture.
-export const translatedOverviewFields = ['designation', ...overviewFields.filter(field => !['chapters', 'keyScripture', 'keyVerses'].includes(field))];
+// Chapter counts are numeric. Scripture citations keep their original edition:
+// the reader plan treats reference/bookName/chapter/verse/translation as
+// metadata, so only the quoted verse text and the Key Verses commentary reach a
+// provider. This matches the reader stream and the app's client entry model.
+export const translatedOverviewFields = ['designation', ...overviewFields.filter(field => field !== 'chapters')];
+// The field set used before keyScripture/keyVerses were translated. Saved
+// per-book packs built by that version carry no `fields` marker, so this is only
+// used to top them up without re-translating their already-translated prose.
+export const legacyTranslatedFields = ['designation', ...overviewFields.filter(field => !['chapters', 'keyScripture', 'keyVerses'].includes(field))];
 export const hashOverview = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const overviewPackKey = (revision, language) => `book-overview-packs/${revision}/${language}.json`;
 export const overviewManifestKey = language => `book-overview-packs/manifests/${language}.json`;
 export const overviewBookKey = (revision, language, partial = false) => `book-overview-packs/books/${revision}/${language}${partial ? '-partial' : ''}.json`;
+// Identity of a translated field set, used to tell a resumable partial apart
+// from one built for a different set of fields (their job indexes differ).
+export const overviewFieldSignature = fields => hashOverview([...fields].sort()).slice(0, 12);
+// Per-book storage keys stay keyed to the source revision alone so an older
+// pack's prose can be reused; the published pack revision adds this salt so the
+// app re-downloads when the translated field set changes.
+export const OVERVIEW_REVISION_VERSION = 'overview-v2';
 
 export function validTranslatedOverview(data, source) {
   const sameShape = (value, original) => {
@@ -24,8 +38,11 @@ export function validTranslatedOverview(data, source) {
       Object.entries(original).every(([key, item]) => sameShape(value[key], item));
     return value === original;
   };
+  // The quoted verse text may be translated, but every citation must keep the
+  // original edition's reference exactly as stored.
+  const citations = value => (Array.isArray(value) ? value : []).map(item => (item && typeof item === 'object' ? item.reference ?? null : null));
   return sameShape(data, source) && data.bookName === source.bookName &&
-    ['keyScripture', 'keyVerses'].every(field => JSON.stringify(data[field]) === JSON.stringify(source[field]));
+    JSON.stringify(citations(data.keyScripture)) === JSON.stringify(citations(source.keyScripture));
 }
 
 export function makeOverviewSnapshot(rows) {
@@ -42,7 +59,7 @@ export function makeOverviewSnapshot(rows) {
   const books = Object.fromEntries(overviewBooks.filter(name => sources[name]).map(name => [name, sources[name]]));
   const bookRevisions = Object.fromEntries(Object.entries(books).map(([name, source]) => [name, hashOverview(['overview-v1', source]).slice(0, 12)]));
   const missingBooks = overviewBooks.filter(name => !books[name]);
-  return { revision: hashOverview(['overview-v1', bookRevisions, missingBooks]).slice(0, 12), books, bookRevisions, missingBooks };
+  return { revision: hashOverview([OVERVIEW_REVISION_VERSION, bookRevisions, missingBooks]).slice(0, 12), books, bookRevisions, missingBooks };
 }
 
 export const readOverviewSnapshot = async () => makeOverviewSnapshot(await prisma.bookPrologue.findMany({

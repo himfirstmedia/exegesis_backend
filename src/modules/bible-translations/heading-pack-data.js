@@ -14,6 +14,27 @@ export const headingPackKeys = (language, revision = HEADING_PACK_REVISION) => {
   const base = `heading-packs/bsb-${revision}/${language}`;
   return { final: `${base}.json`, partial: `${base}-partial.json`, manifest: `${base}-manifest.json` };
 };
+// Per-language carry record. It pairs every published source heading with its
+// translation so a new source revision reuses unchanged headings and only sends
+// added or edited ones to the provider.
+export const headingCarryKey = language => `heading-packs/carry/${language}.json`;
+export const validHeadingTranslation = value => typeof value === 'string' && !!value.trim();
+// Every translatable heading in the published source order.
+export const headingTexts = () => Object.values(headingSource).flatMap(chapters =>
+  Object.values(chapters).flatMap(headings => headings.map(item => item.heading)));
+// Translations read back from a complete pack, aligned with headingTexts().
+export const headingTranslationList = pack => Object.entries(headingSource).flatMap(([book, chapters]) =>
+  Object.entries(chapters).flatMap(([chapter, headings]) =>
+    headings.map((_item, index) => pack?.books?.[book]?.[chapter]?.[index]?.heading)));
+export const headingTranslationMap = carry => {
+  const map = new Map();
+  if (!Array.isArray(carry?.texts) || !Array.isArray(carry.translations)) return map;
+  carry.texts.forEach((text, index) => {
+    const value = carry.translations[index];
+    if (!map.has(text) && typeof text === 'string' && text.trim() && validHeadingTranslation(value)) map.set(text, value);
+  });
+  return map;
+};
 export const makeHeadingPack = (language, books) => ({ headingSet: 'bsb', revision: HEADING_PACK_REVISION, language, books });
 
 export const isCompleteHeadingBook = (book, chapters) =>

@@ -120,7 +120,7 @@ const getClient = () => {
 // packs are advertised through the public CDN; checkpoints are never linked.
 const assertHeadingPackKey = (key) => {
   if (/^number-packs\/(?:manifests\/[a-z]{2,3}|[a-f0-9]{12}\/[a-z]{2,3})\.json$/.test(key)) return;
-  if (!/^(?:(?:heading-packs\/bsb-|ui-packs\/app-)[a-f0-9]{12}\/[a-z]{2,3}(?:-[A-Za-z]{2,4})?(?:-(?:partial|manifest))?\.json|book-packs\/(?:manifest\.json|[a-f0-9]{12}\/catalog\.json)|book-overview-packs\/(?:manifests\/[a-z]{2,3}|[a-f0-9]{12}\/[a-z]{2,3}|books\/[a-f0-9]{12}\/[a-z]{2,3}(?:-partial)?)\.json)$/.test(key)) {
+  if (!/^(?:(?:heading-packs\/bsb-|ui-packs\/app-)[a-f0-9]{12}\/[a-z]{2,3}(?:-[A-Za-z]{2,4})?(?:-(?:partial|manifest))?\.json|(?:heading-packs|ui-packs)\/carry\/[a-z]{2,3}\.json|book-packs\/(?:manifest\.json|[a-f0-9]{12}\/catalog\.json)|book-overview-packs\/(?:manifests\/[a-z]{2,3}|[a-f0-9]{12}\/[a-z]{2,3}|books\/[a-f0-9]{12}\/[a-z]{2,3}(?:-partial)?)\.json)$/.test(key)) {
     throw new Error("Invalid heading pack key");
   }
 };

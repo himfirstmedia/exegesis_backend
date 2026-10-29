@@ -7,7 +7,8 @@ import { recoverOverviewTranslation } from './pack-recovery.js';
 import { overviewTranslationIssue } from './pack-translation.js';
 import { localizeBookNames } from '../../utils/localizedBookNames.js';
 import { overviewLanguages, overviewPackKey, overviewManifestKey, overviewBookKey,
-  translatedOverviewFields, readOverviewSnapshot, completeOverviewPack, hashOverview, validTranslatedOverview } from './pack-data.js';
+  translatedOverviewFields, legacyTranslatedFields, overviewFieldSignature,
+  readOverviewSnapshot, completeOverviewPack, hashOverview, validTranslatedOverview } from './pack-data.js';
 
 export function overviewFailureReason(error) {
   if (error?.code === 'FREE_PROVIDER_COOLDOWN') return 'PROVIDER_COOLDOWN';
@@ -58,15 +59,26 @@ export async function buildOverviewPack(language, options = {}) {
         const bookRevision = snapshot.bookRevisions[bookName];
         const bookKey = overviewBookKey(bookRevision, language);
         const saved = language === 'en' ? null : await readHeadingPackObject(bookKey);
-        const plan = buildReaderPlan(source, translatedOverviewFields, [], { chunkCharacters: 1500 });
-        if (saved?.complete === true && saved.revision === bookRevision && saved.language === language && validTranslatedOverview(saved.data, source)) {
-          books[bookName] = saved.data;
-        } else if (language === 'en') {
+        // Trust a saved translation only when it came from this exact source and
+        // still has the right shape. A pack written before the `fields` marker
+        // is assumed to cover the legacy field set, so a field-set change (such
+        // as adding keyScripture/keyVerses) tops up only the new fields instead
+        // of re-translating the whole book.
+        const trusted = saved?.complete === true && saved.revision === bookRevision && saved.language === language &&
+          validTranslatedOverview(saved.data, source) ? saved : null;
+        const savedFields = trusted ? (Array.isArray(trusted.fields) ? trusted.fields : legacyTranslatedFields) : [];
+        const missingFields = translatedOverviewFields.filter(field => !savedFields.includes(field));
+        if (language === 'en') {
           books[bookName] = source;
+        } else if (trusted && !missingFields.length) {
+          books[bookName] = trusted.data;
         } else {
+          const plan = buildReaderPlan(source, missingFields, [], { chunkCharacters: 1500 });
+          const signature = overviewFieldSignature(missingFields);
           const partialKey = overviewBookKey(bookRevision, language, true);
           const partial = await readHeadingPackObject(partialKey);
-          const values = partial?.revision === bookRevision && partial.language === language && Array.isArray(partial.values) ? [...partial.values] : [];
+          const values = partial?.revision === bookRevision && partial.language === language &&
+            partial.fields === signature && Array.isArray(partial.values) ? [...partial.values] : [];
           const rejections = new Map();
           const valid = (index, value) => overviewTranslationIssue(plan.jobs[index], value, source, language) === null;
           for (let start = 0; start < plan.jobs.length;) {
@@ -88,7 +100,7 @@ export async function buildOverviewPack(language, options = {}) {
               else rejections.set(indexes[i], overviewTranslationIssue(plan.jobs[indexes[i]], value, source, language));
             }
             check();
-            await writeHeadingPackObject(partialKey, { revision: bookRevision, language, values });
+            await writeHeadingPackObject(partialKey, { revision: bookRevision, language, fields: signature, values });
             options.onProgress?.({ language, bookName, completed: plan.jobs.filter((_job, index) => valid(index, values[index])).length, total: plan.jobs.length });
           }
           for (let index = 0; index < plan.jobs.length; index++) {
@@ -104,7 +116,7 @@ export async function buildOverviewPack(language, options = {}) {
             check();
             if (valid(index, value)) {
               values[index] = value;
-              await writeHeadingPackObject(partialKey, { revision: bookRevision, language, values });
+              await writeHeadingPackObject(partialKey, { revision: bookRevision, language, fields: signature, values });
               options.onProgress?.({ language, bookName, completed: plan.jobs.filter((_job, i) => valid(i, values[i])).length, total: plan.jobs.length });
             } else options.onWarning?.({ ...detail, reason: rejections.get(index) || overviewTranslationIssue(job, value, source, language) });
           }
@@ -112,8 +124,10 @@ export async function buildOverviewPack(language, options = {}) {
             incompleteBooks.push(bookName);
             continue; // Finish/cache other books instead of failing at a new book on every rerun.
           }
-          books[bookName] = { ...source, ...plan.render(values) };
-          await writeHeadingPackObject(bookKey, { complete: true, revision: bookRevision, language, data: books[bookName] }, { compress: true });
+          const translated = plan.render(values);
+          books[bookName] = trusted ? { ...trusted.data, ...translated } : { ...source, ...translated };
+          await writeHeadingPackObject(bookKey, { complete: true, revision: bookRevision, language,
+            fields: translatedOverviewFields, data: books[bookName] }, { compress: true });
         }
       }
       if (incompleteBooks.length) throw new Error(`Incomplete overview translation: ${incompleteBooks.join(', ')} (${language}); checkpoints retained`);

@@ -4,7 +4,7 @@ import { getGoogleTranslateMode, translateWithGoogle } from './google-translate.
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
   console.log('Usage: npm run build:heading-packs -- [--languages en,fr,sw | --all] [--concurrency 2]');
-  console.log('Pre-generates and publishes complete packs. Existing packs/checkpoints are reused. Default: all languages, concurrency 2.');
+  console.log('Pre-generates and publishes complete packs. Existing packs/checkpoints are reused, and unchanged headings are carried across revisions so only new or edited headings are translated. Default: all languages, concurrency 2.');
 } else {
   let cache;
   try {
