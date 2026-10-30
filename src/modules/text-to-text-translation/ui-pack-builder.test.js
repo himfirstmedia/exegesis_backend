@@ -37,6 +37,18 @@ test('English needs no provider', async () => {
   await buildUiPack('en');
   expect(translateBatch).not.toHaveBeenCalled();
 });
+test('authored local-script brand labels override unchanged provider and carry values', async () => {
+  const carry = { texts: ['Google', 'LordsBook'], translations: ['Google', 'LordsBook'] };
+  await buildUiPack('doi', () => {}, { carry });
+  const pack = writeUiPackObject.mock.calls.find(([key]) => key === uiPackKeys('doi').final)[1];
+  expect(pack.translations[uiSource.texts.indexOf('Google')]).toBe('गूगल');
+  expect(pack.translations[uiSource.texts.indexOf('LordsBook')]).toBe('लॉर्ड्सबुक');
+});
+test.each([
+  ['ja', 'グーグル'], ['ko', '구글'], ['uk', 'Ґуґл'],
+])('keeps the corrected %s Google label in the generated catalogue', (language, expected) => {
+  expect(uiSource.overrides[language].Google).toBe(expected);
+});
 test('resumes valid checkpoint translations and rejects the wrong language', async () => {
   const checkpoint = fixture('fr'); checkpoint.translations[0] = '';
   readUiPackObject.mockImplementation(async key => key.endsWith('-partial.json') ? checkpoint : null);

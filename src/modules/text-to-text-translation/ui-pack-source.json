@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "13596b889ed3",
+  "revision": "7a1743ebcffe",
   "texts": [
     "#faith #prayer #study",
     "(Cannot change your own role)",
@@ -193,6 +193,8 @@
     "Amen",
     "American Standard Version",
     "Amos",
+    "Amplified Bible",
+    "Amplified Bible Classic Edition",
     "An error occurred loading favorites",
     "An error occurred while updating information,",
     "An error occurred. Please try again.",
@@ -221,6 +223,7 @@
     "Approve",
     "April",
     "Arabic",
+    "Arabic Bible — SVD 1865",
     "Aramaic",
     "Are you sure you want to delete \"{name}\" from your reading history?",
     "Are you sure you want to delete \"{title}\"?",
@@ -239,6 +242,7 @@
     "As you study, save insights, prayers, and applications to your Legacy Ledger.",
     "Ask what you should believe, obey, confess, pray, or save into your Legacy Ledger.",
     "Assamese",
+    "Assamese Bible — Indian Revised Version",
     "Assign chapters and questions per day",
     "Assignment not found",
     "At least 1 day required",
@@ -292,6 +296,7 @@
     "Begin {selectedLabel} Reading",
     "Beginner",
     "Bengali",
+    "Bengali Bible — Indian Revised Version",
     "Berean",
     "Berean Standard Bible",
     "Bibical Deep Dives",
@@ -411,6 +416,7 @@
     "Checking...",
     "Child",
     "Chinese",
+    "Chinese Bible — Union Version 1919",
     "Choose Your Passage",
     "Choose a book above to explore its original-language words.",
     "Choose a color to mark this verse",
@@ -427,6 +433,7 @@
     "Christ Connection",
     "Christ as the fulfillment of God's promise",
     "Christ-Centered Connection",
+    "Christian Standard Bible",
     "Clear",
     "Clear & Try Again",
     "Clear filters",
@@ -680,6 +687,7 @@
     "Do you want to replace your current profile photo with a new one?",
     "Do you want to start \"{title}\"? This will set your daily reading schedule and track your progress.",
     "Dogri",
+    "Dogri New Testament",
     "Don't worry, keep studying and try again.",
     "Done",
     "Double digits and going strong!",
@@ -704,6 +712,7 @@
     "EXPLANATION",
     "Ear",
     "Easy",
+    "Easy-to-Read Version",
     "Ecclesiastes",
     "Edge Neural",
     "Edge Neural (back-end)",
@@ -755,6 +764,7 @@
     "End Date",
     "End date",
     "English",
+    "English Revised Version",
     "English Standard Version",
     "Enhanced",
     "Enrolled",
@@ -1020,6 +1030,7 @@
     "Free Translations Only",
     "Free versions",
     "French",
+    "French Bible — Louis Segond 1910",
     "Fri",
     "Friend",
     "From",
@@ -1039,6 +1050,7 @@
     "Geography information for {bookName} will be available in a future update.",
     "Georgia",
     "German",
+    "German Bible — Luther 1912",
     "Get All Reading Plans response:",
     "Get Started",
     "Get User Plans response:",
@@ -1050,12 +1062,14 @@
     "Go to Profile → Notifications. Toggle “Daily Verse” and pick the time you would like to receive it.",
     "Go to Verse",
     "God expects prompt obedience to clear direction.",
+    "God's Word",
     "God's plans for you are good.",
     "Good",
     "Good Afternoon,",
     "Good Effort!",
     "Good Evening,",
     "Good Morning,",
+    "Good News Translation",
     "Good Start!",
     "Good afternoon",
     "Good evening",
@@ -1083,6 +1097,7 @@
     "GuestEntry",
     "Guided observations",
     "Gujarati",
+    "Gujarati Bible — Indian Revised Version",
     "H7225, G26, G2889",
     "HOME",
     "Habakkuk",
@@ -1116,10 +1131,12 @@
     "Highlights are saved to your account. Sign in to use this feature.",
     "Highlights require a free account.",
     "Hindi",
+    "Hindi Bible",
     "Historical Context",
     "Historical and cultural insights.",
     "History",
     "History Items",
+    "Holman Christian Standard Bible",
     "Holy Bible",
     "Home",
     "HomeLogin",
@@ -1184,6 +1201,7 @@
     "Incorrect",
     "Incorrect Answer",
     "Indonesian",
+    "Indonesian Bible — Terjemahan Baru",
     "Information updated successfully",
     "Information updated: ",
     "Insights and Cross References",
@@ -1201,6 +1219,7 @@
     "Invalid verification code",
     "Isaiah",
     "Italian",
+    "Italian Bible — CEI 1974",
     "Italiano",
     "JOURNAL",
     "JOURNAL ADMIN",
@@ -1208,6 +1227,7 @@
     "James",
     "January",
     "Japanese",
+    "Japanese Bible — Colloquial 1955",
     "Jeremiah",
     "Jewish exiles in Babylon",
     "Job",
@@ -1241,6 +1261,7 @@
     "Just now",
     "KJV",
     "Kannada",
+    "Kannada Bible — Indian Revised Version",
     "Keep",
     "Keep Going!",
     "Keep It",
@@ -1264,7 +1285,9 @@
     "Kiswahili",
     "Knowledge Check",
     "Konkani",
+    "Konkani New Testament",
     "Korean",
+    "Korean Bible — Revised Version 1961",
     "Kutsal Kitap",
     "LAB",
     "LEGACY LEDGER",
@@ -1301,6 +1324,7 @@
     "Legacy Ledger",
     "Legacy Sower",
     "Legacy Sowers",
+    "Legacy Standard Bible",
     "Legacy badge",
     "Legacy tools support the work.",
     "LegacyLedger",
@@ -1380,8 +1404,10 @@
     "Main Themes",
     "Main Themes (one per line)",
     "Maithili",
+    "Maithili Bible 2010",
     "Malachi",
     "Malayalam",
+    "Malayalam Bible — Indian Revised Version",
     "Male",
     "Manage",
     "Manage Users",
@@ -1392,6 +1418,7 @@
     "Manage reminders",
     "Manage templates",
     "Marathi",
+    "Marathi Bible — Indian Revised Version",
     "March",
     "Marital Status",
     "Mark",
@@ -1415,6 +1442,7 @@
     "Meditate on this word today.\nLet it guide your thoughts and actions.",
     "Medium",
     "Meitei (Manipuri)",
+    "Meitei New Testament 2022",
     "Member",
     "Member since",
     "Members",
@@ -1435,6 +1463,8 @@
     "Missing:",
     "Mixed levels",
     "Mode",
+    "Modern English Version",
+    "Modern Greek Bible 1904",
     "Mon",
     "Month",
     "Monthly",
@@ -1457,6 +1487,7 @@
     "NARRATOR VOICE",
     "NASB",
     "NAVIGATION",
+    "NET Bible",
     "NEW PASSWORD",
     "NFD",
     "NFKC",
@@ -1475,6 +1506,7 @@
     "Need help?",
     "Nehemiah",
     "Nepali",
+    "Nepali Bible — New Revised Version 2012",
     "Network error",
     "Network error. Please check your connection and try again.",
     "Neural",
@@ -1482,10 +1514,14 @@
     "Never",
     "New",
     "New American Standard Bible",
+    "New American Standard Update",
+    "New International Reader's Version",
     "New International Version",
     "New Journal",
+    "New Living Translation",
     "New Password",
     "New Prompt",
+    "New Revised Standard Version",
     "New Testament",
     "New Tier",
     "New attachment. Tap to view it.",
@@ -1664,6 +1700,7 @@
     "Observe the passage carefully",
     "October",
     "Odia",
+    "Odia Bible — Indian Revised Version 2017",
     "Off to a solid beginning!",
     "Offline",
     "Offline - saved locally, syncs when connected",
@@ -1842,10 +1879,12 @@
     "Please write your reflection before continuing.",
     "Please write your study notes before continuing.",
     "Polish",
+    "Polish Bible — Gdansk",
     "Polski",
     "Ponder",
     "Popular",
     "Portuguese",
+    "Portuguese Bible — Almeida 1993",
     "Practical Applications",
     "Practical application",
     "Practice makes progress!",
@@ -1901,6 +1940,7 @@
     "Publishing",
     "Pull down to refresh the Sower page or sign out and back in — access usually updates within a minute. If it is still locked, message us with the Subscription category and the email used at checkout.",
     "Punjabi",
+    "Punjabi Bible — Indian Revised Version",
     "Purpose",
     "Put the passage into practice",
     "Q",
@@ -2056,6 +2096,7 @@
     "Review mode — tap a dot to jump, or tap an option to retry",
     "Review your reflection and prayer.",
     "Review your study notes and original-language words.",
+    "Revised Standard Version",
     "Revisit",
     "Rich Daily Verse Content",
     "Rich Devotion Content",
@@ -2063,8 +2104,10 @@
     "Role & Status",
     "Role Distribution",
     "Romanian",
+    "Romanian Bible — Cornilescu 1928",
     "Romans",
     "Russian",
+    "Russian Bible — Synodal 1876",
     "Ruth",
     "SELECTED VERSES",
     "SELECTION",
@@ -2078,8 +2121,10 @@
     "Sacra Bibbia",
     "Sainte Bible",
     "Sanskrit",
+    "Sanskrit New Testament",
     "Santa Biblia",
     "Santali",
+    "Santali Bible — Common Language",
     "Sat",
     "Save",
     "Save & Continue to Abide",
@@ -2264,6 +2309,7 @@
     "Sign out if you are still signed in, then tap “Forgot password”.",
     "Signed in",
     "Sindhi",
+    "Sindhi Bible — Muslim Script",
     "Single",
     "Single Book",
     "Sixteenth",
@@ -2295,6 +2341,7 @@
     "Sower subscription",
     "Sower tiers, billing or access expiring",
     "Spanish",
+    "Spanish Bible — Reina-Valera 1909",
     "Special character",
     "Speed reset: Using device default speed.",
     "Speed, pitch, narrator voice",
@@ -2417,6 +2464,7 @@
     "SupportThread",
     "Suspend",
     "Suspended",
+    "Swahili Bible",
     "Switch",
     "Switch appearance",
     "Switch to a brighter theme",
@@ -2433,6 +2481,7 @@
     "TOOLS",
     "TXT",
     "Tagalog",
+    "Tagalog Bible — Ang Biblia",
     "Tags",
     "Tags:",
     "Take a moment to meditate on these questions as you read today's scripture.",
@@ -2440,6 +2489,7 @@
     "Take a new photo or choose one from your device.",
     "Takeaways",
     "Tamil",
+    "Tamil Bible — Indian Revised Version",
     "Tap + to add the first question.",
     "Tap + to add your first devotion",
     "Tap + to publish the first Lordsbook teaching.",
@@ -2461,6 +2511,7 @@
     "Teaching Body *",
     "Tell us more",
     "Telugu",
+    "Telugu Bible — BSI 1880",
     "Template Name",
     "Template created",
     "Template deleted",
@@ -2476,6 +2527,7 @@
     "The 5-Step Journey",
     "The Exegesis name, design, software and original study content are owned by us or our licensors and are protected by intellectual-property laws. These Terms do not grant you any right to use our branding without written permission.",
     "The Love of God Revealed",
+    "The Passion Translation",
     "The Word remains free.",
     "The app closes when I open a chapter.",
     "The exiled Jews in Babylon",
@@ -2585,8 +2637,10 @@
     "Try toggling your device's internet connection to see the switch in action.",
     "Tue",
     "Turkish",
+    "Turkish Bible — Yorumsuz Türkçe Çeviri",
     "Twelfth",
     "Twentieth",
+    "Tyndale Bible",
     "Type",
     "Type DELETE to confirm",
     "Type at least 3 characters to search",
@@ -2595,6 +2649,7 @@
     "USERS",
     "UTC",
     "Ukrainian",
+    "Ukrainian Bible 1871",
     "Unable to load study",
     "Understand the author and original audience",
     "Understand the context",
@@ -2633,6 +2688,7 @@
     "Uploading...",
     "Uppercase letter",
     "Urdu",
+    "Urdu Bible — Indian Revised Version",
     "Use",
     "Use a different account",
     "Use cross-references and commentaries",
@@ -2896,6 +2952,7 @@
     "You're here",
     "You've answered every available question. Come back later for more!",
     "You: ",
+    "Young's Literal Translation",
     "Your Biblical Companion",
     "Your Challenge",
     "Your Lab Studies",
@@ -3256,5 +3313,163 @@
     "📅 Time for Your Daily Bible Reading",
     "📖 Still time to read today!",
     "🔥 Don't break your {count}-day streak!"
-  ]
+  ],
+  "overrides": {
+    "ar": {
+      "Google": "جوجل",
+      "LordsBook": "لوردسبوك"
+    },
+    "as": {
+      "Google": "গুগল",
+      "LordsBook": "লৰ্ডছবুক"
+    },
+    "bn": {
+      "Google": "গুগল",
+      "LordsBook": "লর্ডসবুক"
+    },
+    "de": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "doi": {
+      "Google": "गूगल",
+      "LordsBook": "लॉर्ड्सबुक"
+    },
+    "el": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "en": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "es": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "fil": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "fr": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "gu": {
+      "Google": "ગૂગલ",
+      "LordsBook": "લોર્ડ્સબુક"
+    },
+    "hi": {
+      "Google": "गूगल",
+      "LordsBook": "लॉर्ड्सबुक"
+    },
+    "id": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "it": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "ja": {
+      "Google": "グーグル",
+      "LordsBook": "ロードスブック"
+    },
+    "kn": {
+      "Google": "ಗೂಗಲ್",
+      "LordsBook": "ಲಾರ್ಡ್ಸ್ಬುಕ್"
+    },
+    "ko": {
+      "Google": "구글",
+      "LordsBook": "로즈북"
+    },
+    "kok": {
+      "Google": "गुगल",
+      "LordsBook": "लॉर्ड्सबुक"
+    },
+    "mai": {
+      "Google": "गूगल",
+      "LordsBook": "लॉर्ड्सबुक"
+    },
+    "ml": {
+      "Google": "ഗൂഗിൾ",
+      "LordsBook": "ലോർഡ്സ്ബുക്ക്"
+    },
+    "mni": {
+      "Google": "ꯒꯨꯒꯜ",
+      "LordsBook": "ꯂꯔꯗꯁꯕꯨꯛ꯫"
+    },
+    "mr": {
+      "Google": "गूगल",
+      "LordsBook": "लॉर्ड्सबुक"
+    },
+    "ne": {
+      "Google": "गूगल",
+      "LordsBook": "लर्ड्सबुक"
+    },
+    "or": {
+      "Google": "ଗୁଗୁଲ୍",
+      "LordsBook": "ଲର୍ଡସ୍ ବୁକ୍"
+    },
+    "pa": {
+      "Google": "ਗੂਗਲ",
+      "LordsBook": "ਲੌਰਡਸਬੁੱਕ"
+    },
+    "pl": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "pt": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "ro": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "ru": {
+      "Google": "Google",
+      "LordsBook": "Лордсбук"
+    },
+    "sa": {
+      "Google": "गूगल",
+      "LordsBook": "लॉर्ड्सबुक"
+    },
+    "sat": {
+      "Google": "ᱜᱩᱜᱚᱞ",
+      "LordsBook": "ᱞᱚᱨᱰᱥᱵᱩᱠ"
+    },
+    "sd": {
+      "Google": "گوگل",
+      "LordsBook": "لارڊس بڪ"
+    },
+    "sw": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "ta": {
+      "Google": "கூகிள்",
+      "LordsBook": "லார்ட்ஸ்புக்"
+    },
+    "te": {
+      "Google": "గూగుల్",
+      "LordsBook": "లార్డ్స్బుక్"
+    },
+    "tr": {
+      "Google": "Google",
+      "LordsBook": "LordsBook"
+    },
+    "uk": {
+      "Google": "Ґуґл",
+      "LordsBook": "Лордсбук"
+    },
+    "ur": {
+      "Google": "گوگل",
+      "LordsBook": "لارڈز بک"
+    },
+    "zh": {
+      "Google": "Google",
+      "LordsBook": "Lordsbook"
+    }
+  }
 }

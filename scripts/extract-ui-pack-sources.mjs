@@ -102,8 +102,24 @@ for (const document of [TERMS_OF_SERVICE, PRIVACY_POLICY]) {
   }
 }
 const texts = [...sources].sort();
-const revision = createHash('sha256').update(`ui-v1:${JSON.stringify(texts)}`).digest('hex').slice(0, 12);
-const catalog = JSON.stringify({ schemaVersion: 1, revision, texts }, null, 2) + '\n';
+// Brand labels have authored local-script spellings. Providers often return
+// "Google" unchanged, overriding those spellings in otherwise localized UI.
+// Carry these explicit authored choices into the offline pack, not a runtime
+// translation exception. Include them in the revision to invalidate old packs.
+const overrides = {};
+for (const name of fs.readdirSync(localeRoot).sort()) {
+  if (!/^[a-z]{2,3}\.json$/.test(name)) continue;
+  const language = name.slice(0, -5);
+  const locale = JSON.parse(fs.readFileSync(path.join(localeRoot, name), 'utf8'));
+  const labels = {};
+  for (const [source, key] of [['Google', 'google'], ['LordsBook', 'lordsbook']]) {
+    const value = locale.login?.[key];
+    if (typeof value === 'string' && value.trim()) labels[source] = value;
+  }
+  if (Object.keys(labels).length) overrides[language] = labels;
+}
+const revision = createHash('sha256').update(`ui-v2:${JSON.stringify({ texts, overrides })}`).digest('hex').slice(0, 12);
+const catalog = JSON.stringify({ schemaVersion: 1, revision, texts, overrides }, null, 2) + '\n';
 const targets = [path.join(app, 'services/translation/ui-pack-source.json'), path.join(root, 'backend/src/modules/text-to-text-translation/ui-pack-source.json')];
 if (process.argv.includes('--check')) {
   if (targets.some(file => !fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== catalog)) {

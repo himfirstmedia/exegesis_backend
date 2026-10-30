@@ -42,6 +42,12 @@ export async function buildUiPack(language, onProgress = () => {}, options = {})
         if (validUiText(text, value)) translations[index] = value;
       });
     }
+    // Authored brand spellings take precedence over both machine output and
+    // previous-revision carry records. Never apply them to arbitrary content.
+    const overrides = uiSource.overrides?.[language] || {};
+    uiSource.texts.forEach((text, index) => {
+      if (validUiText(text, overrides[text])) translations[index] = overrides[text];
+    });
     const pack = { schemaVersion: 1, revision: uiSource.revision, language, translations };
     const failures = [];
     for (let start = 0; start < uiSource.texts.length;) {
