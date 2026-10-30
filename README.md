@@ -24,13 +24,21 @@ local configuration or deployment secrets, never in Git or Docker images.
 ## Development
 
 Configure a local ignored `.env` using `.env.example` and provision the database
-and required content. From this directory:
+and required content. Use Node.js 22 LTS (22.12 or later); Docker and CI use
+Node 22 too. From this directory:
 
 ```bash
+nvm install
+nvm use
 npm install
 npx prisma generate
 npm run dev
 ```
+
+After switching Node versions, stop the old development server and run
+`npm run dev` again. An already-running Node 20/nodemon process keeps its old
+runtime even after a new terminal switches to Node 22. Production needs a
+redeploy to rebuild the updated Docker image.
 
 Tests: `npm test`. The production `npm start` script runs
 `prisma migrate deploy` (never `prisma db push`) before starting the service.

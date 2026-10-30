@@ -21,6 +21,7 @@ jest.mock("../../config/db.js", () => ({
     },
     pushSetting: {
       upsert: jest.fn(),
+      update: jest.fn(),
       findMany: jest.fn(),
     },
     dailyVerse: {},
@@ -173,13 +174,26 @@ describe("push settings", () => {
     expect(prisma.pushSetting.upsert).toHaveBeenCalledWith({
       where: { userId: "user-1" },
       create: { userId: "user-1", timezone: "Europe/Paris" },
-      update: {},
+      update: { userId: "user-1" },
     });
   });
 
   test("registerToken ignores an invalid timezone", async () => {
     await registerToken("user-1", "token-abc", "web", "Not/AZone");
     expect(prisma.pushSetting.upsert).not.toHaveBeenCalled();
+  });
+
+  test("retains the uniqueness-race retry without changing saved preferences", async () => {
+    prisma.pushSetting.upsert.mockRejectedValueOnce({ code: 'P2002' });
+    prisma.pushSetting.update.mockResolvedValueOnce({ userId: 'user-1', timezone: 'Africa/Nairobi' });
+    await expect(registerToken('user-1', 'token-abc', 'android', 'Europe/Paris')).resolves.toBeUndefined();
+    expect(prisma.pushSetting.update).toHaveBeenCalledWith({ where: { userId: 'user-1' }, data: {} });
+  });
+
+  test("does not hide other database failures", async () => {
+    prisma.pushSetting.upsert.mockRejectedValueOnce({ code: 'P1001' });
+    await expect(registerToken('user-1', 'token-abc', 'android', 'UTC')).rejects.toMatchObject({ code: 'P1001' });
+    expect(prisma.pushSetting.update).not.toHaveBeenCalled();
   });
 
   test("updateSettings rejects an invalid timezone with a 400", async () => {
@@ -199,7 +213,7 @@ describe("push settings", () => {
     expect(prisma.pushSetting.upsert).toHaveBeenCalledWith({
       where: { userId: "user-1" },
       create: { userId: "user-1", dailyVerseReminder: true, timezone: "UTC" },
-      update: { dailyVerseReminder: true, timezone: "UTC" },
+      update: { userId: "user-1", dailyVerseReminder: true, timezone: "UTC" },
     });
   });
 });

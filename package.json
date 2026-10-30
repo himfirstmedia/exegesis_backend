@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "test": "jest --runInBand",
     "check:bible-licenses": "node scripts/check-bible-licenses.mjs",

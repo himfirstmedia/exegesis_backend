@@ -108,17 +108,17 @@ function initFirebaseAdmin() {
 // ── Token registry ───────────────────────────────────────────────────────────
 
 /**
- * Prisma's upsert is not atomic at the database level. Two concurrent
- * register-token calls for the same user can both see "no row" and then race
- * to insert, producing P2002 on the push_settings primary key. Retry the
- * losing request as a plain update so registration stays idempotent.
+ * Empty updates prevent Prisma from delegating this upsert to PostgreSQL.
+ * Assigning the same primary key is a harmless non-empty update that permits
+ * INSERT ON CONFLICT, without replacing any existing reminder preferences.
+ * Retain the P2002 retry for deployments where Prisma still emulates upsert.
  */
 const upsertPushSetting = async ({ userId, create, update }) => {
   try {
     return await prisma.pushSetting.upsert({
       where: { userId },
       create,
-      update,
+      update: { userId, ...update },
     });
   } catch (error) {
     if (error?.code !== "P2002") throw error;
