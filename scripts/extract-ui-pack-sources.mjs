@@ -26,15 +26,32 @@ for (const name of fs.readdirSync(bundles)) {
 // ("answer", "accuracy") and placeholder-led templates ("{count} in a row").
 // They are consumed through the static-copy hook, so every literal value must be
 // in the pack or the screen falls back to English. Detect only the value side of
-// a `*_COPY` object so keys, codes and style maps stay out.
+// a `*_COPY` container (object values or array elements) so keys, codes and
+// style maps stay out. Support splits its copy across `sharedCopy`, `inboxCopy`,
+// `helpCopy`, ... arrays, whose brace- or digit-led entries the sentence
+// heuristic skips.
 const isCopyConstantValue = node => {
-  const property = node.parent;
-  if (!ts.isPropertyAssignment(property) || property.initializer !== node) return false;
-  const object = property.parent;
-  if (!ts.isObjectLiteralExpression(object)) return false;
-  let declaration = object.parent;
+  const container = node.parent;
+  let literal;
+  if (ts.isPropertyAssignment(container) && container.initializer === node) {
+    literal = container.parent;
+  } else if (ts.isArrayLiteralExpression(container)) {
+    literal = container;
+  } else {
+    return false;
+  }
+  if (!ts.isObjectLiteralExpression(literal) && !ts.isArrayLiteralExpression(literal)) return false;
+  let declaration = literal.parent;
   while (ts.isAsExpression(declaration) || ts.isParenthesizedExpression(declaration)) declaration = declaration.parent;
   return ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name) && /_?COP(?:Y|IES)$/i.test(declaration.name.text);
+};
+// Support FAQ `keywords` are localized search aliases rendered by the support
+// translator, so their lowercase tokens must also be in the pack.
+const isKeywordValue = node => {
+  const array = node.parent;
+  if (!ts.isArrayLiteralExpression(array)) return false;
+  const property = array.parent;
+  return ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === 'keywords';
 };
 const scan = dir => {
   for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -52,6 +69,7 @@ const scan = dir => {
         const parent = node.parent;
         if (ts.isCallExpression(parent) && /^(?:t|text|tt|useTranslation)$/.test(parent.expression.getText(parsed)) && parent.arguments[0] === node) add(value);
         if (isCopyConstantValue(node)) add(value);
+        if (isKeywordValue(node)) add(value);
       }
       ts.forEachChild(node, visit);
     };
