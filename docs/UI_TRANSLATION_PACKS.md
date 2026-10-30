@@ -50,7 +50,10 @@ npm run build:ui-packs -- --languages en,fr,sw --concurrency 2
 The extractor merges the global English JSON, every screen's English JSON,
 and authored UI string candidates in screens/hooks/components/constants. It
 does not execute app code or scan `.env`, downloaded content, assets, services,
-tests or credentials. It writes identical source catalogues to the app and
+tests or credentials. Authored copy constants (`BASE_COPY`, `EXTRA_COPY`,
+`SOWER_COPY`, …) contribute every value literal so short labels and
+placeholder-led templates (e.g. `{count} in a row`) are pack-complete even when
+they do not look like sentences. It writes identical source catalogues to the app and
 backend, with a content-derived revision. Commit both generated files and
 release them together. CI can run `check:ui-packs` to catch stale catalogues.
 

@@ -21,6 +21,21 @@ for (const name of fs.readdirSync(bundles)) {
   const file = path.join(bundles, name, 'en.json');
   if (fs.existsSync(file)) walkValues(JSON.parse(fs.readFileSync(file, 'utf8')));
 }
+// Authored copy constants (`BASE_COPY`, `EXTRA_COPY`, `SOWER_COPY`, …) hold
+// user-facing strings the generic sentence heuristic misses: short labels
+// ("answer", "accuracy") and placeholder-led templates ("{count} in a row").
+// They are consumed through the static-copy hook, so every literal value must be
+// in the pack or the screen falls back to English. Detect only the value side of
+// a `*_COPY` object so keys, codes and style maps stay out.
+const isCopyConstantValue = node => {
+  const property = node.parent;
+  if (!ts.isPropertyAssignment(property) || property.initializer !== node) return false;
+  const object = property.parent;
+  if (!ts.isObjectLiteralExpression(object)) return false;
+  let declaration = object.parent;
+  while (ts.isAsExpression(declaration) || ts.isParenthesizedExpression(declaration)) declaration = declaration.parent;
+  return ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name) && /_?COP(?:Y|IES)$/i.test(declaration.name.text);
+};
 const scan = dir => {
   for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
     const file = path.join(dir, item.name);
@@ -36,6 +51,7 @@ const scan = dir => {
         if (/^[A-Z][A-Za-z]*(?:[ .!?…:,]|$)/.test(value) && !/https?:|#[0-9a-f]{3,8}\b|^(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i.test(value) && !/^(?:\.\.?\/|\/|\\)/.test(value) && value.length < 10000) add(value);
         const parent = node.parent;
         if (ts.isCallExpression(parent) && /^(?:t|text|tt|useTranslation)$/.test(parent.expression.getText(parsed)) && parent.arguments[0] === node) add(value);
+        if (isCopyConstantValue(node)) add(value);
       }
       ts.forEachChild(node, visit);
     };
