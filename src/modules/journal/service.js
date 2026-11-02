@@ -710,7 +710,16 @@ export const deleteJournalTemplate = async (data) => {
 };
 
 export const getUserJournalEntriesForAdmin = async (data, adminId) => {
-  const { userId, search, category, page = 1, pageSize = 20, all = false, lang } = data;
+  const {
+    userId,
+    search,
+    category,
+    page = 1,
+    pageSize = 20,
+    all = false,
+    lang,
+    isPublished,
+  } = data;
 
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = all ? undefined : Math.min(parseInt(pageSize) || 20, 50);
@@ -725,6 +734,7 @@ export const getUserJournalEntriesForAdmin = async (data, adminId) => {
     ];
   }
   if (category) whereClause.category = category;
+  if (typeof isPublished === "boolean") whereClause.isPublished = isPublished;
 
   const [entries, totalCount] = await Promise.all([
     prisma.journalEntry.findMany({

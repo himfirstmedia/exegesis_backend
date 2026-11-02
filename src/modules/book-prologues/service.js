@@ -206,7 +206,14 @@ export const getAllBookPrologues = async (body) => {
   ]);
 
   const serialized = data.map(item => serializeBigInt(item));
-  const translated = await Promise.all(serialized.map(item => translateBookPrologue(item, lang)));
+  const includeSource =
+    body?.includeSource === true && String(lang || 'en').toLowerCase() !== 'en';
+  const translated = await Promise.all(
+    serialized.map(async item => {
+      const result = await translateBookPrologue(item, lang);
+      return includeSource ? { ...result, source: item } : result;
+    }),
+  );
 
   return {
     status: 200,

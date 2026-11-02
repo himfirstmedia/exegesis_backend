@@ -171,6 +171,25 @@ describe('book prologue translation', () => {
     expect(translateMany).toHaveBeenCalledTimes(2);
   });
 
+  test('get-all attaches canonical source for admin edit flows only when opted in', async () => {
+    const first = makePrologue();
+    prisma.bookPrologue.findMany.mockResolvedValue([first]);
+    prisma.bookPrologue.count.mockResolvedValue(1);
+
+    const result = await getAllBookPrologues({
+      page: 0,
+      pageSize: 4,
+      lang: 'fr',
+      includeSource: true,
+    });
+
+    expect(result.data.data[0].summary).toBe('fr:God creates and calls Abraham.');
+    expect(result.data.data[0].source).toMatchObject({
+      bookName: 'Genesis',
+      summary: 'God creates and calls Abraham.',
+    });
+  });
+
   test('keeps non-string array entries and their positions unchanged', async () => {
     const source = makePrologue({
       structure: [{ range: '1', title: 'Opening' }, null, 'legacy'],

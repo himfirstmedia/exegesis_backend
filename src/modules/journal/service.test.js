@@ -7,6 +7,7 @@ import {
   getJournalExportCopy,
   getJournalPrompts,
   getJournalTemplates,
+  getUserJournalEntriesForAdmin,
 } from "./service.js";
 
 jest.mock("../../config/db.js", () => ({
@@ -262,6 +263,45 @@ describe("journal public content translation", () => {
       prayerRequests: "hi:Prayer Requests",
       public: "hi:Public",
       private: "hi:Private",
+    });
+  });
+
+  test("admin journal list paginates, filters publication and localizes rows", async () => {
+    prisma.journalEntry.findMany.mockResolvedValue([
+      {
+        id: 4n,
+        title: "Grace",
+        content: "Amazing grace",
+        isPublished: true,
+        createdOn: new Date("2026-01-02T00:00:00.000Z"),
+      },
+    ]);
+    prisma.journalEntry.count.mockResolvedValue(5);
+
+    const result = await getUserJournalEntriesForAdmin(
+      { page: 2, pageSize: 4, isPublished: true, lang: "fr" },
+      "admin-1",
+    );
+
+    expect(prisma.journalEntry.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { isPublished: true },
+        skip: 4,
+        take: 4,
+      }),
+    );
+    expect(result.returnData).toMatchObject({
+      totalCount: 5,
+      page: 2,
+      pageSize: 4,
+      totalPages: 2,
+      hasNext: false,
+      hasPrevious: true,
+    });
+    expect(result.returnData.entries[0]).toMatchObject({
+      id: 4,
+      title: "fr:Grace",
+      content: "fr:Amazing grace",
     });
   });
 });

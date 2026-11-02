@@ -112,7 +112,14 @@ export const upsertChapterTools = async (userId, body) => {
 export const getAllTools = async (body) => {
   const page = body?.page || 0;
   const pageSize = body?.pageSize || 50;
-  const { bookName, chapter, toolType, search } = body || {};
+  const {
+    bookName,
+    chapter,
+    toolType,
+    search,
+    lang = 'en',
+    includeSource = false,
+  } = body || {};
 
   const where = {};
   if (bookName) where.bookName = bookName;
@@ -152,11 +159,18 @@ export const getAllTools = async (body) => {
     prisma.chapterStudyTool.count({ where }),
   ]);
 
+  const serialized = data.map(d => serializeBigInt(d));
+  const translated = await translateStudyTools(serialized, lang);
+  const content =
+    includeSource && String(lang || 'en').toLowerCase() !== 'en'
+      ? translated.map((tool, index) => ({ ...tool, source: serialized[index] }))
+      : translated;
+
   return {
     status: 200,
     message: 'Study tools fetched',
     data: {
-      data: data.map(d => serializeBigInt(d)),
+      data: content,
       total,
       hasNext: (page + 1) * pageSize < total,
     },

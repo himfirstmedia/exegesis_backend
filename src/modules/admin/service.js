@@ -11,6 +11,65 @@ import {
   ACCOUNT_DELETE_SOURCES,
   deleteUserAccount,
 } from "../../services/accountDeletion.js";
+import { normalizeLanguage } from "../../utils/translator.js";
+import {
+  translateDailyDevotionContent,
+  translateDailyExegesisContent,
+  translateDailyVerseContent,
+} from "../bible/dailyContentTranslation.js";
+
+const getAdminTranslationTimeBudget = () => {
+  const value = Number.parseInt(
+    process.env.ADMIN_TRANSLATION_TIME_BUDGET_MS,
+    10,
+  );
+  return Number.isInteger(value) && value > 0 ? value : 9000;
+};
+
+/**
+ * Localize admin list rows at display time. The stored rows stay canonical
+ * English; only the response is translated, and every row falls back to its
+ * source content when the provider misses the request budget.
+ *
+ * `includeSource` attaches the canonical row next to its translated copy.
+ * Admin edit screens receive list rows through route params, so without this
+ * they would persist localized prose back into the canonical record.
+ */
+const localizeAdminContent = async (
+  records,
+  lang,
+  translator,
+  includeSource = false,
+) => {
+  const language = normalizeLanguage(lang ?? "en");
+  if (
+    !Array.isArray(records) ||
+    records.length === 0 ||
+    language.toLowerCase() === "en"
+  ) {
+    return records;
+  }
+
+  const attachSource = (value, record) =>
+    includeSource && value && typeof value === "object"
+      ? { ...value, source: record }
+      : value;
+
+  const deadline = Date.now() + getAdminTranslationTimeBudget();
+  return Promise.all(
+    records.map(async (record) => {
+      const remaining = Math.max(deadline - Date.now(), 1);
+      try {
+        return attachSource(
+          await translator(record, language, { timeBudgetMs: remaining }),
+          record,
+        );
+      } catch {
+        return attachSource({ ...record, contentLanguage: "en" }, record);
+      }
+    }),
+  );
+};
 
 export const getUsersByAdmin = async (data, adminId) => {
   const { search, userId, page = 1, pageSize = 10 } = data;
@@ -630,6 +689,8 @@ export const getAllDailyVerses = async (data) => {
     chapter,
     verseNumber,
     search,
+    lang,
+    includeSource = false,
   } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
@@ -707,7 +768,14 @@ export const getAllDailyVerses = async (data) => {
         : "System",
     };
   });
-  const content = serializeBigInt(rawContent);
+  const content = serializeBigInt(
+    await localizeAdminContent(
+      rawContent,
+      lang,
+      translateDailyVerseContent,
+      includeSource,
+    ),
+  );
 
   return {
     status: 200,
@@ -851,6 +919,8 @@ export const getAllDailyDevotions = async (data) => {
     endDate,
     smartDefault,
     futureDays = 2,
+    lang,
+    includeSource = false,
   } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
@@ -892,7 +962,14 @@ export const getAllDailyDevotions = async (data) => {
     take: pageSize,
   });
 
-  const content = serializeBigInt(rawContent);
+  const content = serializeBigInt(
+    await localizeAdminContent(
+      rawContent,
+      lang,
+      translateDailyDevotionContent,
+      includeSource,
+    ),
+  );
 
   return {
     status: 200,
@@ -1017,6 +1094,8 @@ export const getAllDailyExegesis = async (data) => {
     endDate,
     smartDefault,
     futureDays = 2,
+    lang,
+    includeSource = false,
   } = data || {};
   const pageNum = parseInt(page) || 0;
   const pageSize = Math.min(parseInt(size) || 12, 50);
@@ -1060,7 +1139,14 @@ export const getAllDailyExegesis = async (data) => {
     status: 200,
     message: "Daily exegesis fetched successfully",
     data: {
-      content: serializeBigInt(rawContent),
+      content: serializeBigInt(
+        await localizeAdminContent(
+          rawContent,
+          lang,
+          translateDailyExegesisContent,
+          includeSource,
+        ),
+      ),
       currentPage: pageNum,
       pageSize,
       totalElements,

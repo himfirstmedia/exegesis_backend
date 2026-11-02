@@ -1,11 +1,12 @@
 import { prisma } from '../../config/db.js';
 import { translateStudyTools } from './translation.js';
-import { getChapterTools } from './service.js';
+import { getChapterTools, getAllTools } from './service.js';
 
 jest.mock('../../config/db.js', () => ({
   prisma: {
     chapterStudyTool: {
       findMany: jest.fn(),
+      count: jest.fn(),
     },
   },
 }));
@@ -52,5 +53,78 @@ describe('getChapterTools translation boundary', () => {
         }),
       },
     }));
+  });
+});
+
+describe('getAllTools admin source preservation', () => {
+  beforeEach(() => {
+    prisma.chapterStudyTool.findMany.mockReset();
+    prisma.chapterStudyTool.count.mockReset();
+    translateStudyTools.mockReset();
+  });
+
+  test('localizes rows and attaches the canonical source when opted in', async () => {
+    prisma.chapterStudyTool.findMany.mockResolvedValueOnce([{
+      id: 5n,
+      bookName: 'John',
+      chapter: 3n,
+      toolType: 'PROMISE',
+      label: 'Original label',
+      description: 'Original description',
+      order: 0,
+    }]);
+    prisma.chapterStudyTool.count.mockResolvedValueOnce(1);
+    translateStudyTools.mockResolvedValueOnce([{
+      id: 5,
+      bookName: 'John',
+      chapter: 3,
+      toolType: 'PROMISE',
+      label: 'fr:Original label',
+      description: 'fr:Original description',
+      order: 0,
+    }]);
+
+    const result = await getAllTools({
+      page: 0,
+      pageSize: 4,
+      lang: 'fr',
+      includeSource: true,
+    });
+
+    expect(result.data.data[0]).toMatchObject({
+      label: 'fr:Original label',
+      description: 'fr:Original description',
+      source: {
+        id: 5,
+        label: 'Original label',
+        description: 'Original description',
+      },
+    });
+  });
+
+  test('omits the source payload without the opt-in', async () => {
+    prisma.chapterStudyTool.findMany.mockResolvedValueOnce([{
+      id: 5n,
+      bookName: 'John',
+      chapter: 3n,
+      toolType: 'PROMISE',
+      label: 'Original label',
+      description: null,
+      order: 0,
+    }]);
+    prisma.chapterStudyTool.count.mockResolvedValueOnce(1);
+    translateStudyTools.mockResolvedValueOnce([{
+      id: 5,
+      bookName: 'John',
+      chapter: 3,
+      toolType: 'PROMISE',
+      label: 'fr:Original label',
+      description: null,
+      order: 0,
+    }]);
+
+    const result = await getAllTools({ page: 0, pageSize: 4, lang: 'fr' });
+
+    expect(result.data.data[0].source).toBeUndefined();
   });
 });

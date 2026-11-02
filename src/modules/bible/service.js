@@ -1256,7 +1256,14 @@ export const addVerseExplanation = async (data, userId) => {
 };
 
 export const getAllVersesExplanation = async (data) => {
-  const { page = 1, pageSize = 20, bookName, search, lang = "en" } = data;
+  const {
+    page = 1,
+    pageSize = 20,
+    bookName,
+    search,
+    lang = "en",
+    includeSource = false,
+  } = data;
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
   const offset = (pageNum - 1) * pageSizeNum;
@@ -1306,7 +1313,15 @@ export const getAllVersesExplanation = async (data) => {
     withLegacyVerseExplanationFields(item),
   );
 
-  if (lang !== "en" && serialized.explanations?.length > 0) {
+  const shouldLocalize = lang !== "en" && serialized.explanations?.length > 0;
+  // Snapshot the canonical rows before translating so admin edit screens can
+  // still persist English source instead of localized prose.
+  const canonicalExplanations =
+    shouldLocalize && includeSource
+      ? structuredClone(serialized.explanations)
+      : null;
+
+  if (shouldLocalize) {
     const expls = serialized.explanations.map(
       (e) => e.exegesis?.explanationText || "",
     );
@@ -1322,7 +1337,18 @@ export const getAllVersesExplanation = async (data) => {
         e.exegesis.explanationText = tExpls[i] || e.exegesis.explanationText;
         e.exegesis.applicationText = tApps[i] || e.exegesis.applicationText;
       }
+      // List cards render the legacy fields, so keep them aligned with the
+      // translated exegesis instead of leaving them in English.
+      e.explanation = e.exegesis?.explanationText || e.explanation;
+      e.application = e.exegesis?.applicationText || e.application;
     });
+  }
+
+  if (canonicalExplanations) {
+    serialized.explanations = serialized.explanations.map((item, index) => ({
+      ...item,
+      source: canonicalExplanations[index],
+    }));
   }
 
   const result = {

@@ -276,5 +276,5 @@ export const translateDailyVerseContent = (item, lang, options) =>
 export const translateDailyDevotionContent = (item, lang, options) =>
   translateRecord(item, lang, DEVOTION_FIELDS, true, options);
 
-export const translateDailyExegesisContent = (item, lang) =>
-  translateRecord(item, lang, EXEGESIS_FIELDS, false);
+export const translateDailyExegesisContent = (item, lang, options) =>
+  translateRecord(item, lang, EXEGESIS_FIELDS, false, options);
