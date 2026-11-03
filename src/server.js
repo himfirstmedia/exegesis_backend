@@ -286,15 +286,35 @@ process.on("uncaughtException", async (error) => {
   process.exit(1);
 });
 
-process.on("SIGTERM", async () => {
-  console.log("SIGTERM received, shutting down gracefully...");
+// Shut down once. A terminal Ctrl+C (SIGINT) and a process manager's SIGTERM
+// can both arrive, and the old handler ran the whole sequence twice — a second
+// `disconnectDB()` after Prisma closed throws and used to `process.exit(1)`,
+// which nodemon then reports as "app crashed". Handling SIGINT too means an
+// interactive stop drains cleanly instead of killing the child with a signal.
+let shuttingDown = false;
+const shutdown = async (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received, shutting down gracefully...`);
   stopEmailScheduler();
   resetTransporter();
-  await stopOverviewPackPublisher();
+  try {
+    await stopOverviewPackPublisher();
+  } catch (error) {
+    console.error(
+      "Failed to stop overview pack publisher:",
+      error?.message || error,
+    );
+  }
   server.close(async () => {
     await disconnectDB();
     process.exit(0);
   });
-});
+  // Never hang forever waiting for connections to drain.
+  setTimeout(() => process.exit(0), 10_000);
+};
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 export default app;
