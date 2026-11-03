@@ -573,6 +573,9 @@ export const login = async (data, deviceInfo = null) => {
         emailAddress: user.email,
         verificationType: "Email Verification",
         status: false,
+        // Expired codes must not count towards the resend cap: without this,
+        // a reader who lets three codes expire can never receive another one.
+        expiresAt: { gt: new Date() },
       },
     });
 
@@ -952,6 +955,8 @@ export const resendVerification = async (data) => {
       emailAddress: user.email,
       verificationType: "Email Verification",
       status: false,
+      // Only unexpired codes should block a resend.
+      expiresAt: { gt: new Date() },
     },
   });
 
@@ -1052,6 +1057,8 @@ export const forgotPassword = async (data) => {
       emailAddress: user.email,
       verificationType: "Password Reset",
       status: false,
+      // Only unexpired codes should block a new reset request.
+      expiresAt: { gt: new Date() },
     },
   });
 
