@@ -410,39 +410,39 @@ let lordsbookVoiceRequest = null;
 const lordsbookSynthesisInFlight = new Map();
 
 // ── Lordsbook voice map per BCP-47 primary language ────────────────────────
-// Lordsbook Kokoro voice IDs (bm_ = British male, af_ = American female, ...)
-// resolve to a voice that matches the requested text language so the narrator
-// does not mispronounce non-English Scripture. Falls back to the app default
-// if the target language has no Lordbook voice.
-const LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE = {
-  ...EDGE_DEFAULT_VOICE_BY_LANGUAGE,
-  // Lordbook-specific mappings: first choice per language.
+// Only real Kokoro voices from the gateway's `GET /voices` may appear here.
+// Do NOT spread EDGE_DEFAULT_VOICE_BY_LANGUAGE: Edge IDs such as
+// `hi-IN-MadhurNeural` are rejected by the TTS provider with
+// "TTS generation failed: Voice … not found in available voices". Languages
+// Kokoro does not voice fall through to the app default instead.
+export const LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE = {
+  // Voice-prefix keys (bm_ = British male, af_ = American female, ...).
   af: "af_heart",
   am: "am_adam",
-  bm: "bm_george",
   bf: "bf_emma",
-  ef: "ef_isabella",
-  em: "em_david",
-  ff: "ff_sophie",
-  fm: "fm_louis",
-  hf: "hf_ananya",
-  hm: "hm_arjun",
-  if: "if_giovanni",
-  im: "im_marco",
-  jf: "jf_yuki",
-  jm: "jm_hiroshi",
-  pf: "pf_joaquim",
-  pm: "pm_carlos",
-  zf: "zf_yunxi",
+  bm: "bm_george",
+  ef: "ef_dora",
+  em: "em_alex",
+  ff: "ff_siwis",
+  hf: "hf_alpha",
+  hm: "hm_omega",
+  if: "if_sara",
+  im: "im_nicola",
+  jf: "jf_alpha",
+  jm: "jm_kumo",
+  pf: "pf_dora",
+  pm: "pm_alex",
+  zf: "zf_xiaoxiao",
   zm: "zm_yunyang",
-  pt: "pm_carlos",
-  es: "em_david",
-  fr: "fm_louis",
-  de: "de_katja",
-  it: "im_marco",
-  ja: "jm_hiroshi",
-  ko: "ko_sunhi",
+  // BCP-47 primary language keys for the locales Kokoro voices.
+  en: "bm_george",
+  es: "em_alex",
+  fr: "ff_siwis",
+  pt: "pm_alex",
+  it: "im_nicola",
+  ja: "jm_kumo",
   zh: "zm_yunyang",
+  hi: "hm_omega",
 };
 
 const LORDSBOOK_MAX_SPEED = Number(process.env.LORDSBOOK_MAX_SPEED) || 2.0;
@@ -1140,7 +1140,12 @@ const synthesizeLordsbook = async (
           text: processedText,
           voice,
           speed: clampedSpeed,
-          lang: resolvedLang,
+          // Do NOT forward `lang`: the gateway ignores it for synthesis
+          // (byte-identical audio with or without it) and its espeak fallback
+          // rejects `en` ("language \"en\" is not supported by the espeak
+          // backend") during Kokoro hiccups, which forced needless Edge
+          // fallbacks. The Kokoro voice prefix already fixes the language;
+          // `resolvedLang` is kept for the log line below.
         });
         // Log cache-level visibility so queue depth can be tuned before the
         // breaker trips. `cacheStatus` comes from the upstream TTS cache when
