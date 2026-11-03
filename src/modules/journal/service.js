@@ -1,3 +1,4 @@
+import { localizeListPreviews } from '../admin/listPreview.js';
 import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { cache } from "../../services/cacheService.js";
@@ -764,7 +765,9 @@ export const getUserJournalEntriesForAdmin = async (data, adminId) => {
     returnCode: 200,
     returnMessage: "User journal entries fetched successfully",
     returnData: serializeBigInt({
-      entries: await localizeJournalEntries(entries, lang),
+      entries: data.listPreview === true
+        ? await localizeListPreviews(entries, lang, 'journal')
+        : await localizeJournalEntries(entries, lang),
       totalCount,
       page: pageNum,
       pageSize: all ? totalCount : pageSizeNum,

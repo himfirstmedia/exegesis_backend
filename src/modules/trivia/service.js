@@ -1,4 +1,5 @@
 import { prisma } from '../../config/db.js';
+import { localizeListPreviews } from '../admin/listPreview.js';
 import { serializeBigInt } from '../../utils/helpers.js';
 
 /**
@@ -111,7 +112,9 @@ export const getAllQuestions = async (body) => {
     status: 200,
     message: 'Questions fetched',
     data: {
-      data: data.map(d => serializeBigInt(d)),
+      data: body?.listPreview === true
+        ? await localizeListPreviews(data.map(d => serializeBigInt(d)), body.lang, 'trivia')
+        : data.map(d => serializeBigInt(d)),
       total,
       hasNext: (page + 1) * pageSize < total,
     },

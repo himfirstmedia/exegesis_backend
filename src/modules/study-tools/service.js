@@ -1,3 +1,4 @@
+import { localizeListPreviews } from '../admin/listPreview.js';
 import { prisma } from '../../config/db.js';
 import { serializeBigInt } from '../../utils/helpers.js';
 import { translateStudyTools } from './translation.js';
@@ -160,6 +161,12 @@ export const getAllTools = async (body) => {
   ]);
 
   const serialized = data.map(d => serializeBigInt(d));
+  if (body?.listPreview === true) {
+    return {
+      status: 200, message: 'Study tools fetched',
+      data: { data: await localizeListPreviews(serialized, lang, 'tool'), total, hasNext: (page + 1) * pageSize < total },
+    };
+  }
   const translated = await translateStudyTools(serialized, lang);
   const content =
     includeSource && String(lang || 'en').toLowerCase() !== 'en'

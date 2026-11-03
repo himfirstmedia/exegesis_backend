@@ -1,4 +1,5 @@
 import { serializeBigInt } from "../../utils/helpers.js";
+import { localizeListPreviews } from '../admin/listPreview.js';
 import { prisma } from "../../config/db.js";
 import { canonicalBookIndex } from "../../constants/bible-books.js";
 import { getVerse } from "../../modules/bible-translations/service.js";
@@ -1312,6 +1313,11 @@ export const getAllVersesExplanation = async (data) => {
   serialized.explanations = (serialized.explanations || []).map((item) =>
     withLegacyVerseExplanationFields(item),
   );
+
+  if (data.listPreview === true) {
+    serialized.explanations = await localizeListPreviews(serialized.explanations, lang, 'explanation');
+    return { status: 200, message: 'Verse explanations fetched successfully', data: serialized };
+  }
 
   const shouldLocalize = lang !== "en" && serialized.explanations?.length > 0;
   // Snapshot the canonical rows before translating so admin edit screens can

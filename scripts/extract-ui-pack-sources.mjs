@@ -67,7 +67,7 @@ const scan = dir => {
         // including support FAQ answers, while excluding paths, keys and code.
         if (/^[A-Z][A-Za-z]*(?:[ .!?…:,]|$)/.test(value) && !/https?:|#[0-9a-f]{3,8}\b|^(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i.test(value) && !/^(?:\.\.?\/|\/|\\)/.test(value) && value.length < 10000) add(value);
         const parent = node.parent;
-        if (ts.isCallExpression(parent) && /^(?:t|text|tt|useTranslation)$/.test(parent.expression.getText(parsed)) && parent.arguments[0] === node) add(value);
+        if (ts.isCallExpression(parent) && /^(?:t|text|tt|ui|useTranslation)$/.test(parent.expression.getText(parsed)) && parent.arguments[0] === node) add(value);
         if (isCopyConstantValue(node)) add(value);
         if (isKeywordValue(node)) add(value);
       }
@@ -77,6 +77,9 @@ const scan = dir => {
   }
 };
 for (const name of ['features', 'component', 'reusable', 'hooks']) scan(path.join(app, name));
+// Admin API wrappers also own fallback error messages shown by pack-backed
+// toasts. Scan their authored literals, never response/user data.
+scan(path.join(app, 'features/admin/services'));
 // Legal screens request bounded chunks, not just the full source literals.
 // Evaluate only these pure authored modules so constants/interpolations and the
 // exact same sentence/word splitting used by the app are preserved in the pack.

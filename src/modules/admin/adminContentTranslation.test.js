@@ -15,6 +15,10 @@ jest.mock("../../config/db.js", () => ({
 }));
 
 jest.mock("../../services/cacheService.js", () => ({ cache: {} }));
+jest.mock("../../utils/translator.js", () => ({
+  normalizeLanguage: language => language || 'en',
+  translateMany: jest.fn(async (texts, language) => texts.map(text => `${language}:${text}`)),
+}));
 jest.mock("../../services/objectStorage.js", () => ({
   deleteStoredMedia: jest.fn().mockResolvedValue(undefined),
 }));
@@ -114,6 +118,42 @@ describe("admin daily content localization", () => {
 
     expect(translateDailyVerseContent).not.toHaveBeenCalled();
     expect(result.data.content[0].explanation).toBe("A");
+  });
+
+  test.each([
+    ['verse', getAllDailyVerses, 'dailyVerse', 'explanation', translateDailyVerseContent],
+    ['devotion', getAllDailyDevotions, 'dailyDevotion', 'content', translateDailyDevotionContent],
+    ['exegesis', getAllDailyExegesis, 'dailyExegesis', 'teachingBody', translateDailyExegesisContent],
+  ])('%s list translates only its preview and preserves the canonical full record', async (_kind, getRows, model, field, fullTranslator) => {
+    const text = 'Full article content. '.repeat(100);
+    prisma[model].findMany.mockResolvedValue([{ id: 1n, [field]: text, prayer: 'Hidden prayer' }]);
+    prisma[model].count.mockResolvedValue(1);
+    const response = await getRows({ size: 4, lang: 'es', listPreview: true });
+    expect(fullTranslator).not.toHaveBeenCalled();
+    expect(response.data.content[0][field]).toBe(text);
+    expect(response.data.content[0].preview[field]).toMatch(/^es:/);
+    expect(response.data.content[0].preview[field].length).toBeLessThan(300);
+    expect(response.data.content[0].preview.prayer).toBeUndefined();
+  });
+
+  test("Spanish uses the admin budget and never silently falls back to English", async () => {
+    prisma.dailyVerse.findMany.mockResolvedValue([
+      { id: 1n, bookName: "Psalms", chapter: 46n, verseNumber: 10n, explanation: "Be still" },
+    ]);
+    prisma.dailyVerse.count.mockResolvedValue(1);
+    const result = await getAllDailyVerses({ size: 4, lang: "es", includeSource: true });
+    expect(result.data.content[0]).toMatchObject({
+      explanation: "es:Be still", contentLanguage: "es",
+      source: { explanation: "Be still" },
+    });
+    const options = translateDailyVerseContent.mock.calls[0][2];
+    expect(options.throwOnFailure).toBe(true);
+    expect(options.timeBudgetMs).toBeGreaterThan(9000);
+
+    translateDailyVerseContent.mockRejectedValueOnce(new Error("Provider unavailable"));
+    const failed = await getAllDailyVerses({ size: 4, lang: "es" });
+    expect(failed.status).toBe(503);
+    expect(failed.data).toBeUndefined();
   });
 
   test("translates devotions and exegesis rows", async () => {

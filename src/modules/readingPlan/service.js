@@ -1,3 +1,4 @@
+import { localizeListPreviews } from '../admin/listPreview.js';
 import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { generatePlanId } from "../../utils/helpers.js";
@@ -164,7 +165,8 @@ export const getAllReadingPlans = async (data, userId = null, isadmin = false) =
   const userProgressMap = new Map(userProgressList.map((p) => [p.planId, p]));
 
   // Translate user-generated fields for non-English languages
-  const [translatedTitles, translatedDescs] = await Promise.all([
+  const previewOnly = isadmin && data.listPreview === true;
+  const [translatedTitles, translatedDescs] = previewOnly ? [[], []] : await Promise.all([
     translateMany(plans.map((p) => p.title || ''), lang),
     translateMany(plans.map((p) => p.description || ''), lang),
   ]);
@@ -193,7 +195,9 @@ export const getAllReadingPlans = async (data, userId = null, isadmin = false) =
     status: 200,
     message: "Reading plans fetched successfully",
     data: serializeBigInt({
-      plans: plansWithUserProgress,
+      plans: previewOnly
+        ? await localizeListPreviews(plansWithUserProgress, lang, 'plan')
+        : plansWithUserProgress,
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,

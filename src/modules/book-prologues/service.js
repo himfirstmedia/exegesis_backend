@@ -1,3 +1,4 @@
+import { localizeListPreviews } from '../admin/listPreview.js';
 import { prisma } from '../../config/db.js';
 import { serializeBigInt } from '../../utils/helpers.js';
 import { normalizeLanguage, translateMany } from '../../utils/translator.js';
@@ -208,7 +209,9 @@ export const getAllBookPrologues = async (body) => {
   const serialized = data.map(item => serializeBigInt(item));
   const includeSource =
     body?.includeSource === true && String(lang || 'en').toLowerCase() !== 'en';
-  const translated = await Promise.all(
+  const translated = body?.listPreview === true
+    ? await localizeListPreviews(serialized, lang, 'prologue')
+    : await Promise.all(
     serialized.map(async item => {
       const result = await translateBookPrologue(item, lang);
       return includeSource ? { ...result, source: item } : result;

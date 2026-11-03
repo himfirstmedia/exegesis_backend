@@ -12,6 +12,7 @@ import {
   deleteUserAccount,
 } from "../../services/accountDeletion.js";
 import { normalizeLanguage } from "../../utils/translator.js";
+import { localizeListPreviews } from './listPreview.js';
 import {
   translateDailyDevotionContent,
   translateDailyExegesisContent,
@@ -40,6 +41,7 @@ const localizeAdminContent = async (
   lang,
   translator,
   includeSource = false,
+  { timeBudgetMs = getAdminTranslationTimeBudget(), throwOnFailure = false } = {},
 ) => {
   const language = normalizeLanguage(lang ?? "en");
   if (
@@ -55,16 +57,20 @@ const localizeAdminContent = async (
       ? { ...value, source: record }
       : value;
 
-  const deadline = Date.now() + getAdminTranslationTimeBudget();
+  const deadline = Date.now() + timeBudgetMs;
   return Promise.all(
     records.map(async (record) => {
       const remaining = Math.max(deadline - Date.now(), 1);
       try {
         return attachSource(
-          await translator(record, language, { timeBudgetMs: remaining }),
+          await translator(record, language, {
+            timeBudgetMs: remaining,
+            ...(throwOnFailure ? { throwOnFailure: true } : {}),
+          }),
           record,
         );
-      } catch {
+      } catch (error) {
+        if (throwOnFailure) throw error;
         return attachSource({ ...record, contentLanguage: "en" }, record);
       }
     }),
@@ -697,6 +703,7 @@ export const getAllDailyVerses = async (data) => {
   const offset = pageNum * pageSize;
 
   const whereClause = {};
+  if (data?.id) whereClause.id = BigInt(data.id);
 
   if (startDate || endDate) {
     whereClause.displayDate = {};
@@ -768,14 +775,53 @@ export const getAllDailyVerses = async (data) => {
         : "System",
     };
   });
-  const content = serializeBigInt(
-    await localizeAdminContent(
-      rawContent,
-      lang,
-      translateDailyVerseContent,
-      includeSource,
-    ),
+  if (data?.listPreview === true) {
+    try {
+      return {
+        status: 200,
+        message: "Daily verses fetched successfully",
+        data: {
+          content: serializeBigInt(await localizeListPreviews(rawContent, lang, 'verse')),
+          currentPage: pageNum, pageSize, totalElements, totalPages,
+          hasNext: pageNum < totalPages - 1, hasPrevious: pageNum > 0,
+          isFirst: pageNum === 0, isLast: pageNum >= totalPages - 1,
+        },
+      };
+    } catch {
+      return { status: 503, message: 'Daily verse preview translation is temporarily unavailable. Please retry.' };
+    }
+  }
+
+  // Rich admin records can require many upstream translations on a cold
+  // cache. The reader's nine-second English fallback is not appropriate here:
+  // admins explicitly requested translated data. Match the client's longer
+  // admin-only timeout and fail visibly rather than silently serving English.
+  const configuredBudget = Number.parseInt(
+    process.env.ADMIN_DAILY_VERSE_TRANSLATION_TIME_BUDGET_MS,
+    10,
   );
+  let content;
+  try {
+    content = serializeBigInt(
+      await localizeAdminContent(
+        rawContent,
+        lang,
+        translateDailyVerseContent,
+        includeSource,
+        {
+          timeBudgetMs:
+            configuredBudget > 0 ? Math.min(configuredBudget, 120000) : 120000,
+          throwOnFailure: true,
+        },
+      ),
+    );
+  } catch (error) {
+    console.warn("[admin-daily-verse] Translation unavailable:", error.message);
+    return {
+      status: 503,
+      message: "Daily verse translation is temporarily unavailable. Please retry.",
+    };
+  }
 
   return {
     status: 200,
@@ -963,12 +1009,9 @@ export const getAllDailyDevotions = async (data) => {
   });
 
   const content = serializeBigInt(
-    await localizeAdminContent(
-      rawContent,
-      lang,
-      translateDailyDevotionContent,
-      includeSource,
-    ),
+    data?.listPreview === true
+      ? await localizeListPreviews(rawContent, lang, 'devotion')
+      : await localizeAdminContent(rawContent, lang, translateDailyDevotionContent, includeSource),
   );
 
   return {
@@ -1140,7 +1183,9 @@ export const getAllDailyExegesis = async (data) => {
     message: "Daily exegesis fetched successfully",
     data: {
       content: serializeBigInt(
-        await localizeAdminContent(
+        data?.listPreview === true
+          ? await localizeListPreviews(rawContent, lang, 'exegesis')
+          : await localizeAdminContent(
           rawContent,
           lang,
           translateDailyExegesisContent,
