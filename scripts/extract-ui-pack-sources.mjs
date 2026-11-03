@@ -80,6 +80,13 @@ for (const name of ['features', 'component', 'reusable', 'hooks']) scan(path.joi
 // Admin API wrappers also own fallback error messages shown by pack-backed
 // toasts. Scan their authored literals, never response/user data.
 scan(path.join(app, 'features/admin/services'));
+// Global API interceptor feedback is shown through the pack-backed toast
+// wrapper. The api module also holds headers, routes and error codes, so add
+// only the two authored messages instead of scanning the whole directory.
+for (const message of [
+  'The server is busy right now — please try again in a moment.',
+  'Session Expired. Please login again.',
+]) add(message);
 // Legal screens request bounded chunks, not just the full source literals.
 // Evaluate only these pure authored modules so constants/interpolations and the
 // exact same sentence/word splitting used by the app are preserved in the pack.
