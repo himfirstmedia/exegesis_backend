@@ -350,12 +350,12 @@ export const createUser = async (data, adminId) => {
     }
 
     // Queue the credentials email — the scheduler picks up PENDING messages
-    const emailTemplate = emailTemplates.accountCreated({
+    const emailTemplate = await emailTemplates.accountCreated({
       firstName: firstName || username,
       username,
       password,
       role: roleName,
-    });
+    }, data.lang);
 
     await prisma.message.create({
       data: {

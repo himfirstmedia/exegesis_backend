@@ -172,17 +172,17 @@ export const notifySupportMessage = async (ticket, message, audience) => {
   }
 };
 
-export const notifyAdminsOfNewTicket = async (ticket) => {
+export const notifyAdminsOfNewTicket = async (ticket, language) => {
   try {
     const { ids, emails } = await getAdminContacts();
     if (ids.length === 0 && emails.length === 0) return;
 
     const adminUrl = `${(process.env.CLIENT_URL || "https://exegesisproject.org").replace(/\/+$/, "")}/admin/support`;
-    const template = emailTemplates.newSupportTicket({
+    const template = await emailTemplates.newSupportTicket({
       ticket,
       reporter: ticket.user,
       adminUrl,
-    });
+    }, language);
 
     for (const recipient of emails) {
       await withDbRetry(() =>
@@ -595,7 +595,7 @@ export const createTicket = async (data, userId) => {
 
   // The notifier swallows delivery failures, so readers still get a successful
   // response while tests and callers can rely on notification work completing.
-  await notifyAdminsOfNewTicket(ticket);
+  await notifyAdminsOfNewTicket(ticket, data.lang);
 
   // Realtime: new ticket from user -> push to admins (and also user room for completeness).
   try {

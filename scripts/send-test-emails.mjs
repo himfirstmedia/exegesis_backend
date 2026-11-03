@@ -54,7 +54,7 @@ let ok = 0;
 let failed = 0;
 
 for (const [name, build] of selected) {
-  const { subject, html } = build();
+  const { subject, html } = await build();
   try {
     const info = await sendEmail(recipient, subject, html);
     const rejected = info.rejected?.length ? ` (REJECTED: ${info.rejected.join(", ")})` : "";

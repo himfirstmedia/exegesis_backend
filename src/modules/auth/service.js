@@ -402,7 +402,7 @@ export const register = async (data) => {
     },
   });
 
-  const verificationEmail = emailTemplates.verification(code, user.firstName);
+  const verificationEmail = await emailTemplates.verification(code, user.firstName, data.lang);
 
   await prisma.message.create({
     data: {
@@ -580,7 +580,7 @@ export const login = async (data, deviceInfo = null) => {
       const code = generateSixDigitCode();
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-      const verificationEmail = emailTemplates.verification(code, user.firstName);
+      const verificationEmail = await emailTemplates.verification(code, user.firstName, data.lang);
 
       await prisma.message.create({
         data: {
@@ -962,7 +962,7 @@ export const resendVerification = async (data) => {
   const code = generateSixDigitCode();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-  const verificationEmail = emailTemplates.verification(code, user.firstName);
+  const verificationEmail = await emailTemplates.verification(code, user.firstName, data.lang);
 
   await prisma.message.create({
     data: {
@@ -1062,7 +1062,7 @@ export const forgotPassword = async (data) => {
   const code = generateSixDigitCode();
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
 
-  const resetEmail = emailTemplates.passwordReset(code, user.firstName);
+  const resetEmail = await emailTemplates.passwordReset(code, user.firstName, data.lang);
 
   await prisma.message.create({
     data: {

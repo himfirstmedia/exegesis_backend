@@ -23,7 +23,7 @@ const templateArguments = {
 test.each(Object.keys(emailTemplates))('%s sends the remote logo without an attachment', async (name) => {
   mockSendMail.mockClear();
   expect(templateArguments[name]).toBeDefined();
-  const template = emailTemplates[name](...templateArguments[name]);
+  const template = await emailTemplates[name](...templateArguments[name]);
   await sendEmail('reader@example.com', template.subject, template.html);
   const options = mockSendMail.mock.calls[0][0];
   expect(options.html).toContain(`src="${EMAIL_LOGO_URL}"`);

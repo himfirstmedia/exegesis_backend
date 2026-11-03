@@ -165,8 +165,8 @@ const gmailReadingPane = ({ name, subject, bodyHtml, dark }) => {
  * Gmail inbox-list emulation: how the message appears as a row in the
  * inbox before it is opened.
  */
-const gmailInboxRow = ({ name }) => {
-  const { subject } = samples[name]();
+const gmailInboxRow = async ({ name }) => {
+  const { subject } = await samples[name]();
   const s = GMAIL_SENDER;
   return `
   <a class="row" href="/gmail/${name}">
@@ -177,7 +177,7 @@ const gmailInboxRow = ({ name }) => {
   </a>`;
 };
 
-const gmailInboxHtml = () => `
+const gmailInboxHtml = async () => `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -205,7 +205,7 @@ const gmailInboxHtml = () => `
     <h1>Gmail inbox — from Exegesis Project &lt;${GMAIL_SENDER.email}&gt;</h1>
     <p class="tip">Click a row to open the reading-pane emulation (light or dark).</p>
     <div class="card">
-    ${Object.keys(samples).map((n) => gmailInboxRow({ name: n })).join("\n")}
+    ${(await Promise.all(Object.keys(samples).map((n) => gmailInboxRow({ name: n })))).join("\n")}
     </div>
     <p class="tip" style="margin-top:16px"><a href="/">← All previews</a></p>
   </div>
@@ -292,7 +292,7 @@ const indexHtml = () => `
 </html>
 `;
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
   // Serve the real logo so previews show exactly what emails will use
@@ -318,7 +318,7 @@ const server = http.createServer((req, res) => {
   // Gmail inbox-list emulation
   if (url.pathname === "/gmail") {
     res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(gmailInboxHtml());
+    res.end(await gmailInboxHtml());
     return;
   }
 
@@ -327,7 +327,7 @@ const server = http.createServer((req, res) => {
   if (gmailMatch && samples[gmailMatch[1]]) {
     const name = gmailMatch[1];
     const isDark = url.searchParams.get("dark") === "1";
-    const { subject, html } = samples[name]();
+    const { subject, html } = await samples[name]();
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(gmailReadingPane({ name, subject, bodyHtml: html, dark: isDark }));
     return;
@@ -336,7 +336,7 @@ const server = http.createServer((req, res) => {
   const match = url.pathname.match(/^\/(?:preview\/)?([\w-]+)$/);
   if (match && samples[match[1]]) {
     const isDark = url.searchParams.get("dark") === "1";
-    const { subject, html } = samples[match[1]]();
+    const { subject, html } = await samples[match[1]]();
     const out = isDark ? toGmailDark(html) : html;
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(`<!-- subject: ${subject} -->\n${out}`);
