@@ -7,7 +7,8 @@ import {
   completeEmailPack,
   validEmailText,
   resolveEmailLanguage,
-} from "./email-pack-data.js";import { uiLanguages } from "../modules/text-to-text-translation/ui-pack-data.js";
+} from "./email-pack-data.js";
+import { uiLanguages } from "../modules/text-to-text-translation/ui-pack-data.js";
 
 describe("email pack source data", () => {
   test("revision is a stable 12-char hex digest", () => {
@@ -81,5 +82,7 @@ describe("email pack source data", () => {
     expect(emailCopy.newSupportTicket.subject).toContain("{{subject}}");
     expect(emailCopy.newSupportTicket.preview).toContain("{{reporter}}");
     expect(emailCopy.shared.unsubscribe).toBe("Unsubscribe");
+    expect(emailCopy.shared.footer).toBe("© {{year}} {{company}}");
+    expect(emailCopy.shared.company).toBe("Exegesis Bible App");
   });
 });

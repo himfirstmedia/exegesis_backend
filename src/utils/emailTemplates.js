@@ -68,7 +68,7 @@ const layout = (t, lang, title, preview, content) => `<!DOCTYPE html>
         <tr><td style="padding: 14px 24px; border-top: 1px solid #edf0f3; font-size: 12px; line-height: 1.5; color: #596579; text-align: center;">
           <p style="margin: 0 0 6px;">${escapeHtml(t(shared.needHelp))} <a href="mailto:${escapeHtml(SUPPORT_EMAIL)}" style="color: #1e3a5f; text-decoration: underline;">${escapeHtml(t(shared.contactSupport))}</a>
             &nbsp;&middot;&nbsp; <a href="${escapeHtml(UNSUBSCRIBE_URL)}" style="color: #596579; text-decoration: underline;">${escapeHtml(t(shared.unsubscribe))}</a></p>
-          <p style="margin: 0;">&copy; ${CURRENT_YEAR} ${escapeHtml(COMPANY_ADDRESS)}</p>
+          <p style="margin: 0;">${fillHtml(t(shared.footer), { year: CURRENT_YEAR, company: t(COMPANY_ADDRESS) })}</p>
         </td></tr>
       </table>
     </td></tr>

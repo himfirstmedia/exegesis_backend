@@ -28,6 +28,7 @@ describe("emailTemplates localization", () => {
     expect(html).toContain("Hello Jane,");
     expect(html).toContain("483920");
     expect(html).toContain('lang="en"');
+    expect(html).toContain(`© ${new Date().getFullYear()} Exegesis Bible App`);
     expect(readUiPackObject).not.toHaveBeenCalled();
   });
 
@@ -65,6 +66,18 @@ describe("emailTemplates localization", () => {
     readUiPackObject.mockRejectedValueOnce(new Error("r2 unavailable"));
     const { subject } = await emailTemplates.verification("1", "A", "it");
     expect(subject).toBe(ENGLISH_SUBJECT);
+  });
+
+  test("localizes the footer year and company together", async () => {
+    const year = new Date().getFullYear();
+    readUiPackObject.mockResolvedValue(makePack("pt", (text) => {
+      if (text === emailCopy.shared.footer) return "© {{year}} - {{company}}";
+      if (text === emailCopy.shared.company) return "Aplicativo Bíblia Exegesis";
+      return `[pt] ${text}`;
+    }));
+    const { html } = await emailTemplates.verification("1", "Jane", "pt");
+    expect(html).toContain(`© ${year} - Aplicativo Bíblia Exegesis`);
+    expect(html).not.toContain("Exegesis Bible App");
   });
 
   test("escapes interpolated user data", async () => {

@@ -12,11 +12,15 @@ import {
   validUiText,
 } from "../modules/text-to-text-translation/ui-pack-data.js";
 
-// Shared shell chrome used by every message. Also translatable.
+// Shared shell chrome used by every message. Also translatable. The footer is
+// a template with {{year}}/{{company}} tokens so the whole line — not just the
+// company name — flows through the translation pipeline.
 const shared = {
   needHelp: "Need help?",
   contactSupport: "Contact support",
   unsubscribe: "Unsubscribe",
+  footer: "© {{year}} {{company}}",
+  company: "Exegesis Bible App",
 };
 
 export const emailCopy = {

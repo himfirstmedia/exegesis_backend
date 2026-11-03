@@ -13,6 +13,12 @@ source of truth. It uses `{{placeholder}}` tokens (for example
 byte-for-byte. English is always the fallback: a missing, corrupt or
 unreachable pack never blocks an email.
 
+The shared footer (`© {{year}} {{company}}`) is part of the same catalogue, so
+the whole copyright line is translated, not just the brand. `{{year}}` is the
+current year and `{{company}}` is `COMPANY_ADDRESS` (defaulting to
+`emailCopy.shared.company`) passed through the translator; an operator override
+that does not match a source string is rendered verbatim.
+
 ## Recipient language
 
 The app already sends `lang` in request bodies. Each enqueue site passes it to
