@@ -371,16 +371,19 @@ describe("Lordsbook TTS breaker", () => {
     expect(voices.some((voice) => voice.source === "edge")).toBe(false);
   });
 
-  test("timed synthesis only falls back when the provider is not locked", async () => {
-    await expect(
-      synthesizeWithTimings(
-        "locked provider verse",
-        "bm_george",
-        1.0,
-        "high",
-        "lordsbook",
-      ),
-    ).rejects.toThrow("Upstream service unavailable");
+  test("timed synthesis degrades a locked provider to Edge instead of failing", async () => {
+    // A client that locked Lordsbook must keep reading when the upstream
+    // fails: the response carries provider="edge" so the app can self-correct
+    // its provider lock instead of retrying the same verse forever.
+    const locked = await synthesizeWithTimings(
+      "locked provider verse",
+      "bm_george",
+      1.0,
+      "high",
+      "lordsbook",
+    );
+    expect(locked.provider).toBe("edge");
+    expect(locked.audioBuffer.length).toBeGreaterThanOrEqual(1_000);
 
     const fallback = await synthesizeWithTimings(
       "unlocked provider verse",

@@ -437,11 +437,17 @@ const readPositiveInt = (name, fallback) => {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 };
 
-// The live Lordsbook endpoint is substantially faster when requests are
-// serialized (~12s/verse versus ~63s for three concurrent verses).
+// Kokoro synthesis is slower than real-time on the upstream (measured ~2x for
+// a single serialized verse), so a one-at-a-time queue can never stay ahead of
+// playback: every verse boundary drains the client buffer. Bounded concurrency
+// is the only way to raise sustained throughput, and measurements show the
+// upstream scales cleanly (4 concurrent ≈ real-time, 6 concurrent ≈ 1.3x) while
+// still returning 200s. The cap keeps us far below the load that used to
+// trigger 502s; queue order still gives on-demand playback priority over
+// speculative prefetches.
 const LORDSBOOK_MAX_CONCURRENCY = readPositiveInt(
   "LORDSBOOK_MAX_CONCURRENCY",
-  1,
+  4,
 );
 const BREAKER_WINDOW_MS = 60_000;
 const BREAKER_THRESHOLD = readPositiveInt("LORDSBOOK_BREAKER_THRESHOLD", 3);
@@ -555,8 +561,8 @@ const formatLordsbookVoice = (voiceId) => {
       ? `Kokoro · ${metadata.locale}`
       : // Unknown prefix format: don't show raw ID or "Kokoro · undefined".
         voiceId.includes("_")
-      ? "Kokoro (unknown format)"
-      : "Kokoro",
+        ? "Kokoro (unknown format)"
+        : "Kokoro",
   };
 };
 
@@ -597,10 +603,12 @@ const resolveLordsbookVoice = (voiceId, language) => {
     return voiceId;
   const mapped = LEGACY_LORDSBOOK_VOICE_ALIASES[voiceId];
   const languagePrefix = normalizeLordsbookLanguage(language);
-  return mapped || (languagePrefix && LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE[languagePrefix]) || getDefaultLordsbookVoice();
+  return (
+    mapped ||
+    (languagePrefix && LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE[languagePrefix]) ||
+    getDefaultLordsbookVoice()
+  );
 };
-
-
 
 export const DEFAULT_EDGE_VOICE = "en-GB-RyanNeural";
 export const DEFAULT_TTS_SPEED = 0.75;
@@ -677,9 +685,14 @@ export const resetEdgeCooldown = () => {
 };
 
 // Records a failure's classification and opens the cooldown for rate limits.
-const noteEdgeFailure = (error) => {
+// Only a *foreground* (high-priority) rate limit parks Edge: a throttled
+// background prefetch must never take playback down with it. Prefetch windows
+// are re-issued as reading advances, so dropping one is self-healing, whereas
+// a cooldown triggered by one turns the next verse into an instant 503 and
+// pushes the app onto device TTS mid-chapter.
+const noteEdgeFailure = (error, priority = "low") => {
   const info = classifyEdgeError(error);
-  if (info.code === "rate_limited") {
+  if (info.code === "rate_limited" && priority === "high") {
     edgeCooldownUntil = Date.now() + EDGE_RATE_LIMIT_COOLDOWN_MS;
   }
   return info;
@@ -914,7 +927,9 @@ const edgeVoiceLanguage = (voiceId) =>
 
 export const defaultEdgeVoiceForLanguage = (language) => {
   const primary = normalizeTtsLanguage(language);
-  return (primary && EDGE_DEFAULT_VOICE_BY_LANGUAGE[primary]) || DEFAULT_EDGE_VOICE;
+  return (
+    (primary && EDGE_DEFAULT_VOICE_BY_LANGUAGE[primary]) || DEFAULT_EDGE_VOICE
+  );
 };
 
 // Edge synthesizes silence when the narrator locale does not match the text.
@@ -1062,7 +1077,7 @@ const synthesizeLordsbook = async (
 
   const request = (async () => {
     try {
-      return await runLordsbookConstrained(async () => {
+      const synthesized = await runLordsbookConstrained(async () => {
         if (lordsbookBreakerOpen()) {
           throw new Error("Lordsbook TTS breaker is open");
         }
@@ -1070,7 +1085,7 @@ const synthesizeLordsbook = async (
         if (redisAudio) {
           setInCache(cacheKey, redisAudio);
           recordLordsbookSuccess();
-          return redisAudio;
+          return { cachedAudio: redisAudio };
         }
 
         // Apply the same sentence-pause compression Edge uses (commas instead
@@ -1078,31 +1093,36 @@ const synthesizeLordsbook = async (
         const processedText = transformTextForTTS(text);
         const clampedSpeed = clampLordsbookSpeed(speed);
 
-        const { audioBuffer: wavBuffer, cacheStatus, hash } =
-          await synthesizeLordsbookSpeech({
-            text: processedText,
-            voice,
-            speed: clampedSpeed,
-            lang,
-          });
+        const {
+          audioBuffer: wavBuffer,
+          cacheStatus,
+          hash,
+        } = await synthesizeLordsbookSpeech({
+          text: processedText,
+          voice,
+          speed: clampedSpeed,
+          lang,
+        });
         // Log cache-level visibility so queue depth can be tuned before the
         // breaker trips. `cacheStatus` comes from the upstream TTS cache when
         // the exact same text+voice+speed was served from the provider cache.
-        const cacheLog =
-          cacheStatus === "HIT"
-            ? "cache-hit"
-            : cacheStatus === "MISS"
-            ? "synthesize"
-            : "synthesize";
+        const cacheLog = cacheStatus === "HIT" ? "cache-hit" : "synthesize";
         console.log(
           `[TTS] Lordsbook ${cacheLog} voice=${voice} lang=${lang} hash=${hash} queue=${lordsbookActive}/${LORDSBOOK_MAX_CONCURRENCY}`,
         );
-        const mp3Buffer = await transcodeWavToMp3(wavBuffer);
-        setInCache(cacheKey, mp3Buffer);
-        void setRedisAudio(cacheKey, mp3Buffer);
-        recordLordsbookSuccess();
-        return mp3Buffer;
+        return { wavBuffer };
       }, priority);
+
+      if (synthesized.cachedAudio) return synthesized.cachedAudio;
+
+      // Transcode OUTSIDE the concurrency slot: the upstream worker is free to
+      // start the next queued verse while ffmpeg runs locally, which roughly
+      // doubles sustained throughput without adding upstream load.
+      const mp3Buffer = await transcodeWavToMp3(synthesized.wavBuffer);
+      setInCache(cacheKey, mp3Buffer);
+      void setRedisAudio(cacheKey, mp3Buffer);
+      recordLordsbookSuccess();
+      return mp3Buffer;
     } catch (error) {
       if (error.message !== "Lordsbook TTS breaker is open") {
         console.warn(
@@ -1132,6 +1152,7 @@ const synthesizeEdge = async (
   voiceId = DEFAULT_EDGE_VOICE,
   speed = DEFAULT_TTS_SPEED,
   fallbackVoice = DEFAULT_EDGE_VOICE,
+  priority = "low",
 ) => {
   const cacheKey = getCacheKey(text, voiceId, speed, "edge-mp3");
   const cached = getFromCache(cacheKey);
@@ -1153,53 +1174,59 @@ const synthesizeEdge = async (
   assertEdgeNotCoolingDown();
 
   try {
-    const buffer = await acquireTimedClient(voiceId, false, async (tts) => {
-      const { audioStream, metadataStream } = tts.toStream(transformedText, {
-        rate,
-      });
-      // Pool sockets have word-boundary metadata enabled; consume the metadata
-      // stream so it doesn't buffer data nobody reads.
-      metadataStream?.on("data", () => {});
-
-      const chunks = [];
-      await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          const error = new Error("Edge TTS synthesis timed out");
-          audioStream.destroy(error);
-          reject(error);
-        }, EDGE_SYNTHESIS_TIMEOUT_MS);
-        audioStream.on("data", (d) => chunks.push(d));
-        audioStream.on("end", () => {
-          clearTimeout(timer);
-          resolve();
+    // Foreground playback must never wait behind prefetch windows: route it to
+    // the dedicated express client instead of the shared work pool.
+    const buffer = await acquireTimedClient(
+      voiceId,
+      priority === "high",
+      async (tts) => {
+        const { audioStream, metadataStream } = tts.toStream(transformedText, {
+          rate,
         });
-        audioStream.on("error", (error) => {
-          clearTimeout(timer);
-          reject(error);
-        });
-      });
+        // Pool sockets have word-boundary metadata enabled; consume the
+        // metadata stream so it doesn't buffer data nobody reads.
+        metadataStream?.on("data", () => {});
 
-      const buf = Buffer.concat(chunks);
-      if (buf.length === 0) {
-        throw new Error("Empty audio received from Edge TTS");
-      }
-      // An MP3 stream that finishes with almost no data is a silent/failed synth
-      if (buf.length < 1_000) {
-        throw new Error("Silent audio received from Edge TTS");
-      }
-      return buf;
-    });
+        const chunks = [];
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            const error = new Error("Edge TTS synthesis timed out");
+            audioStream.destroy(error);
+            reject(error);
+          }, EDGE_SYNTHESIS_TIMEOUT_MS);
+          audioStream.on("data", (d) => chunks.push(d));
+          audioStream.on("end", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+          audioStream.on("error", (error) => {
+            clearTimeout(timer);
+            reject(error);
+          });
+        });
+
+        const buf = Buffer.concat(chunks);
+        if (buf.length === 0) {
+          throw new Error("Empty audio received from Edge TTS");
+        }
+        // An MP3 stream that finishes with almost no data is a silent/failed synth
+        if (buf.length < 1_000) {
+          throw new Error("Silent audio received from Edge TTS");
+        }
+        return buf;
+      },
+    );
 
     setInCache(cacheKey, buffer);
     setRedisAudio(cacheKey, buffer);
     return buffer;
   } catch (err) {
     // The pool drops any broken socket; retry once with the fallback voice.
-    const { code, retryable } = noteEdgeFailure(err);
+    const { code, retryable } = noteEdgeFailure(err, priority);
     console.warn(
       `[TTS] Edge TTS failed for voice "${voiceId}" (${code}${
         retryable ? ", retryable" : ""
-      }): ${err.message}`,
+      }) priority=${priority}: ${err.message}`,
     );
 
     // A rate limit will reject the fallback voice too — stop immediately.
@@ -1207,7 +1234,13 @@ const synthesizeEdge = async (
 
     if (voiceId !== fallbackVoice) {
       console.warn(`[TTS] Retrying with voice "${fallbackVoice}"`);
-      return synthesizeEdge(text, fallbackVoice, speed, fallbackVoice);
+      return synthesizeEdge(
+        text,
+        fallbackVoice,
+        speed,
+        fallbackVoice,
+        priority,
+      );
     }
     throw err;
   }
@@ -1245,7 +1278,11 @@ export const synthesizeWithTimings = async (
           provider: "lordsbook",
         };
       } catch (error) {
-        if (requestedProvider) throw error;
+        // Never hold a client-locked Lordsbook request hostage when the
+        // breaker is open or the upstream is down: serve Edge for this
+        // request and report provider="edge". The app sees the mismatch,
+        // self-corrects its locked provider, and reading continues with one
+        // coherent narrator instead of stalling on repeated 503s.
         console.warn(
           `[TTS] Lordsbook timed synthesis failed; using Edge fallback: ${error.message}`,
         );
@@ -1264,7 +1301,7 @@ export const synthesizeWithTimings = async (
         provider: "edge",
       };
     } catch (err) {
-      const { code } = noteEdgeFailure(err);
+      const { code } = noteEdgeFailure(err, priority);
       // 429 rejects every voice; the next candidate would fail the same way.
       if (code === "rate_limited" || i === candidates.length - 1) throw err;
       console.warn(
@@ -1395,7 +1432,8 @@ export const synthesize = async (
           provider: "lordsbook",
         };
       } catch (error) {
-        if (requestedProvider) throw error;
+        // Same reasoning as synthesizeWithTimings: degrade to Edge instead of
+        // failing a client-locked request while the breaker is open.
         console.warn(
           `[TTS] Lordsbook synthesis failed; using Edge fallback: ${error.message}`,
         );
@@ -1410,6 +1448,8 @@ export const synthesize = async (
       edgeVoice,
       speed,
       defaultEdgeVoiceForLanguage(language),
+      // `/tts/speak` only serves foreground playback, so use the express client.
+      "high",
     ),
     provider: "edge",
   };
