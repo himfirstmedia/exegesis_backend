@@ -43,6 +43,7 @@ import {
   classifyEdgeError,
   getEdgeCooldown,
   resetEdgeCooldown,
+  resolveLordsbookRequestLanguage,
 } from "./service.js";
 
 describe("TTS voice defaults", () => {
@@ -261,6 +262,28 @@ describe("TTS voice defaults", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe("Lordsbook request language", () => {
+  test("keeps an explicit client language", () => {
+    expect(resolveLordsbookRequestLanguage("de", "bm_george")).toBe("de");
+    expect(resolveLordsbookRequestLanguage("  hi  ", "bm_george")).toBe("hi");
+  });
+
+  test("derives the language from the narrator when the client omits it", () => {
+    // Older app builds and the web player post no `lang`; the voice prefix
+    // already fixes the language, so the synthesis log/upstream must not see
+    // `null`.
+    expect(resolveLordsbookRequestLanguage(null, "bm_george")).toBe("en");
+    expect(resolveLordsbookRequestLanguage(undefined, "fm_louis")).toBe("fr");
+    expect(resolveLordsbookRequestLanguage("", "hm_arjun")).toBe("hi");
+    expect(resolveLordsbookRequestLanguage(null, "zm_yunyang")).toBe("zh");
+  });
+
+  test("returns null only when neither the client nor the voice identifies a language", () => {
+    expect(resolveLordsbookRequestLanguage(null, "unknown_voice")).toBeNull();
+    expect(resolveLordsbookRequestLanguage(null, null)).toBeNull();
   });
 });
 

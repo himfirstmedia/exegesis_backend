@@ -352,6 +352,34 @@ const LORDSBOOK_VOICE_PREFIXES = {
   zm: { locale: "Mandarin Chinese", gender: "Male" },
 };
 
+// The Kokoro voice prefix already fixes the accent/language (bm_ = British
+// male, ff_ = French female, ...). Clients that don't send a `lang` (the web
+// player, older app builds) used to forward `lang: null` upstream; deriving it
+// from the resolved narrator keeps the language and the voice consistent and
+// keeps the synthesis log meaningful.
+const LORDSBOOK_LANGUAGE_BY_VOICE_PREFIX = {
+  af: "en",
+  am: "en",
+  bf: "en",
+  bm: "en",
+  ef: "es",
+  em: "es",
+  ff: "fr",
+  fm: "fr",
+  hf: "hi",
+  hm: "hi",
+  if: "it",
+  im: "it",
+  jf: "ja",
+  jm: "ja",
+  pf: "pt",
+  pm: "pt",
+  zf: "zh",
+  zm: "zh",
+  de: "de",
+  ko: "ko",
+};
+
 const LEGACY_LORDSBOOK_VOICE_ALIASES = {
   "en-GB-RyanNeural": "bm_george",
   "en-US-JennyNeural": "af_heart",
@@ -608,6 +636,16 @@ const resolveLordsbookVoice = (voiceId, language) => {
     (languagePrefix && LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE[languagePrefix]) ||
     getDefaultLordsbookVoice()
   );
+};
+
+// The language actually sent upstream: the client's when present, otherwise
+// inferred from the resolved narrator so a request never carries `lang: null`.
+export const resolveLordsbookRequestLanguage = (requestedLang, voice) => {
+  if (typeof requestedLang === "string" && requestedLang.trim()) {
+    return requestedLang.trim();
+  }
+  if (typeof voice !== "string") return null;
+  return LORDSBOOK_LANGUAGE_BY_VOICE_PREFIX[voice.split("_")[0]] || null;
 };
 
 export const DEFAULT_EDGE_VOICE = "en-GB-RyanNeural";
@@ -1065,6 +1103,7 @@ const synthesizeLordsbook = async (
   lang = null,
 ) => {
   const voice = resolveLordsbookVoice(voiceId, lang);
+  const resolvedLang = resolveLordsbookRequestLanguage(lang, voice);
   const cacheKey = getCacheKey(text, voice, speed, "lordsbook-mp3");
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
@@ -1101,14 +1140,14 @@ const synthesizeLordsbook = async (
           text: processedText,
           voice,
           speed: clampedSpeed,
-          lang,
+          lang: resolvedLang,
         });
         // Log cache-level visibility so queue depth can be tuned before the
         // breaker trips. `cacheStatus` comes from the upstream TTS cache when
         // the exact same text+voice+speed was served from the provider cache.
         const cacheLog = cacheStatus === "HIT" ? "cache-hit" : "synthesize";
         console.log(
-          `[TTS] Lordsbook ${cacheLog} voice=${voice} lang=${lang} hash=${hash} queue=${lordsbookActive}/${LORDSBOOK_MAX_CONCURRENCY}`,
+          `[TTS] Lordsbook ${cacheLog} voice=${voice} lang=${resolvedLang} hash=${hash} queue=${lordsbookActive}/${LORDSBOOK_MAX_CONCURRENCY}`,
         );
         return { wavBuffer };
       }, priority);
