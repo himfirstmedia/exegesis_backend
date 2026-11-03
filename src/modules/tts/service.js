@@ -73,19 +73,19 @@ const getCacheKey = (text, voiceId, speed, provider = "edge") => {
   return `v2:${provider}:${hash}:${voiceId || "default"}:${speed || 1.0}`;
 };
 
-// ── Sentence-pause compression (Edge TTS) ─────────────────────────────────
+// ── Sentence-pause compression (Edge TTS, reused by Lordsbook) ────────────
 // Edge TTS inserts ~1.2s of silence at every sentence boundary ("full stop
 // pause"), which makes verse playback drag. The free endpoint rejects
 // <break> and mstts:silence (silently returns empty audio), so the only
 // reliable lever is text-level: converting sentence-ending periods into
 // commas cuts the pause to ~250ms while ? and ! keep their natural
-// question/exclamation intonation. Applied ONLY to Edge synthesis
-// (SSML-based); ElevenLabs handles pacing on its own.
+// question/exclamation intonation. Lordbook has no SSML so it gets the same
+// treatment as Edge so chapter reading keeps a uniform cadence.
 const ABBREVIATIONS =
   /\b(mr|mrs|ms|dr|prof|sr|jr|st|mt|cf|vs|vol|ch|pp|no|approx|etc|e\.g|i\.e)\./gi;
 const DOT_PLACEHOLDER = "\u0001";
 
-const transformTextForEdge = (text) => {
+const transformTextForTTS = (text) => {
   // Protect known abbreviations so their periods are never mistaken for
   // sentence boundaries ("Mr. Smith", "cf. John 3:16")
   const masked = text.replace(ABBREVIATIONS, (m) =>
@@ -109,6 +109,8 @@ const transformTextForEdge = (text) => {
       .replace(/\u0001/g, ".")
   );
 };
+
+const transformTextForEdge = transformTextForTTS;
 
 const getFromCache = (key) => {
   const entry = TTS_CACHE.get(key);
@@ -379,6 +381,51 @@ let lordsbookVoiceCache = null;
 let lordsbookVoiceRequest = null;
 const lordsbookSynthesisInFlight = new Map();
 
+// ── Lordsbook voice map per BCP-47 primary language ────────────────────────
+// Lordsbook Kokoro voice IDs (bm_ = British male, af_ = American female, ...)
+// resolve to a voice that matches the requested text language so the narrator
+// does not mispronounce non-English Scripture. Falls back to the app default
+// if the target language has no Lordbook voice.
+const LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE = {
+  ...EDGE_DEFAULT_VOICE_BY_LANGUAGE,
+  // Lordbook-specific mappings: first choice per language.
+  af: "af_heart",
+  am: "am_adam",
+  bm: "bm_george",
+  bf: "bf_emma",
+  ef: "ef_isabella",
+  em: "em_david",
+  ff: "ff_sophie",
+  fm: "fm_louis",
+  hf: "hf_ananya",
+  hm: "hm_arjun",
+  if: "if_giovanni",
+  im: "im_marco",
+  jf: "jf_yuki",
+  jm: "jm_hiroshi",
+  pf: "pf_joaquim",
+  pm: "pm_carlos",
+  zf: "zf_yunxi",
+  zm: "zm_yunyang",
+  pt: "pm_carlos",
+  es: "em_david",
+  fr: "fm_louis",
+  de: "de_katja",
+  it: "im_marco",
+  ja: "jm_hiroshi",
+  ko: "ko_sunhi",
+  zh: "zm_yunyang",
+};
+
+const LORDSBOOK_MAX_SPEED = Number(process.env.LORDSBOOK_MAX_SPEED) || 2.0;
+const LORDSBOOK_MIN_SPEED = Number(process.env.LORDSBOOK_MIN_SPEED) || 0.5;
+
+const clampLordsbookSpeed = (speed) => {
+  const v = Number(speed);
+  if (!Number.isFinite(v)) return DEFAULT_TTS_SPEED;
+  return Math.min(LORDSBOOK_MAX_SPEED, Math.max(LORDSBOOK_MIN_SPEED, v));
+};
+
 // ── Lordsbook TTS load guard ────────────────────────────────────────────────
 // Kokoro synthesis is ~real-time (a verse costs seconds of CPU/GPU). Firing
 // every prefetch window at the upstream simultaneously overflows its queue and
@@ -504,7 +551,12 @@ const formatLordsbookVoice = (voiceId) => {
     name: formatVoiceName(voiceId),
     voiceId,
     source: "api",
-    category: metadata ? `Kokoro · ${metadata.locale}` : "Kokoro",
+    category: metadata
+      ? `Kokoro · ${metadata.locale}`
+      : // Unknown prefix format: don't show raw ID or "Kokoro · undefined".
+        voiceId.includes("_")
+      ? "Kokoro (unknown format)"
+      : "Kokoro",
   };
 };
 
@@ -528,26 +580,30 @@ const loadLordsbookVoiceIds = async () => {
   return lordsbookVoiceRequest;
 };
 
-const resolveLordsbookVoice = (voiceId) => {
-  if (/^[a-z]{2}_[a-z0-9_]+$/i.test(voiceId || "")) return voiceId;
-  return LEGACY_LORDSBOOK_VOICE_ALIASES[voiceId] || getDefaultLordsbookVoice();
+const normalizeLordsbookLanguage = (language) => {
+  if (typeof language !== "string") return null;
+  const primary = language.trim().toLowerCase().split(/[-_]/)[0];
+  return LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE[primary] ? primary : null;
 };
 
-// ── ElevenLabs voices (paid) ───────────────────────────────────────────────
-const ELEVENLABS_VOICE_IDS = {
-  Rachel: "21m00Tcm4TlvDq8ikWAM",
-  Adam: "pNInz6obpgDQGcFmaJgB",
-  Antoni: "ErXwobaYiN019PkySvjV",
-  Bella: "EXAVITQu4vr2J3Ql38jY",
-  Josh: "TxGEqnHWrfWFTfGW9XjX",
-  Nicole: "piTKgcLEGmPE4e6mEKli",
-  Serena: "pMsXgVXv3BLzN3jMGXJd",
+const resolveLordsbookVoice = (voiceId, language) => {
+  // Explicit Lordbook-style ID passed through as-is; otherwise prefer a
+  // language-matched narrator.
+  if (
+    voiceId &&
+    /^[a-z]{2}_[a-z0-9_]+$/i.test(voiceId) &&
+    !LEGACY_LORDSBOOK_VOICE_ALIASES[voiceId]
+  )
+    return voiceId;
+  const mapped = LEGACY_LORDSBOOK_VOICE_ALIASES[voiceId];
+  const languagePrefix = normalizeLordsbookLanguage(language);
+  return mapped || (languagePrefix && LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE[languagePrefix]) || getDefaultLordsbookVoice();
 };
+
+
 
 export const DEFAULT_EDGE_VOICE = "en-GB-RyanNeural";
 export const DEFAULT_TTS_SPEED = 0.75;
-const DEFAULT_ELEVENLABS_VOICE = "21m00Tcm4TlvDq8ikWAM";
-const ELEVENLABS_MODEL = "eleven_multilingual_v2";
 
 // ── Serialized Edge TTS client pool ────────────────────────────────────────
 // The msedge-tts library multiplexes concurrent stream requests over one
@@ -837,8 +893,6 @@ export const warmUpTTS = async () => {
 
 const isEdgeVoice = (voiceId) => EDGE_VOICES.some((v) => v.voiceId === voiceId);
 
-const isElevenLabsVoice = (voiceId) => false;
-
 // The Edge narrator that best matches a requested voice id: keep the exact
 // Edge voice if that is what was asked for, else translate a Kokoro voice back
 // to its legacy Edge counterpart so the fallback never swaps narrators.
@@ -993,8 +1047,9 @@ const synthesizeLordsbook = async (
   voiceId,
   speed = DEFAULT_TTS_SPEED,
   priority = "low",
+  lang = null,
 ) => {
-  const voice = resolveLordsbookVoice(voiceId);
+  const voice = resolveLordsbookVoice(voiceId, lang);
   const cacheKey = getCacheKey(text, voice, speed, "lordsbook-mp3");
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
@@ -1018,11 +1073,30 @@ const synthesizeLordsbook = async (
           return redisAudio;
         }
 
-        const { audioBuffer: wavBuffer } = await synthesizeLordsbookSpeech({
-          text,
-          voice,
-          speed,
-        });
+        // Apply the same sentence-pause compression Edge uses (commas instead
+        // of ~1.2s full-stop pauses) so chapter reading keeps a uniform cadence.
+        const processedText = transformTextForTTS(text);
+        const clampedSpeed = clampLordsbookSpeed(speed);
+
+        const { audioBuffer: wavBuffer, cacheStatus, hash } =
+          await synthesizeLordsbookSpeech({
+            text: processedText,
+            voice,
+            speed: clampedSpeed,
+            lang,
+          });
+        // Log cache-level visibility so queue depth can be tuned before the
+        // breaker trips. `cacheStatus` comes from the upstream TTS cache when
+        // the exact same text+voice+speed was served from the provider cache.
+        const cacheLog =
+          cacheStatus === "HIT"
+            ? "cache-hit"
+            : cacheStatus === "MISS"
+            ? "synthesize"
+            : "synthesize";
+        console.log(
+          `[TTS] Lordsbook ${cacheLog} voice=${voice} lang=${lang} hash=${hash} queue=${lordsbookActive}/${LORDSBOOK_MAX_CONCURRENCY}`,
+        );
         const mp3Buffer = await transcodeWavToMp3(wavBuffer);
         setInCache(cacheKey, mp3Buffer);
         void setRedisAudio(cacheKey, mp3Buffer);
@@ -1290,12 +1364,6 @@ const synthesizeWithTimingsOnce = async (
   return result;
 };
 
-// ── ElevenLabs synthesis ───────────────────────────────────────────────────
-
-const synthesizeElevenLabs = async () => {
-  throw new Error("ElevenLabs is disabled");
-};
-
 // ── Main synthesize ────────────────────────────────────────────────────────
 
 export const synthesize = async (
@@ -1317,7 +1385,13 @@ export const synthesize = async (
     } else {
       try {
         return {
-          audioBuffer: await synthesizeLordsbook(text, voiceId, speed, "high"),
+          audioBuffer: await synthesizeLordsbook(
+            text,
+            voiceId,
+            speed,
+            "high",
+            language,
+          ),
           provider: "lordsbook",
         };
       } catch (error) {

@@ -7,10 +7,14 @@ export const speak = async (req, res) => {
     if (!text || !text.trim()) {
       return res.status(400).json(formatApiResponse({ status: 400, message: "Text is required" }));
     }
+    // Clamp speed so the client cannot request garbled (>2x) or unusable
+    // (<0.5x) playback; Lordsbook clamps on the way through, but guard at the
+    // edge too so Edge and any future provider are protected.
+    const clampedSpeed = Math.min(2.0, Math.max(0.5, Number(speed) || 1));
     const result = await ttsService.synthesize(
       text,
       voiceId,
-      speed,
+      clampedSpeed,
       provider,
       lang || language,
     );
@@ -36,10 +40,13 @@ export const speakWithTimings = async (req, res) => {
     if (!text || !text.trim()) {
       return res.status(400).json(formatApiResponse({ status: 400, message: "Text is required" }));
     }
+    // Clamp speed the same way as `speak` so playback never runs at garbled
+    // rates, regardless of which provider serves the track.
+    const clampedSpeed = Math.min(2.0, Math.max(0.5, Number(speed) || 1));
     const result = await ttsService.synthesizeWithTimings(
       text,
       voiceId,
-      speed,
+      clampedSpeed,
       req.body.priority === "high" ? "high" : "low",
       req.body.provider,
       req.body.lang || req.body.language,
@@ -50,10 +57,15 @@ export const speakWithTimings = async (req, res) => {
       provider: result.provider,
     });
   } catch (error) {
-    // Retryable upstream failures (Edge rate limit / network timeout) surface
-    // as 503 so the client can fall back to device TTS instead of treating it
-    // as a hard error. Expected failures log one concise line, not a stack.
-    const status = error?.statusCode || (req.body.provider ? 503 : 500);
+    // Silence / failed conversion for Lordsbook, Edge rate-limits and network
+    // timeouts are all retryable: surface 503 so the client falls back to
+    // device TTS instead of treating the audio as permanently broken.
+    const isRetryable =
+      error?.statusCode === 503 ||
+      /silent|empty audio|conversion failed|timeout/i.test(error.message);
+    const status = isRetryable
+      ? 503
+      : error?.statusCode || (req.body.provider ? 503 : 500);
     console.warn(
       `[TTS] timed speak failed (${error?.code || "error"}): ${error.message}`,
     );
