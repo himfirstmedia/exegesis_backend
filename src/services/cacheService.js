@@ -212,7 +212,38 @@ const acquireLock = async (name, ttlSeconds = 60) => {
   }
 };
 
-export const cache = { get, set, getOrSet, del, acquireLock, isReady: () => ready,
+/**
+ * Break a lock that can never expire on its own.
+ *
+ * `acquireLock` always writes `EX`, so a key with no TTL (`TTL` === -1) was
+ * left by an older release or an external `SET` without an expiry. Such a lock
+ * would otherwise deadlock the job forever — every instance keeps skipping
+ * while nothing is actually running. Returns true when a stale lock was
+ * removed and the caller should retry acquisition.
+ *
+ * @param {string} name - Lock name (without the `lock:` prefix).
+ * @returns {Promise<boolean>}
+ */
+const recoverStaleLock = async (name) => {
+  if (!ready) return false;
+  try {
+    const c = getClient();
+    if (!c) return false;
+    const key = `lock:${name}`;
+    const ttl = await c.ttl(key);
+    // -1 => held with no expiry; -2 => absent (nothing to recover).
+    if (ttl === -1) {
+      await c.del(key);
+      return true;
+    }
+    return false;
+  } catch {
+    ready = false;
+    return false;
+  }
+};
+
+export const cache = { get, set, getOrSet, del, acquireLock, recoverStaleLock, isReady: () => ready,
   // CLI builders start immediately after import, before the eager connection
   // may be ready. Let them wait for Redis before acquiring distributed locks.
   waitUntilReady: async () => {

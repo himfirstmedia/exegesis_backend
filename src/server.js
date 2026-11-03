@@ -16,7 +16,8 @@ import { errorHandler } from "./middlewares/errorHandler.middleware.js";
 import { absoluteMediaUrl } from "./middlewares/absoluteMediaUrl.middleware.js";
 import { privateCache } from './middlewares/privateCache.middleware.js';
 import { localizeResponseMessage } from "./middlewares/localizeResponseMessage.middleware.js";
-import { startEmailScheduler } from "./services/emailScheduler.js";
+import { startEmailScheduler, stopEmailScheduler } from "./services/emailScheduler.js";
+import { resetTransporter } from "./config/email.js";
 import { startPopularSearchCleanup } from "./services/popularSearchCleanup.js";
 import { startPushScheduler } from "./services/pushNotificationScheduler.js";
 import translationRouter from "./modules/bible-translations/route.js";
@@ -287,6 +288,8 @@ process.on("uncaughtException", async (error) => {
 
 process.on("SIGTERM", async () => {
   console.log("SIGTERM received, shutting down gracefully...");
+  stopEmailScheduler();
+  resetTransporter();
   await stopOverviewPackPublisher();
   server.close(async () => {
     await disconnectDB();

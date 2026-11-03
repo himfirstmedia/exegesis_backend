@@ -1,6 +1,6 @@
 const mockSendMail = jest.fn().mockResolvedValue({ messageId: 'test' });
 jest.mock('../config/email.js', () => ({
-  createTransporter: () => ({ sendMail: mockSendMail }),
+  getTransporter: () => ({ sendMail: mockSendMail }),
   buildMailOptions: (options) => options,
 }));
 jest.mock('../config/db.js', () => ({ prisma: {} }));

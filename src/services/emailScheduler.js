@@ -10,6 +10,10 @@ const CRON_INTERVAL = "*/30 * * * * *";
 // long. 2 minutes is comfortably above the 30s cadence.
 const LOCK_TTL_SECONDS = 120;
 const LOCK_NAME = "email-scheduler";
+// Renew the lock while a sweep is still running so a slow batch (many
+// recipients, SMTP retries) cannot outlive the TTL and let a second instance
+// start sending the same rows.
+const LOCK_RENEW_INTERVAL_MS = Math.floor((LOCK_TTL_SECONDS * 1000) / 3);
 // Exponential backoff when the database is unavailable: 1m → 2m → 4m → 5m cap.
 // Without this the scheduler hammered a dead connection pool every 30s during
 // outages, starving the API of connections (the P2024 "connection pool
@@ -20,9 +24,38 @@ const MAX_BACKOFF_SECONDS = 300;
 let isRunning = false;
 let backoffSeconds = 0; // 0 = healthy, runs every tick
 let nextAllowedRunAt = 0;
+// Log lock contention only when the holder changes, not on every 30s tick.
+// The whole point of the lock is that only one instance works; the other
+// instances should sit quietly rather than print a line every tick.
+let lockHeldByOther = false;
+let scheduledTask = null;
 
 const schedule = (seconds) => {
   nextAllowedRunAt = Date.now() + seconds * 1000;
+};
+
+/**
+ * Keep the distributed lock alive for the duration of a long sweep. The timer
+ * is unref'd so it never keeps the process (or a test) alive on its own.
+ */
+const startLockRenewal = (lock) => {
+  if (typeof lock.renew !== "function") return null;
+  const timer = setInterval(() => {
+    lock
+      .renew()
+      .then((renewed) => {
+        if (!renewed) {
+          console.warn(
+            "[EmailScheduler] Lost the queue lock mid-sweep; another instance may take over.",
+          );
+        }
+      })
+      .catch(() => {
+        // Redis blips are already surfaced by the cache layer.
+      });
+  }, LOCK_RENEW_INTERVAL_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  return timer;
 };
 
 /**
@@ -41,13 +74,31 @@ export const runEmailSweep = async () => {
   // Prevent two instances sending the same queued email. The lock is released
   // in `finally`, so a healthy run never waits for the TTL.
   isRunning = true;
-  const lock = await cache.acquireLock(LOCK_NAME, LOCK_TTL_SECONDS);
+  let lock = await cache.acquireLock(LOCK_NAME, LOCK_TTL_SECONDS);
+  if (!lock.acquired) {
+    // A crash or an older release can leave a lock with no expiry, which would
+    // starve the queue forever. Break it once and retry before standing by.
+    const recovered = await cache.recoverStaleLock?.(LOCK_NAME);
+    if (recovered) {
+      lock = await cache.acquireLock(LOCK_NAME, LOCK_TTL_SECONDS);
+    }
+  }
   if (!lock.acquired) {
     isRunning = false;
-    console.log("[EmailScheduler] Another instance is processing the queue, skipping...");
+    if (!lockHeldByOther) {
+      lockHeldByOther = true;
+      console.log(
+        "[EmailScheduler] Another instance owns the queue; standing by.",
+      );
+    }
     return;
   }
+  if (lockHeldByOther) {
+    console.log("[EmailScheduler] Acquired the queue lock; resuming sweeps.");
+    lockHeldByOther = false;
+  }
 
+  const renewTimer = startLockRenewal(lock);
   try {
     await processPendingMessages();
     // Healthy run — clear any backoff.
@@ -70,15 +121,19 @@ export const runEmailSweep = async () => {
       console.error("[EmailScheduler] Error:", error.message);
     }
   } finally {
+    if (renewTimer) clearInterval(renewTimer);
     isRunning = false;
     await lock.release();
   }
 };
 
 export const startEmailScheduler = () => {
+  if (scheduledTask) return;
   console.log(`Email scheduler started - running every 30 seconds`);
 
-  cron.schedule(CRON_INTERVAL, () => {
+  // node-cron (v4) returns the scheduled task; there is no module-level
+  // `cron.stop`, so keep the handle to be able to stop it on shutdown.
+  scheduledTask = cron.schedule(CRON_INTERVAL, () => {
     runEmailSweep().catch((error) =>
       console.error("[EmailScheduler] Unhandled sweep error:", error.message),
     );
@@ -86,7 +141,13 @@ export const startEmailScheduler = () => {
 };
 
 export const stopEmailScheduler = () => {
-  cron.stop();
+  if (!scheduledTask) return;
+  try {
+    scheduledTask.stop();
+  } catch (error) {
+    console.error("[EmailScheduler] Failed to stop scheduler:", error.message);
+  }
+  scheduledTask = null;
   console.log("Email scheduler stopped");
 };
 
@@ -95,4 +156,6 @@ export const __resetEmailSchedulerState = () => {
   isRunning = false;
   backoffSeconds = 0;
   nextAllowedRunAt = 0;
+  lockHeldByOther = false;
+  scheduledTask = null;
 };
