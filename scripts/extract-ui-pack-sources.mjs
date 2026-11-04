@@ -128,6 +128,15 @@ for (const name of fs.readdirSync(localeRoot).sort()) {
   }
   if (Object.keys(labels).length) overrides[language] = labels;
 }
+// A provider can echo the English source for very short labels ("Sort",
+// "Clear", "Newest") or pick the wrong sense ("Export" as goods, "Tag" as a
+// day). Curated overrides pin those ambiguous UI words to reviewed wording.
+// They are source-keyed so they follow the same validation and revision hash
+// as authored brand spellings.
+const curatedOverrides = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'ui-pack-overrides.json'), 'utf8'));
+for (const [language, labels] of Object.entries(curatedOverrides)) {
+  overrides[language] = { ...(overrides[language] || {}), ...labels };
+}
 const revision = createHash('sha256').update(`ui-v2:${JSON.stringify({ texts, overrides })}`).digest('hex').slice(0, 12);
 const catalog = JSON.stringify({ schemaVersion: 1, revision, texts, overrides }, null, 2) + '\n';
 const targets = [path.join(app, 'services/translation/ui-pack-source.json'), path.join(root, 'backend/src/modules/text-to-text-translation/ui-pack-source.json')];

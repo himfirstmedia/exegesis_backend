@@ -10,6 +10,7 @@ import { EMAIL_LOGO_URL } from "../../utils/emailTemplates.js";
 const JOURNAL_ENTRY_TEXT_FIELDS = [
   "title",
   "content",
+  "observations",
   "prayers",
   "gratitude",
   "learnings",
@@ -83,6 +84,7 @@ export const createJournalEntry = async (data, userId) => {
   const {
     title,
     content,
+    observations,
     bookName,
     chapter,
     verseNumber,
@@ -109,6 +111,7 @@ export const createJournalEntry = async (data, userId) => {
       userId,
       title,
       content,
+      observations: observations || null,
       bookName: bookName || null,
       chapter: chapter ? BigInt(chapter) : null,
       verseNumber: verseNumber ? BigInt(verseNumber) : null,
@@ -140,6 +143,7 @@ export const updateJournalEntry = async (data, userId) => {
     id,
     title,
     content,
+    observations,
     bookName,
     chapter,
     verseNumber,
@@ -172,6 +176,7 @@ export const updateJournalEntry = async (data, userId) => {
   const updateData = {};
   if (title !== undefined) updateData.title = title;
   if (content !== undefined) updateData.content = content;
+  if (observations !== undefined) updateData.observations = observations;
   if (bookName !== undefined) updateData.bookName = bookName;
   if (chapter !== undefined) updateData.chapter = chapter ? BigInt(chapter) : null;
   if (verseNumber !== undefined) updateData.verseNumber = verseNumber ? BigInt(verseNumber) : null;
@@ -265,6 +270,7 @@ export const getAllJournalEntries = async (data, userId) => {
     search,
     category,
     bookName,
+    tag,
     isFavorite,
     isPublished,
     startDate,
@@ -273,12 +279,18 @@ export const getAllJournalEntries = async (data, userId) => {
     source,
     page = 1,
     pageSize = 20,
+    sort = "newest",
     lang,
   } = data;
 
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
   const offset = (pageNum - 1) * pageSizeNum;
+  const orderBy = sort === "oldest"
+    ? { createdOn: "asc" }
+    : sort === "updated"
+      ? { updatedOn: "desc" }
+      : { createdOn: "desc" };
 
   const whereClause = { userId };
 
@@ -286,12 +298,14 @@ export const getAllJournalEntries = async (data, userId) => {
     whereClause.OR = [
       { title: { contains: search, mode: "insensitive" } },
       { content: { contains: search, mode: "insensitive" } },
+      { observations: { contains: search, mode: "insensitive" } },
       { tags: { contains: search, mode: "insensitive" } },
     ];
   }
 
   if (category) whereClause.category = category;
   if (bookName) whereClause.bookName = bookName;
+  if (tag) whereClause.tags = { contains: tag, mode: "insensitive" };
   if (isFavorite !== undefined) whereClause.isFavorite = isFavorite;
   if (isPublished !== undefined) whereClause.isPublished = isPublished;
   if (source) whereClause.source = source;
@@ -310,7 +324,7 @@ export const getAllJournalEntries = async (data, userId) => {
       where: whereClause,
       skip: offset,
       take: pageSizeNum,
-      orderBy: { createdOn: "desc" },
+      orderBy,
     }),
     prisma.journalEntry.count({ where: whereClause }),
   ]);
@@ -884,6 +898,7 @@ const JOURNAL_EXPORT_COPY = {
   privacy: "Privacy",
   title: "Title",
   journal: "Journal",
+  observations: "Observations",
   gratitude: "Gratitude",
   learnings: "Learnings",
   prayer: "Prayer",
@@ -1138,6 +1153,13 @@ export const exportAllEntries = async (userId, format, ids, requestedLanguage = 
         doc.moveDown(0.3);
       }
 
+      if (entry.observations) {
+        if (doc.y > 620) doc.addPage();
+        doc.fontSize(12).font(fonts.bold).fillColor('#333333').text(copy.observations);
+        doc.fontSize(12).font(fonts.regular).fillColor('#555555').text(entry.observations, { lineGap: 5 });
+        doc.moveDown(0.25);
+      }
+
       if (entry.gratitude) {
         if (doc.y > 620) doc.addPage();
         doc.fontSize(12).font(fonts.bold).fillColor('#333333').text(copy.gratitude);
@@ -1242,6 +1264,11 @@ export const exportAllEntries = async (userId, format, ids, requestedLanguage = 
     lines.push('');
     if (entry.content) lines.push(entry.content);
     lines.push('');
+    if (entry.observations) {
+      lines.push('Observations:');
+      lines.push(entry.observations);
+      lines.push('');
+    }
     if (entry.gratitude) {
       lines.push('Gratitude:');
       lines.push(entry.gratitude);
@@ -1455,6 +1482,13 @@ export const exportOneEntry = async (id, userId, format, requestedLanguage = "en
       doc.moveDown(0.3);
     }
 
+    // ── Observations ──
+    if (pdfEntry.observations) {
+      sectionHeader({ label: copy.observations, color: '#0EA5E9' });
+      bodyText(pdfEntry.observations);
+      doc.moveDown(0.2);
+    }
+
     // ── Gratitude ──
     if (pdfEntry.gratitude) {
       sectionHeader({ label: copy.gratitude, color: '#F59E0B' });
@@ -1572,6 +1606,11 @@ export const exportOneEntry = async (id, userId, format, requestedLanguage = "en
   lines.push('');
   if (entry.content) lines.push(entry.content);
   lines.push('');
+  if (entry.observations) {
+    lines.push('Observations:');
+    lines.push(entry.observations);
+    lines.push('');
+  }
   if (entry.gratitude) {
     lines.push('Gratitude:');
     lines.push(entry.gratitude);
@@ -1672,6 +1711,7 @@ export const getPublicEntries = async (data, userId) => {
     search,
     bookName,
     category,
+    tag,
     startDate,
     endDate,
     page = 1,
@@ -1691,12 +1731,14 @@ export const getPublicEntries = async (data, userId) => {
     whereClause.OR = [
       { title: { contains: search, mode: "insensitive" } },
       { content: { contains: search, mode: "insensitive" } },
+      { observations: { contains: search, mode: "insensitive" } },
       { tags: { contains: search, mode: "insensitive" } },
     ];
   }
 
   if (bookName) whereClause.bookName = bookName;
   if (category) whereClause.category = category;
+  if (tag) whereClause.tags = { contains: tag, mode: "insensitive" };
 
   if (startDate || endDate) {
     whereClause.createdOn = {};

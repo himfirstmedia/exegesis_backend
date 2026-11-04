@@ -202,6 +202,46 @@ describe("journal public content translation", () => {
     });
   });
 
+  test("filters entries by tag and searches observations", async () => {
+    prisma.journalEntry.findMany.mockResolvedValue([]);
+    prisma.journalEntry.count.mockResolvedValue(0);
+
+    await getAllJournalEntries(
+      { page: 1, pageSize: 20, tag: "faith", lang: "en" },
+      "user-1",
+    );
+
+    expect(prisma.journalEntry.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          userId: "user-1",
+          tags: { contains: "faith", mode: "insensitive" },
+        },
+      }),
+    );
+  });
+
+  test("searches observations alongside title, content and tags", async () => {
+    prisma.journalEntry.findMany.mockResolvedValue([]);
+    prisma.journalEntry.count.mockResolvedValue(0);
+
+    await getAllJournalEntries(
+      { page: 1, pageSize: 20, search: "grace", lang: "en" },
+      "user-1",
+    );
+
+    expect(prisma.journalEntry.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          userId: "user-1",
+          OR: expect.arrayContaining([
+            { observations: { contains: "grace", mode: "insensitive" } },
+          ]),
+        },
+      }),
+    );
+  });
+
   test("reports English when journal localization fails", async () => {
     cache.getOrSet.mockResolvedValue({
       id: 23n,

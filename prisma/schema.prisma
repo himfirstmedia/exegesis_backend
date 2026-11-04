@@ -559,6 +559,7 @@ model JournalEntry {
   userId           String            @map("user_id")
   title            String?
   content          String
+  observations     String?
   bookName         String?           @map("book_name")
   chapter          BigInt?           @map("chapter")
   verseNumber      BigInt?           @map("verse_number")

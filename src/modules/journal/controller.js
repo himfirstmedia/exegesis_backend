@@ -1,4 +1,5 @@
 import * as journalService from "./service.js";
+import * as ledgerService from "../ledger/service.js";
 
 export const createJournalEntry = async (req, res) => {
   try {
@@ -62,7 +63,7 @@ export const getAllJournalEntries = async (req, res) => {
     if (!userId) {
       return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
     }
-    const result = await journalService.getAllJournalEntries(req.body, userId);
+    const result = await ledgerService.listEntries(req.body, userId);
     return res.status(result.returnCode || 500).json(result);
   } catch (error) {
     console.error("Get all journal entries error:", error);
@@ -104,7 +105,7 @@ export const getJournalStats = async (req, res) => {
     if (!userId) {
       return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
     }
-    const result = await journalService.getJournalStats(userId, req.body?.lang);
+    const result = await ledgerService.getStats(userId, req.body?.lang);
     return res.status(result.returnCode || 500).json(result);
   } catch (error) {
     console.error("Get journal stats error:", error);
@@ -203,7 +204,7 @@ export const exportAllEntries = async (req, res) => {
     const format = req.body?.format || 'txt';
     const ids = req.body?.ids;
     const lang = req.body?.lang;
-    const result = await journalService.exportAllEntries(userId, format, ids, lang);
+    const result = await ledgerService.exportAll(userId, format, ids, lang);
     return res.status(result.returnCode || 200).json(result);
   } catch (error) {
     console.error("Export all entries error:", error);
@@ -218,7 +219,7 @@ export const exportOneEntry = async (req, res) => {
       return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
     }
     const { id, format, lang } = req.body;
-    const result = await journalService.exportOneEntry(id, userId, format || 'txt', lang);
+    const result = await ledgerService.exportOne(id, userId, format || 'txt', lang);
     return res.status(result.returnCode || 200).json(result);
   } catch (error) {
     console.error("Export one entry error:", error);
@@ -232,7 +233,7 @@ export const getPublicEntries = async (req, res) => {
     if (!userId) {
       return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
     }
-    const result = await journalService.getPublicEntries(req.body, userId);
+    const result = await ledgerService.discoverEntries(req.body, userId);
     return res.status(result.returnCode || 200).json(result);
   } catch (error) {
     console.error("Get public entries error:", error);
@@ -260,7 +261,7 @@ export const searchEntriesByStrongs = async (req, res) => {
     if (!userId) {
       return res.status(401).json({ returnCode: 401, returnMessage: "Unauthorized" });
     }
-    const result = await journalService.searchEntriesByStrongs(req.body, userId);
+    const result = await ledgerService.searchByStrongs(req.body, userId);
     return res.status(result.returnCode || 200).json(result);
   } catch (error) {
     console.error("Search entries by Strong's error:", error);

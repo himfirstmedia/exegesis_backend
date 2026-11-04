@@ -194,40 +194,74 @@ export const saveAbideStage = async (sessionId, userId, body) => {
     return { status: 404, message: 'Session not found' };
   }
 
-  // Create journal entry from abide content
-  const journalEntry = await prisma.journalEntry.create({
-    data: {
-      userId,
-      title: `Exegesis: ${session.passageRef}`,
-      content: body.reflection || '',
-      bookName: session.bookName,
-      chapter: session.chapter,
-      verseNumber: session.verseStart,
-      category: 'study',
-      prayers: body.prayer || '',
-      application: body.application || '',
-      tags: body.tags || '',
-      isPublished: body.isPublic || false,
-      strongsWords: body.strongsWords || null,
-      strongsIds: body.strongsIds || null,
-      source: 'exegesis-lab',
-    },
-  });
+  // Abide may be retried (offline replay, double tap, re-opened session).
+  // Reuse the session's journal entry so the Legacy Ledger never receives
+  // duplicate rows for the same Lab session.
+  const journalData = {
+    content: body.reflection || '',
+    prayers: body.prayer || '',
+    application: body.application || '',
+    tags: body.tags || '',
+    isPublished: body.isPublic ?? session.isPublic ?? false,
+    strongsWords: body.strongsWords ?? session.strongsWords ?? null,
+    strongsIds: body.strongsIds ?? session.strongsIds ?? null,
+  };
 
-  const updated = await prisma.exegesisSession.update({
-    where: { id: sessionId },
-    data: {
-      abideReflection: body.reflection,
-      abidePrayer: body.prayer,
-      abideApplication: body.application,
-      abideTags: body.tags,
-      strongsWords: body.strongsWords || null,
-      strongsIds: body.strongsIds || null,
-      isPublic: body.isPublic ?? false,
-      journalEntryId: journalEntry.id,
-      completed: true,
-      currentStage: 'completed',
-    },
+  const { journalEntry, updated } = await prisma.$transaction(async (tx) => {
+    let entry = null;
+
+    if (session.journalEntryId) {
+      entry = await tx.journalEntry.findFirst({
+        where: { id: session.journalEntryId, userId },
+      });
+      if (entry) {
+        entry = await tx.journalEntry.update({
+          where: { id: entry.id },
+          data: {
+            ...journalData,
+            ...(body.observations !== undefined
+              ? { observations: body.observations }
+              : {}),
+            updatedBy: userId,
+          },
+        });
+      }
+    }
+
+    if (!entry) {
+      entry = await tx.journalEntry.create({
+        data: {
+          userId,
+          title: `Exegesis: ${session.passageRef}`,
+          ...journalData,
+          observations: body.observations ?? session.lookNotes ?? null,
+          bookName: session.bookName,
+          chapter: session.chapter,
+          verseNumber: session.verseStart,
+          category: 'study',
+          source: 'exegesis-lab',
+          createdBy: userId,
+        },
+      });
+    }
+
+    const savedSession = await tx.exegesisSession.update({
+      where: { id: sessionId },
+      data: {
+        abideReflection: body.reflection ?? session.abideReflection,
+        abidePrayer: body.prayer ?? session.abidePrayer,
+        abideApplication: body.application ?? session.abideApplication,
+        abideTags: body.tags ?? session.abideTags,
+        strongsWords: journalData.strongsWords,
+        strongsIds: journalData.strongsIds,
+        isPublic: journalData.isPublished,
+        journalEntryId: entry.id,
+        completed: true,
+        currentStage: 'completed',
+      },
+    });
+
+    return { journalEntry: entry, updated: savedSession };
   });
 
   return {
@@ -236,6 +270,7 @@ export const saveAbideStage = async (sessionId, userId, body) => {
     data: serializeBigInt({
       session: updated,
       journalEntry: serializeBigInt(journalEntry),
+      journalEntryId: serializeBigInt(journalEntry.id),
     }),
   };
 };

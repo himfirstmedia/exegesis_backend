@@ -54,7 +54,12 @@ tests or credentials. Authored copy constants (`BASE_COPY`, `EXTRA_COPY`,
 `SOWER_COPY`, `sharedCopy`, `inboxCopy`, …) contribute every value literal
 (object values and array elements) so short labels and placeholder-led
 templates (e.g. `{count} in a row`, `{count} messages`) are pack-complete even
-when they do not look like sentences, as do support FAQ `keywords`. It writes
+when they do not look like sentences, as do support FAQ `keywords`.
+`backend/scripts/ui-pack-overrides.json` pins reviewed wording for short,
+ambiguous labels that machine providers commonly echo back in English or read
+in the wrong sense (for example `Sort`, `Clear`, `Tag`, `Export selected`).
+Overrides are keyed by the exact English source and participate in the revision
+hash, so they are deterministic and survive `extract`/`check`. It writes
 identical source catalogues to the app and
 backend, with a content-derived revision. Commit both generated files and
 release them together. CI can run `check:ui-packs` to catch stale catalogues.

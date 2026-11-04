@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "d51aedbe1686",
+  "revision": "0ae678d1dd39",
   "texts": [
     "#faith #prayer #study",
     "(Cannot change your own role)",
@@ -441,6 +441,7 @@
     "Christian Standard Bible",
     "Clear",
     "Clear & Try Again",
+    "Clear all",
     "Clear filters",
     "Clipboard failed:",
     "Close",
@@ -867,6 +868,11 @@
     "Explore context and key words",
     "Explore original language and references.",
     "Explore reading plans to deepen your Bible study",
+    "Export",
+    "Export failed",
+    "Export ready",
+    "Export selected",
+    "Exporting...",
     "ExtendedProfile",
     "Eye",
     "Ezekiel",
@@ -1041,7 +1047,9 @@
     "Filipino",
     "Fill in your details to get started",
     "Filter by Book",
+    "Filter by book",
     "Filter by language",
+    "Filter by tag",
     "Final Score",
     "Final Thoughts",
     "Find related words and passages.",
@@ -1270,6 +1278,7 @@
     "JOURNAL",
     "JOURNAL ADMIN",
     "JOURNAL ENTRY",
+    "JSON",
     "James",
     "January",
     "Japanese",
@@ -1451,6 +1460,7 @@
     "Main Themes (one per line)",
     "Maithili",
     "Maithili Bible 2010",
+    "Make private",
     "Malachi",
     "Malayalam",
     "Malayalam Bible — Indian Revised Version",
@@ -1572,8 +1582,10 @@
     "New Testament",
     "New Tier",
     "New attachment. Tap to view it.",
+    "New entry",
     "New message",
     "New this month",
+    "Newest",
     "Next",
     "Next Chapter",
     "Next Day",
@@ -1743,7 +1755,9 @@
     "OT ·",
     "Obadiah",
     "Observation",
+    "Observations",
     "Observations and responses",
+    "Observations: ",
     "Observe the passage carefully",
     "October",
     "Odia",
@@ -1754,6 +1768,7 @@
     "Offline - showing cached data",
     "Old",
     "Old Testament",
+    "Oldest",
     "On Fire!",
     "On the Profile tab, tap your account status card to open the secure billing portal. You can cancel, switch tiers or change the payment method there; access continues until the end of the paid period.",
     "On the sign-in screen tap “Forgot password”. Enter your email, type the verification code we send you, then choose a new password.",
@@ -2067,6 +2082,7 @@
     "Recent Activity",
     "Recent Searches",
     "Recently downloaded",
+    "Recently updated",
     "Reconnecting",
     "Record what God is teaching you",
     "Record what God is teaching you.",
@@ -2297,6 +2313,7 @@
     "Select a plan to start reading",
     "Select a verse to load its text",
     "Select a voice",
+    "Select all",
     "Select and start reading",
     "Select book",
     "Select book (optional)",
@@ -2338,6 +2355,7 @@
     "Share Verse",
     "Share failed",
     "Share failed:",
+    "Share publicly",
     "Share this verse with others.",
     "Share verse",
     "Shared from Exegesis",
@@ -2395,6 +2413,7 @@
     "Something went wrong while logging out. Please try again.",
     "Something went wrong. Please try again.",
     "Song of Solomon",
+    "Sort",
     "Sort Order",
     "Sort by",
     "South Asian Languages",
@@ -2544,6 +2563,7 @@
     "TODAY",
     "TOOLS",
     "TXT",
+    "Tag",
     "Tagalog",
     "Tagalog Bible — Ang Biblia",
     "Tags",
@@ -2924,6 +2944,7 @@
     "What did I get out of this verse and study?",
     "What did you learn?",
     "What do the conversation statuses mean?",
+    "What do you notice in the text?",
     "What do you want to pray for?",
     "What does the text say?",
     "What does this mean?",
@@ -3135,6 +3156,7 @@
     "e.g. 2026-12-31",
     "e.g. BSB, KJV, NIV",
     "e.g. Creation — In the beginning",
+    "e.g. G26",
     "e.g. God said, Let there be light",
     "e.g. One Week Bible Highlights",
     "email",
@@ -3390,7 +3412,17 @@
   "overrides": {
     "ar": {
       "Google": "جوجل",
-      "LordsBook": "لوردسبوك"
+      "LordsBook": "لوردسبوك",
+      "Tag": "وسم",
+      "Filter by book": "تصفية حسب الكتاب",
+      "Filter by tag": "تصفية حسب الوسم",
+      "Sort": "ترتيب",
+      "Newest": "الأحدث",
+      "Select": "اختيار",
+      "Clear": "مسح",
+      "{count} selected": "{count} محدد",
+      "Select all": "تحديد الكل",
+      "Share publicly": "مشاركة علنًا"
     },
     "as": {
       "Google": "গুগল",
@@ -3402,7 +3434,17 @@
     },
     "de": {
       "Google": "Google",
-      "LordsBook": "LordsBook"
+      "LordsBook": "LordsBook",
+      "Sort": "Sortieren",
+      "Oldest": "Älteste",
+      "Clear all": "Alles löschen",
+      "Clear": "Löschen",
+      "Cancel": "Abbrechen",
+      "Export selected": "Auswahl exportieren",
+      "Export ready": "Export bereit",
+      "Export failed": "Export fehlgeschlagen",
+      "Share publicly": "Öffentlich teilen",
+      "Make private": "Privat machen"
     },
     "doi": {
       "Google": "गूगल",
@@ -3418,15 +3460,34 @@
     },
     "es": {
       "Google": "Google",
-      "LordsBook": "LordsBook"
+      "LordsBook": "LordsBook",
+      "Tag": "Etiqueta",
+      "Sort": "Ordenar",
+      "Clear all": "Borrar todo",
+      "Clear": "Borrar"
     },
     "fil": {
       "Google": "Google",
-      "LordsBook": "LordsBook"
+      "LordsBook": "LordsBook",
+      "Observations": "Mga obserbasyon",
+      "Filter by book": "I-filter ayon sa aklat",
+      "Filter by tag": "I-filter ayon sa tag",
+      "Strong's": "Strong's",
+      "Sort": "Ayusin",
+      "Oldest": "Pinakaluma",
+      "Clear all": "I-clear lahat",
+      "Clear": "I-clear",
+      "Export selected": "I-export ang napili",
+      "JSON": "JSON",
+      "Exporting...": "Nag-e-export...",
+      "Export failed": "Nabigo ang pag-export"
     },
     "fr": {
       "Google": "Google",
-      "LordsBook": "LordsBook"
+      "LordsBook": "LordsBook",
+      "Sort": "Trier",
+      "Export selected": "Exporter la sélection",
+      "Make private": "Rendre privé"
     },
     "gu": {
       "Google": "ગૂગલ",
@@ -3438,7 +3499,8 @@
     },
     "id": {
       "Google": "Google",
-      "LordsBook": "LordsBook"
+      "LordsBook": "LordsBook",
+      "Strong's": "Strong's"
     },
     "it": {
       "Google": "Google",
@@ -3490,7 +3552,12 @@
     },
     "pl": {
       "Google": "Google",
-      "LordsBook": "LordsBook"
+      "LordsBook": "LordsBook",
+      "Newest": "Najnowsze",
+      "Oldest": "Najstarsze",
+      "Clear": "Wyczyść",
+      "Share publicly": "Udostępnij publicznie",
+      "Make private": "Ustaw jako prywatne"
     },
     "pt": {
       "Google": "Google",
@@ -3498,7 +3565,12 @@
     },
     "ro": {
       "Google": "Google",
-      "LordsBook": "LordsBook"
+      "LordsBook": "LordsBook",
+      "Tag": "Etichetă",
+      "Clear": "Șterge",
+      "Export selected": "Exportă selecția",
+      "Share publicly": "Partajează public",
+      "Make private": "Fă privat"
     },
     "ru": {
       "Google": "Google",
@@ -3518,7 +3590,12 @@
     },
     "sw": {
       "Google": "Google",
-      "LordsBook": "LordsBook"
+      "LordsBook": "LordsBook",
+      "Tag": "Lebo",
+      "Sort": "Panga",
+      "Clear": "Futa",
+      "Share publicly": "Shiriki hadharani",
+      "Make private": "Fanya faragha"
     },
     "ta": {
       "Google": "கூகிள்",
@@ -3530,7 +3607,25 @@
     },
     "tr": {
       "Google": "Google",
-      "LordsBook": "LordsBook"
+      "LordsBook": "LordsBook",
+      "Tag": "Etiket",
+      "Book": "Kitap",
+      "Filter by book": "Kitaba göre filtrele",
+      "Filter by tag": "Etikete göre filtrele",
+      "Strong's": "Strong's",
+      "Sort": "Sırala",
+      "Newest": "En yeni",
+      "Oldest": "En eski",
+      "Recently updated": "Son güncellenen",
+      "Clear all": "Tümünü temizle",
+      "Select": "Seç",
+      "Cancel": "İptal",
+      "Clear": "Temizle",
+      "Export selected": "Seçilenleri dışa aktar",
+      "Export ready": "Dışa aktarmaya hazır",
+      "Export failed": "Dışa aktarma başarısız",
+      "Share publicly": "Herkese açık paylaş",
+      "Make private": "Özel yap"
     },
     "uk": {
       "Google": "Ґуґл",

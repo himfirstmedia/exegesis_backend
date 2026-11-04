@@ -1,0 +1,95 @@
+{
+  "es": {
+    "Tag": "Etiqueta",
+    "Sort": "Ordenar",
+    "Clear all": "Borrar todo",
+    "Clear": "Borrar"
+  },
+  "ar": {
+    "Tag": "وسم",
+    "Filter by book": "تصفية حسب الكتاب",
+    "Filter by tag": "تصفية حسب الوسم",
+    "Sort": "ترتيب",
+    "Newest": "الأحدث",
+    "Select": "اختيار",
+    "Clear": "مسح",
+    "{count} selected": "{count} محدد",
+    "Select all": "تحديد الكل",
+    "Share publicly": "مشاركة علنًا"
+  },
+  "de": {
+    "Sort": "Sortieren",
+    "Oldest": "Älteste",
+    "Clear all": "Alles löschen",
+    "Clear": "Löschen",
+    "Cancel": "Abbrechen",
+    "Export selected": "Auswahl exportieren",
+    "Export ready": "Export bereit",
+    "Export failed": "Export fehlgeschlagen",
+    "Share publicly": "Öffentlich teilen",
+    "Make private": "Privat machen"
+  },
+  "pl": {
+    "Newest": "Najnowsze",
+    "Oldest": "Najstarsze",
+    "Clear": "Wyczyść",
+    "Share publicly": "Udostępnij publicznie",
+    "Make private": "Ustaw jako prywatne"
+  },
+  "ro": {
+    "Tag": "Etichetă",
+    "Clear": "Șterge",
+    "Export selected": "Exportă selecția",
+    "Share publicly": "Partajează public",
+    "Make private": "Fă privat"
+  },
+  "sw": {
+    "Tag": "Lebo",
+    "Sort": "Panga",
+    "Clear": "Futa",
+    "Share publicly": "Shiriki hadharani",
+    "Make private": "Fanya faragha"
+  },
+  "tr": {
+    "Tag": "Etiket",
+    "Book": "Kitap",
+    "Filter by book": "Kitaba göre filtrele",
+    "Filter by tag": "Etikete göre filtrele",
+    "Strong's": "Strong's",
+    "Sort": "Sırala",
+    "Newest": "En yeni",
+    "Oldest": "En eski",
+    "Recently updated": "Son güncellenen",
+    "Clear all": "Tümünü temizle",
+    "Select": "Seç",
+    "Cancel": "İptal",
+    "Clear": "Temizle",
+    "Export selected": "Seçilenleri dışa aktar",
+    "Export ready": "Dışa aktarmaya hazır",
+    "Export failed": "Dışa aktarma başarısız",
+    "Share publicly": "Herkese açık paylaş",
+    "Make private": "Özel yap"
+  },
+  "fil": {
+    "Observations": "Mga obserbasyon",
+    "Filter by book": "I-filter ayon sa aklat",
+    "Filter by tag": "I-filter ayon sa tag",
+    "Strong's": "Strong's",
+    "Sort": "Ayusin",
+    "Oldest": "Pinakaluma",
+    "Clear all": "I-clear lahat",
+    "Clear": "I-clear",
+    "Export selected": "I-export ang napili",
+    "JSON": "JSON",
+    "Exporting...": "Nag-e-export...",
+    "Export failed": "Nabigo ang pag-export"
+  },
+  "id": {
+    "Strong's": "Strong's"
+  },
+  "fr": {
+    "Sort": "Trier",
+    "Export selected": "Exporter la sélection",
+    "Make private": "Rendre privé"
+  }
+}
