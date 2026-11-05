@@ -12,6 +12,7 @@ let loggedError = false;
 let warnedUnavailable = false;
 
 const getClient = () => {
+  if (process.env.NODE_ENV === 'test') return null;
   if (!client) {
     try {
       // REDIS_URL wins when present (Railway/Heroku provision it as a single

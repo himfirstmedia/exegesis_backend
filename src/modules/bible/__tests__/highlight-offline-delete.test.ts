@@ -1,5 +1,6 @@
 import { addHighlight, deleteHighlight, getHighlights } from "../service.js";
 import { prisma } from "../../../config/db.js";
+import { randomUUID } from 'node:crypto';
 
 jest.setTimeout(20000);
 
@@ -12,8 +13,12 @@ const REFERENCE = {
 
 describe("offline highlight deletion", () => {
   beforeAll(async () => {
-    const user = await prisma.systemUser.findFirst({ select: { id: true } });
-    if (!user) throw new Error("Highlight tests require a seeded user");
+    const suffix = randomUUID();
+    const user = await prisma.systemUser.create({ data: {
+      firstName: 'Highlight', lastName: 'Test',
+      username: `test-${suffix}`, email: `test-${suffix}@example.invalid`,
+      gender: 'Not Specified', phoneNumber: '', password: 'not-a-login-password',
+    } });
     userId = user.id;
   });
 
@@ -22,7 +27,11 @@ describe("offline highlight deletion", () => {
   });
 
   afterAll(async () => {
-    await deleteHighlight(REFERENCE, userId);
+    if (userId) {
+      await deleteHighlight(REFERENCE, userId);
+      await prisma.systemUser.delete({ where: { id: userId } });
+    }
+    await prisma.$disconnect();
   });
 
   it("deletes by verse reference without requiring a server-generated ID", async () => {

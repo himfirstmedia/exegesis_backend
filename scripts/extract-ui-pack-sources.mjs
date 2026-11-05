@@ -77,6 +77,11 @@ const scan = dir => {
   }
 };
 for (const name of ['features', 'component', 'reusable', 'hooks']) scan(path.join(app, name));
+// Web installs the same source-indexed packs from the backend. Its authored
+// labels must participate in the revision too, not just mobile copy.
+const web = path.join(root, 'web/src');
+walkValues(JSON.parse(fs.readFileSync(path.join(web, 'components/languages/en.json'), 'utf8')));
+for (const name of ['features', 'components', 'hooks']) scan(path.join(web, name));
 // Admin API wrappers also own fallback error messages shown by pack-backed
 // toasts. Scan their authored literals, never response/user data.
 scan(path.join(app, 'features/admin/services'));

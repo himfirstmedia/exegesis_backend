@@ -1047,10 +1047,9 @@ export const forgotPassword = async (data) => {
     return { status: 400, message: "Email is required" };
   }
 
-  const user = await prisma.systemUser.findFirst({ where: { email: email.toLowerCase() } });
-  if (!user) {
-    return { status: 404, message: "No account found with this email address" };
-  }
+  const accepted = { status: 200, message: "If an eligible account exists, a reset code will be sent to its email address." };
+  const user = await prisma.systemUser.findFirst({ where: { email: email.trim().toLowerCase() } });
+  if (!user || !user.status || (user.accountStatus && user.accountStatus !== 'active')) return accepted;
 
   const existingCodes = await prisma.verification.findMany({
     where: {
@@ -1063,7 +1062,7 @@ export const forgotPassword = async (data) => {
   });
 
   if (existingCodes.length > 2) {
-    return { status: 201, message: "A reset code has already been sent to your email. Please check your inbox or spam." };
+    return accepted;
   }
 
   const code = generateSixDigitCode();
@@ -1093,7 +1092,7 @@ export const forgotPassword = async (data) => {
     },
   });
 
-  return { status: 200, message: "Reset code sent to your email" };
+  return accepted;
 };
 
 export const resetPassword = async (data) => {
@@ -1107,9 +1106,9 @@ export const resetPassword = async (data) => {
     return { status: 400, message: passwordError };
   }
 
-  const user = await prisma.systemUser.findFirst({ where: { email: email.toLowerCase() } });
-  if (!user) {
-    return { status: 404, message: "User with the provided email does not exist" };
+  const user = await prisma.systemUser.findFirst({ where: { email: email.trim().toLowerCase() } });
+  if (!user || !user.status || (user.accountStatus && user.accountStatus !== 'active')) {
+    return { status: 400, message: "Invalid reset code" };
   }
 
   const verification = await prisma.verification.findFirst({

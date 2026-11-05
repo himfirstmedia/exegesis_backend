@@ -1,6 +1,7 @@
 /** @type {import('ts-jest').JestConfigWithTsJest} */
 module.exports = {
   testEnvironment: "node",
+  setupFiles: ["<rootDir>/scripts/jest-environment.cjs"],
   transform: {
     "^.+\\.tsx?$": ["ts-jest", {
       tsconfig: {
@@ -27,8 +28,9 @@ module.exports = {
     "/node_modules/",
     "/Holy-Bible-XML-Format/",
     "/__fixtures__/",
+    ...(process.env.RUN_DB_INTEGRATION === "1" ? [] : [
+      "/verse-explanation.test.ts$",
+      "/highlight-offline-delete.test.ts$",
+    ]),
   ],
-  // cacheService creates a Redis client at import; its idle connection keeps
-  // the event loop open after tests finish, so force exit after the run.
-  forceExit: true,
 };

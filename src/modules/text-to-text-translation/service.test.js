@@ -56,6 +56,10 @@ describe("text-to-text translation service", () => {
     process.env = originalEnv;
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   test("normalizes citations and reassembles large text in order", async () => {
     global.fetch.mockImplementation(async (_url, options) => {
       const payload = JSON.parse(options.body);
@@ -504,6 +508,7 @@ describe("text-to-text translation service", () => {
   });
 
   test("enforces queue deadline while waiting at the provider start gate", async () => {
+    jest.useFakeTimers();
     process.env.LIBRETRANSLATE_MAX_CONCURRENCY = "2";
     process.env.LIBRETRANSLATE_MIN_DELAY_MS = "1000";
     process.env.TRANSLATION_PROVIDER_QUEUE_WAIT_MS = "10";
@@ -515,20 +520,23 @@ describe("text-to-text translation service", () => {
       if (q === "gate first") {
         markStarted();
         return new Promise((resolve) => {
-          releaseFirst = () => resolve(jsonResponse({ translatedText: q }));
+            releaseFirst = () => resolve(jsonResponse({ translatedText: "primero" }));
         });
       }
       return Promise.resolve(jsonResponse({ translatedText: q }));
     });
 
     const first = translateText({ q: "gate first", source: "en", target: "es" });
+    await jest.advanceTimersByTimeAsync(0);
     await started;
     const gated = translateText({ q: "gate second", source: "en", target: "es" });
 
-    await expect(gated).rejects.toMatchObject({
+    const expired = expect(gated).rejects.toMatchObject({
       status: 503,
       message: expect.stringContaining("queue wait exceeded"),
     });
+    await jest.advanceTimersByTimeAsync(11);
+    await expired;
     expect(global.fetch).toHaveBeenCalledTimes(1);
     releaseFirst();
     await first;

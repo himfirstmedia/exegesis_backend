@@ -1,8 +1,27 @@
 import { getChapterJournalPrompts } from '../service.js';
+import { prisma } from '../../../config/db.js';
+
+jest.mock('../../../config/db.js', () => ({
+  prisma: { journalPrompt: { findMany: jest.fn().mockResolvedValue([]) } },
+}));
 
 jest.setTimeout(15000);
 
 describe('getChapterJournalPrompts', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.journalPrompt.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it('uses chapter-specific persisted prompts before fallback questions', async () => {
+    (prisma.journalPrompt.findMany as jest.Mock).mockResolvedValueOnce([
+      { id: 1, prompt: 'A curated chapter question' },
+    ]);
+    const result = await getChapterJournalPrompts({ bookName: 'Genesis', chapter: 1 });
+    expect(result.status).toBe(200);
+    expect(result.data[0].prompt).toBe('A curated chapter question');
+    expect(result.data).toHaveLength(3);
+  });
   it('returns up to 3 prompts for a valid book and chapter', async () => {
     const result = await getChapterJournalPrompts({
       bookName: 'Genesis',
