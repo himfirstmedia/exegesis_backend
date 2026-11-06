@@ -27,7 +27,10 @@ export async function buildUiPack(language, onProgress = () => {}, options = {})
     const keys = uiPackKeys(language);
     const existing = await readUiPackObject(keys.final);
     const reused = !options.force && completeUiPack(existing, language);
-    const checkpoint = options.force ? null : reused ? existing : await readUiPackObject(keys.partial);
+    // --force ignores the published pack so a language can be regenerated with
+    // a different provider, but an in-progress checkpoint is always resumable:
+    // it only ever contains validated strings.
+    const checkpoint = reused ? existing : await readUiPackObject(keys.partial);
     const translations = checkpoint?.revision === uiSource.revision && checkpoint.language === language && Array.isArray(checkpoint.translations)
       ? [...checkpoint.translations] : Array(uiSource.texts.length).fill(null);
     translations.length = uiSource.texts.length;

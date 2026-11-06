@@ -45,13 +45,24 @@ if (args.includes('--help')) {
       // free response format instead of replaying the whole batch.
       options.translate = async (texts, language) => {
         const values = await translateWithGoogle(texts, language);
-        const missing = [];
+        let missing = [];
         values.forEach((value, index) => { if (!value?.trim()) missing.push(index); });
         if (!missing.length) return values;
+        // The widget batch endpoint occasionally returns HTTP 200 with empty
+        // strings under load. Recover just those items through Google's other
+        // free response format, then retry any remainder one by one.
         try {
           const recovered = await translateWithGoogleFreeAlternative(missing.map(index => texts[index]), language, {});
           missing.forEach((index, position) => { if (recovered[position]?.trim()) values[index] = recovered[position]; });
-        } catch { /* leave the builder to report the remaining failures */ }
+        } catch { /* fall through to single-item retries */ }
+        missing = missing.filter(index => !values[index]?.trim());
+        for (const index of missing) {
+          if (options.signal?.aborted) throw new Error('Build interrupted; checkpoint retained');
+          try {
+            const [value] = await translateWithGoogle([texts[index]], language);
+            if (value?.trim()) values[index] = value;
+          } catch { /* leave the builder to report the remaining failures */ }
+        }
         return values;
       };
     }

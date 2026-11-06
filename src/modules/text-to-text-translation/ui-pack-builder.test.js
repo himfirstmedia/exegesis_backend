@@ -33,6 +33,24 @@ test('reuses complete packs without invoking providers', async () => {
   expect(translateBatch).not.toHaveBeenCalled();
   expect(writeUiPackObject).toHaveBeenCalledTimes(3);
 });
+test('force rebuilds a published language but still resumes a validated checkpoint', async () => {
+  const published = fixture('es');
+  const checkpoint = fixture('es');
+  checkpoint.translations[0] = '';
+  readUiPackObject.mockImplementation(async key => key === uiPackKeys('es').final ? published
+    : key.endsWith('-partial.json') ? checkpoint : null);
+  const carry = { texts: [uiSource.texts[1]], translations: ['carried:should-not-use'] };
+  const translate = jest.fn(async texts => texts.map(text => `fresh:${text}`));
+  const result = await buildUiPack('es', () => {}, { translate, force: true, carry });
+  expect(translate).toHaveBeenCalledTimes(1);
+  expect(translate.mock.calls[0][0]).toEqual([uiSource.texts[0]]);
+  expect(result.reused).toBe(false);
+  const pack = writeUiPackObject.mock.calls.find(([key]) => key === uiPackKeys('es').final)[1];
+  expect(pack.translations[0]).toBe(`fresh:${uiSource.texts[0]}`);
+  expect(pack.translations).not.toContain('carried:should-not-use');
+  expect(completeUiPack(pack, 'es')).toBe(true);
+});
+
 test('English needs no provider', async () => {
   await buildUiPack('en');
   expect(translateBatch).not.toHaveBeenCalled();
