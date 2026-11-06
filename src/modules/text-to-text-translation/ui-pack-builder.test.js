@@ -130,6 +130,19 @@ test('retains good items when one item remains broken and reports its source', a
   expect(writeUiPackObject.mock.calls.some(([key]) => key === uiPackKeys('es').manifest)).toBe(false);
 });
 
+test('preserves an untranslatable single-word fragment so the language can publish', async () => {
+  const checkpoint = fixture('hi');
+  const index = uiSource.texts.indexOf('The');
+  expect(index).toBeGreaterThan(-1);
+  checkpoint.translations[index] = '';
+  readUiPackObject.mockImplementation(async key => key.endsWith('-partial.json') ? checkpoint : null);
+  const translate = jest.fn(async texts => texts.map(() => ''));
+  await buildUiPack('hi', () => {}, { translate });
+  const pack = writeUiPackObject.mock.calls.find(([key]) => key === uiPackKeys('hi').final)[1];
+  expect(pack.translations[index]).toBe('The');
+  expect(completeUiPack(pack, 'hi')).toBe(true);
+});
+
 test('abort while translating releases the lock without publishing a manifest', async () => {
   const controller = new AbortController();
   const translate = jest.fn().mockImplementation(() => { controller.abort(); return new Promise(() => {}); });

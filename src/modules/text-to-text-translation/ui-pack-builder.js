@@ -5,6 +5,13 @@ import { translateBatch } from './service.js';
 import { uiSource, uiLanguages, uiPackKeys, validUiText, completeUiPack, uiCarryKey, uiTranslationMap } from './ui-pack-data.js';
 import { protectUiText, translateUiSpans, abortable } from './ui-pack-translation.js';
 
+// Legal copy is split into sentence and word chunks; a chunk can be a lone
+// English article ("The", "And"). Providers that have no articles return an
+// empty string for it rather than a translation. Preserving the source is the
+// only correct outcome and lets the language still publish; the app treats an
+// identical value as untranslated and falls back to any bundled copy.
+const isSingleWord = text => /^[A-Za-z][A-Za-z'’-]*$/.test(text);
+
 export async function buildUiPack(language, onProgress = () => {}, options = {}) {
   if (!uiLanguages.includes(language)) throw new Error('Unsupported UI language');
   const rawTranslate = options.translate || (async texts => {
@@ -85,8 +92,11 @@ export async function buildUiPack(language, onProgress = () => {}, options = {})
             value = await translateUiSpans(texts[i], language, translate);
           } catch (error) {
             assertActive();
-            failures.push({ index: indexes[i], source: texts[i].slice(0, 160), reason: error.message });
-            options.onWarning?.(failures.at(-1));
+            if (isSingleWord(texts[i])) value = texts[i];
+            else {
+              failures.push({ index: indexes[i], source: texts[i].slice(0, 160), reason: error.message });
+              options.onWarning?.(failures.at(-1));
+            }
           }
         }
         if (validUiText(texts[i], value)) translations[indexes[i]] = value;
