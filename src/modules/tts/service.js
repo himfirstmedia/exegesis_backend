@@ -73,6 +73,24 @@ const getCacheKey = (text, voiceId, speed, provider = "edge") => {
   return `v2:${provider}:${hash}:${voiceId || "default"}:${speed || 1.0}`;
 };
 
+/**
+ * The Lordsbook upstream derives its audio cache key from the text alone, not
+ * the narrator. The first voice used for a verse therefore stays cached for
+ * every later voice, so changing the narrator replayed the same clip. Append a
+ * deterministic, silent marker built from zero-width characters so each
+ * narrator maps to its own upstream cache entry; repeat reads of the same
+ * narrator still share one entry. Applied after transformTextForTTS so the
+ * normal punctuation transforms still run on the real text.
+ */
+export const getLordsbookVoiceCacheMarker = (voice) => {
+  const digest = crypto.createHash("md5").update(String(voice)).digest();
+  let marker = "\u200B";
+  for (let i = 0; i < 24; i += 1) {
+    marker += digest[i % digest.length] & 1 ? "\u200C" : "\u200B";
+  }
+  return marker;
+};
+
 // ── Sentence-pause compression (Edge TTS, reused by Lordsbook) ────────────
 // Edge TTS inserts ~1.2s of silence at every sentence boundary ("full stop
 // pause"), which makes verse playback drag. The free endpoint rejects
@@ -1131,13 +1149,15 @@ const synthesizeLordsbook = async (
         // of ~1.2s full-stop pauses) so chapter reading keeps a uniform cadence.
         const processedText = transformTextForTTS(text);
         const clampedSpeed = clampLordsbookSpeed(speed);
+        // Distinguish narrators in the upstream's text-only cache.
+        const upstreamText = `${processedText}${getLordsbookVoiceCacheMarker(voice)}`;
 
         const {
           audioBuffer: wavBuffer,
           cacheStatus,
           hash,
         } = await synthesizeLordsbookSpeech({
-          text: processedText,
+          text: upstreamText,
           voice,
           speed: clampedSpeed,
           // Do NOT forward `lang`: the gateway ignores it for synthesis

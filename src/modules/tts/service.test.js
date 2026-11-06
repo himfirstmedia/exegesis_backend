@@ -45,6 +45,7 @@ import {
   resetEdgeCooldown,
   resolveLordsbookRequestLanguage,
   LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE,
+  getLordsbookVoiceCacheMarker,
 } from "./service.js";
 
 // Source of truth: the gateway's `GET /voices` response. Any voice mapped for a
@@ -521,4 +522,17 @@ describe("Lordsbook TTS breaker", () => {
     ]);
     now.mockRestore();
   }, 30000);
+});
+
+describe("getLordsbookVoiceCacheMarker", () => {
+  it("is stable per voice and distinct across voices", () => {
+    const bella = getLordsbookVoiceCacheMarker("af_bella");
+    const heart = getLordsbookVoiceCacheMarker("af_heart");
+    expect(getLordsbookVoiceCacheMarker("af_bella")).toBe(bella);
+    expect(heart).not.toBe(bella);
+  });
+
+  it("uses only silent zero-width characters", () => {
+    expect(getLordsbookVoiceCacheMarker("am_adam")).toMatch(/^[\u200B\u200C]+$/);
+  });
 });
