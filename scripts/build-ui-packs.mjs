@@ -38,8 +38,21 @@ if (args.includes('--help')) {
     if (provider === 'google-free') {
       // Explicit offline build option only; never changes runtime provider order.
       process.env.GOOGLE_TRANSLATE_MODE = 'free';
-      const { translateWithGoogle } = await import('./google-translate.mjs');
-      options.translate = (texts, language) => translateWithGoogle(texts, language);
+      const { translateWithGoogle, translateWithGoogleFreeAlternative } = await import('./google-translate.mjs');
+      // The widget batch endpoint occasionally returns HTTP 200 with empty
+      // strings under load. Recover just those items through Google's other
+      // free response format instead of replaying the whole batch.
+      options.translate = async (texts, language) => {
+        const values = await translateWithGoogle(texts, language);
+        const missing = [];
+        values.forEach((value, index) => { if (!value?.trim()) missing.push(index); });
+        if (!missing.length) return values;
+        try {
+          const recovered = await translateWithGoogleFreeAlternative(missing.map(index => texts[index]), language, {});
+          missing.forEach((index, position) => { if (recovered[position]?.trim()) values[index] = recovered[position]; });
+        } catch { /* leave the builder to report the remaining failures */ }
+        return values;
+      };
     }
     if (!(await cache.waitUntilReady())) console.warn('Redis unavailable: use one builder process only.');
     const pending = [...languages];
