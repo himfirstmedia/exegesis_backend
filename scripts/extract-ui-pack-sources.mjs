@@ -10,6 +10,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const app = path.join(root, 'app/src');
 const sources = new Set();
 const add = value => { if (typeof value === 'string' && value.trim() && /[A-Za-z]/.test(value)) sources.add(value); };
+// Only drop strings that are genuinely SQL statements. Testing the leading
+// keyword alone also discarded authored UI copy such as "Create user",
+// "Select a chapter", "Update Failed: " and "Update the fields you want and
+// tap Save.", leaving those screens in English.
+const isSqlStatement = value => /^(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b[\s\S]*\b(?:FROM|INTO|SET|TABLE|WHERE|VALUES|DATABASE|INDEX|JOIN|GROUP\s+BY|ORDER\s+BY)\b/i.test(value);
 const walkValues = value => {
   if (typeof value === 'string') add(value);
   else if (value && typeof value === 'object') Object.values(value).forEach(walkValues);
@@ -65,7 +70,7 @@ const scan = dir => {
         const value = node.text;
         // Curated locale JSON is exhaustive. Supplement authored screen copy,
         // including support FAQ answers, while excluding paths, keys and code.
-        if (/^[A-Z][A-Za-z]*(?:[ .!?…:,]|$)/.test(value) && !/https?:|#[0-9a-f]{3,8}\b|^(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i.test(value) && !/^(?:\.\.?\/|\/|\\)/.test(value) && value.length < 10000) add(value);
+        if (/^[A-Z][A-Za-z]*(?:[ .!?…:,]|$)/.test(value) && !/https?:|#[0-9a-f]{3,8}\b/i.test(value) && !isSqlStatement(value) && !/^(?:\.\.?\/|\/|\\)/.test(value) && value.length < 10000) add(value);
         const parent = node.parent;
         if (ts.isCallExpression(parent) && /^(?:t|text|tt|ui|useTranslation)$/.test(parent.expression.getText(parsed)) && parent.arguments[0] === node) add(value);
         if (isCopyConstantValue(node)) add(value);
