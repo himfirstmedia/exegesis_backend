@@ -44,6 +44,7 @@ import {
   getEdgeCooldown,
   resetEdgeCooldown,
   resolveLordsbookRequestLanguage,
+  resolveLordsbookVoice,
   LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE,
   getLordsbookVoiceCacheMarker,
 } from "./service.js";
@@ -82,6 +83,15 @@ describe("Lordsbook per-language voices", () => {
     for (const voice of Object.values(LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE)) {
       expect(voice).toMatch(/^[a-z]{2}_[a-z0-9]+$/);
     }
+  });
+
+  test("uses a narrator that speaks the requested language", () => {
+    expect(resolveLordsbookVoice("bm_george", "es")).toBe("em_alex");
+    expect(resolveLordsbookVoice("bm_george", "fr")).toBe("ff_siwis");
+    expect(resolveLordsbookVoice("en-GB-RyanNeural", "hi")).toBe("hm_omega");
+    expect(resolveLordsbookVoice("bm_george", "en")).toBe("bm_george");
+    expect(resolveLordsbookVoice("em_alex", "es")).toBe("em_alex");
+    expect(resolveLordsbookVoice("bm_george")).toBe("bm_george");
   });
 });
 

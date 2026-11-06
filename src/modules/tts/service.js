@@ -638,19 +638,23 @@ const normalizeLordsbookLanguage = (language) => {
   return LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE[primary] ? primary : null;
 };
 
-const resolveLordsbookVoice = (voiceId, language) => {
-  // Explicit Lordbook-style ID passed through as-is; otherwise prefer a
-  // language-matched narrator.
-  if (
-    voiceId &&
-    /^[a-z]{2}_[a-z0-9_]+$/i.test(voiceId) &&
-    !LEGACY_LORDSBOOK_VOICE_ALIASES[voiceId]
-  )
-    return voiceId;
-  const mapped = LEGACY_LORDSBOOK_VOICE_ALIASES[voiceId];
+export const resolveLordsbookVoice = (voiceId, language) => {
   const languagePrefix = normalizeLordsbookLanguage(language);
+  const mapped = LEGACY_LORDSBOOK_VOICE_ALIASES[voiceId];
+  const candidate = mapped ||
+    (voiceId && /^[a-z]{2}_[a-z0-9_]+$/i.test(voiceId) ? voiceId : null);
+  if (candidate) {
+    const candidateLanguage =
+      LORDSBOOK_LANGUAGE_BY_VOICE_PREFIX[candidate.slice(0, 2).toLowerCase()];
+    // Keep the explicitly chosen narrator when no language was requested or
+    // when it already speaks the requested language. A mismatched narrator
+    // would read Scripture in the wrong language, so resolve to that
+    // language's default instead of blindly passing the id through.
+    if (!languagePrefix || !candidateLanguage || candidateLanguage === languagePrefix) {
+      return candidate;
+    }
+  }
   return (
-    mapped ||
     (languagePrefix && LORDSBOOK_DEFAULT_VOICE_BY_LANGUAGE[languagePrefix]) ||
     getDefaultLordsbookVoice()
   );
