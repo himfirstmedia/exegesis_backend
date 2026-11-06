@@ -2,7 +2,7 @@ import 'dotenv/config';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run build:ui-packs -- --languages en,fr,sw [--concurrency 2] [--provider runtime|google-free]');
+  console.log('Usage: npm run build:ui-packs -- --languages en,fr,sw [--concurrency 2] [--provider runtime|google-free] [--force]');
   console.log('Explicit --all builds all languages. Runtime uses the /translation/batch service chain. Existing checkpoints are resumed, and unchanged strings are reused from the previous revision so only new or edited copy is translated.');
 } else {
   let cache;
@@ -23,18 +23,19 @@ if (args.includes('--help')) {
       import('../src/services/cacheService.js'),
     ]);
     cache = cacheModule.cache;
-    let languages = [], concurrency = 2, provider = 'runtime';
+    let languages = [], concurrency = 2, provider = 'runtime', force = false;
     for (let i = 0; i < args.length; i++) {
       if (args[i] === '--all') languages = uiLanguages;
       else if (args[i] === '--languages') languages = [...new Set((args[++i] || '').split(',').map(code => code.trim()).filter(Boolean))];
       else if (args[i] === '--concurrency') concurrency = Number(args[++i]);
       else if (args[i] === '--provider') provider = args[++i];
+      else if (args[i] === '--force') force = true;
       else throw new Error(`Unknown argument: ${args[i]}`);
     }
     if (!languages.length || languages.some(code => !uiLanguages.includes(code))) throw new Error('Specify supported --languages or --all');
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error('Concurrency must be 1–8');
     if (!['runtime', 'google-free'].includes(provider)) throw new Error('Provider must be runtime or google-free');
-    let options = { signal: controller.signal, onWarning: item => console.warn(`[source #${item.index}] ${JSON.stringify(item.source)} — ${item.reason}`) };
+    let options = { signal: controller.signal, force, onWarning: item => console.warn(`[source #${item.index}] ${JSON.stringify(item.source)} — ${item.reason}`) };
     if (provider === 'google-free') {
       // Explicit offline build option only; never changes runtime provider order.
       process.env.GOOGLE_TRANSLATE_MODE = 'free';

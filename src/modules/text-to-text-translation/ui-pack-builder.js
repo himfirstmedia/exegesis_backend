@@ -26,16 +26,17 @@ export async function buildUiPack(language, onProgress = () => {}, options = {})
   try {
     const keys = uiPackKeys(language);
     const existing = await readUiPackObject(keys.final);
-    const reused = completeUiPack(existing, language);
-    const checkpoint = reused ? existing : await readUiPackObject(keys.partial);
+    const reused = !options.force && completeUiPack(existing, language);
+    const checkpoint = options.force ? null : reused ? existing : await readUiPackObject(keys.partial);
     const translations = checkpoint?.revision === uiSource.revision && checkpoint.language === language && Array.isArray(checkpoint.translations)
       ? [...checkpoint.translations] : Array(uiSource.texts.length).fill(null);
     translations.length = uiSource.texts.length;
     if (!reused) {
       // Carry validated strings from the previously published revision. The
       // source list is sorted, so unchanged copy keeps its translation and only
-      // added or edited strings reach the provider.
-      const carried = uiTranslationMap(options.carry ?? await readUiPackObject(uiCarryKey(language)));
+      // added or edited strings reach the provider. --force skips carry so a
+      // language can be regenerated wholesale with a better provider.
+      const carried = uiTranslationMap(options.force ? null : (options.carry ?? await readUiPackObject(uiCarryKey(language))));
       if (carried.size) uiSource.texts.forEach((text, index) => {
         if (validUiText(text, translations[index])) return;
         const value = carried.get(text);
