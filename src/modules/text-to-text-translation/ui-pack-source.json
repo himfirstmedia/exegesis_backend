@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "7ad283be011f",
+  "revision": "22d72cd5a819",
   "texts": [
     " of God",
     "\"And He Himself gave some to be apostles, some prophets, some evangelists, and some pastors and teachers, for the equipping of the saints for the work of ministry.\"",
@@ -879,6 +879,7 @@
     "Chapter Study Tools",
     "Chapter and verse must be valid numbers",
     "Chapter audio progress",
+    "Chapter background logo",
     "Chapter bookmark updated",
     "Chapter headings",
     "Chapter not loaded",
@@ -4675,6 +4676,7 @@
     "Show password",
     "Show shortcuts",
     "Show temporary password",
+    "Show the Exegesis logo behind chapter verses",
     "Show to all users",
     "Showing",
     "Showing Strong's words attached to this verse.",
