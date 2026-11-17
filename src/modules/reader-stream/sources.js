@@ -71,7 +71,7 @@ const dailyVerse = ['title', 'text', 'reflection', 'verseIntroduction', 'explana
 const dailyDevotion = ['title', 'reflection', 'content', 'explanation', 'application',
   'backgroundAuthor', 'backgroundBook', 'backgroundContext', 'wordStudies', 'practicalApplications',
   'keyThemes', 'crossReferences', 'finalThoughts', 'takeaways', 'learnMore'];
-const book = ['summary', 'background', 'authorDetail', 'audience', 'purpose', 'lessons',
+const book = ['title', 'summary', 'background', 'authorDetail', 'audience', 'purpose', 'lessons',
   'applications', 'keyScripture', 'structure', 'keyTheme', 'mainThemes', 'keyPeople',
   'keyVerses', 'christConnection', 'author', 'dateWritten', 'locationWritten'];
 const resourceScopes = { commentaries: 'commentaries', crossrefs: 'crossReferences',
@@ -86,7 +86,7 @@ export async function loadReaderSource({ kind, params = {}, scope }) {
     case 'book-overview':
       result = await books.getBookPrologue(input);
       if (result.data) result = { ...result, data: { ...result.data, designation: bookDesignation(params.bookName) } };
-      fields = ['designation', ...book]; atomicFields = ['designation', 'text']; break;
+      fields = ['designation', ...book]; atomicFields = ['designation', 'title', 'text']; break;
     case 'book-introduction':
       result = await books.getBookPrologue(input);
       fields = ['summary', 'author', 'audience', 'dateWritten', 'locationWritten', 'keyTheme', 'purpose', 'mainThemes', 'christConnection']; break;

@@ -1,4 +1,5 @@
 import { prisma } from '../src/config/db.js';
+import { defaultOverviewTitle, backfillMissingOverviewTitles } from '../src/modules/book-prologues/titles.js';
 
 const prologues = [
   {
@@ -2411,9 +2412,10 @@ for (const item of prologues) {
   await prisma.bookPrologue.upsert({
     where: { bookName: item.bookName },
     update: { ...item, sortOrder: canonicalIndex.get(item.bookName) ?? 9999 },
-    create: { ...item, sortOrder: canonicalIndex.get(item.bookName) ?? 9999 },
+    create: { ...item, title: defaultOverviewTitle(item), sortOrder: canonicalIndex.get(item.bookName) ?? 9999 },
   });
 }
 
+await backfillMissingOverviewTitles(prisma);
 console.log(`Seeded ${prologues.length} book prologues`);
 await prisma.$disconnect();

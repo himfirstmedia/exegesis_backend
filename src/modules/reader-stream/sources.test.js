@@ -32,6 +32,8 @@ it('uses a numeric book ordinal so providers cannot misread hyphenated ordinals'
   books.getBookPrologue.mockResolvedValue({ status: 200, data: { bookName: 'Isaiah' } });
   const result = await loadReaderSource({ kind: 'book-overview', params: { bookName: 'Isaiah' } });
   expect(result.source.designation).toBe('The 23rd Book of the Bible');
+  expect(result.fields).toContain('title');
+  expect(result.atomicFields).toContain('title');
 });
 
 it('streams every rich verse-action field, including nested Strongs data', async () => {

@@ -5,7 +5,7 @@ jest.mock('../text-to-text-translation/service.js', () => ({ translateBatch: jes
 import { prisma } from '../../config/db.js';
 import { cache } from '../../services/cacheService.js';
 import { readHeadingPackObject, writeHeadingPackObject } from '../../services/objectStorage.js';
-import { makeOverviewSnapshot, overviewManifestKey, overviewPackKey, overviewBookKey, validTranslatedOverview } from './pack-data.js';
+import { makeOverviewSnapshot, overviewManifestKey, overviewPackKey, overviewBookKey, validTranslatedOverview, hashOverview, translatedOverviewFields } from './pack-data.js';
 import { buildOverviewPack } from './pack-builder.js';
 
 let objects;
@@ -160,4 +160,40 @@ test('an unchanged field set reuses the saved pack without translating again', a
   expect(translate).not.toHaveBeenCalled();
   expect(objects.get(overviewPackKey(result.revision, 'fr')).books.Genesis.keyScripture[0].text)
     .toBe('traduit:In the beginning God created.');
+});
+test('title backfill reuses exact pre-title source translations and translates only the title', async () => {
+  const updated = { ...row(), title: 'The promise of renewal' };
+  prisma.bookPrologue.findMany.mockResolvedValue([updated]);
+  const snapshot = makeOverviewSnapshot([updated]);
+  const { title, ...oldSource } = snapshot.books.Genesis;
+  const oldRevision = hashOverview(['overview-v1', oldSource]).slice(0, 12);
+  objects.set(overviewBookKey(oldRevision, 'fr'), { complete: true, revision: oldRevision, language: 'fr',
+    fields: translatedOverviewFields.filter(field => field !== 'title'), data: { ...oldSource, summary: 'Résumé conservé' } });
+  const result = await buildOverviewPack('fr', { translate });
+  const book = objects.get(overviewPackKey(result.revision, 'fr')).books.Genesis;
+  expect(book.summary).toBe('Résumé conservé');
+  expect(book.title).toBe(`traduit:${title}`);
+  expect(translate.mock.calls.flatMap(([texts]) => texts)).toEqual([title]);
+});
+test('a changed narrative is not reused from an unrelated pre-title cache', async () => {
+  const source = makeOverviewSnapshot([row()]).books.Genesis;
+  const { title: _title, ...oldSource } = source;
+  const oldRevision = hashOverview(['overview-v1', oldSource]).slice(0, 12);
+  objects.set(overviewBookKey(oldRevision, 'fr'), { complete: true, revision: oldRevision, language: 'fr', fields: translatedOverviewFields,
+    data: { ...oldSource, summary: 'Unrelated cached text' } });
+  prisma.bookPrologue.findMany.mockResolvedValue([{ ...row(), title: 'New heading', summary: 'Changed source text.' }]);
+  await buildOverviewPack('fr', { translate });
+  expect(translate.mock.calls.flatMap(([texts]) => texts)).toContain('Changed source text.');
+});
+test('a seeded title reuses the translated theme and localized book name with no provider calls', async () => {
+  const updated = { ...row(), keyTheme: 'Creation and covenant', title: 'Genesis: Creation and covenant' };
+  prisma.bookPrologue.findMany.mockResolvedValue([updated]);
+  const source = makeOverviewSnapshot([updated]).books.Genesis;
+  const { title: _title, ...oldSource } = source;
+  const oldRevision = hashOverview(['overview-v1', oldSource]).slice(0, 12);
+  objects.set(overviewBookKey(oldRevision, 'fr'), { complete: true, revision: oldRevision, language: 'fr',
+    fields: translatedOverviewFields.filter(field => field !== 'title'), data: { ...oldSource, keyTheme: 'Création et alliance' } });
+  const result = await buildOverviewPack('fr', { translate });
+  expect(translate).not.toHaveBeenCalled();
+  expect(objects.get(overviewPackKey(result.revision, 'fr')).books.Genesis.title).toBe('Genèse: Création et alliance');
 });

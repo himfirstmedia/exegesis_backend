@@ -6,6 +6,7 @@ import { protectUiText, abortable } from '../text-to-text-translation/ui-pack-tr
 import { recoverOverviewTranslation } from './pack-recovery.js';
 import { overviewTranslationIssue } from './pack-translation.js';
 import { localizeBookNames } from '../../utils/localizedBookNames.js';
+import { defaultOverviewTitle } from './titles.js';
 import { overviewLanguages, overviewPackKey, overviewManifestKey, overviewBookKey,
   translatedOverviewFields, legacyTranslatedFields, overviewFieldSignature,
   readOverviewSnapshot, completeOverviewPack, hashOverview, validTranslatedOverview } from './pack-data.js';
@@ -58,7 +59,25 @@ export async function buildOverviewPack(language, options = {}) {
         check();
         const bookRevision = snapshot.bookRevisions[bookName];
         const bookKey = overviewBookKey(bookRevision, language);
-        const saved = language === 'en' ? null : await readHeadingPackObject(bookKey);
+        let saved = language === 'en' ? null : await readHeadingPackObject(bookKey);
+        if (!saved && language !== 'en') {
+          // A title backfill changes the source hash. Reuse pre-title translations
+          // only at a key derived from the exact same remaining source fields.
+          const { title: _title, ...withoutTitle } = source;
+          const oldRevision = hashOverview(['overview-v1', withoutTitle]).slice(0, 12);
+          const old = await readHeadingPackObject(overviewBookKey(oldRevision, language));
+          if (old?.complete === true && old.revision === oldRevision && old.language === language && validTranslatedOverview(old.data, withoutTitle)) {
+            saved = { ...old, revision: bookRevision, data: { ...old.data, title: source.title },
+              carried: true, fields: (Array.isArray(old.fields) ? old.fields : legacyTranslatedFields).filter(field => field !== 'title') };
+            // Seeded titles are exactly book name + existing key theme. Compose
+            // them from that already-translated metadata, not another provider
+            // request. Authored/custom titles still use normal translation.
+            if (source.keyTheme?.trim() && source.title === defaultOverviewTitle(source) && saved.fields.includes('keyTheme') && old.data.keyTheme?.trim()) {
+              saved.data.title = `${localizeBookNames(source.bookName, language)}: ${old.data.keyTheme}`;
+              saved.fields.push('title');
+            }
+          }
+        }
         // Trust a saved translation only when it came from this exact source and
         // still has the right shape. A pack written before the `fields` marker
         // is assumed to cover the legacy field set, so a field-set change (such
@@ -72,6 +91,8 @@ export async function buildOverviewPack(language, options = {}) {
           books[bookName] = source;
         } else if (trusted && !missingFields.length) {
           books[bookName] = trusted.data;
+          if (trusted.carried) await writeHeadingPackObject(bookKey, { complete: true, revision: bookRevision, language,
+            fields: translatedOverviewFields, data: books[bookName] }, { compress: true });
         } else {
           const plan = buildReaderPlan(source, missingFields, [], { chunkCharacters: 1500 });
           const signature = overviewFieldSignature(missingFields);

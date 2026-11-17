@@ -16,7 +16,7 @@ export const translatedOverviewFields = ['designation', ...overviewFields.filter
 // The field set used before keyScripture/keyVerses were translated. Saved
 // per-book packs built by that version carry no `fields` marker, so this is only
 // used to top them up without re-translating their already-translated prose.
-export const legacyTranslatedFields = ['designation', ...overviewFields.filter(field => !['chapters', 'keyScripture', 'keyVerses'].includes(field))];
+export const legacyTranslatedFields = ['designation', ...overviewFields.filter(field => !['title', 'chapters', 'keyScripture', 'keyVerses'].includes(field))];
 export const hashOverview = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const overviewPackKey = (revision, language) => `book-overview-packs/${revision}/${language}.json`;
 export const overviewManifestKey = language => `book-overview-packs/manifests/${language}.json`;

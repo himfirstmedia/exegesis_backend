@@ -40,6 +40,21 @@ migrations fail, rather than running against an outdated schema. These commands
 use the database in `DATABASE_URL`: use a local database for isolated development.
 They never reset the database or seed/replace existing content.
 
+To backfill **titles only** for books already in the database (without creating
+missing books or replacing authored titles/content), preview then apply:
+
+```bash
+npm run seed:book-prologue-titles -- --dry-run
+npm run seed:book-prologue-titles -- --apply
+npm run build:book-overview-packs -- --all
+npm run verify:book-overview-packs
+```
+
+Backfilled headings combine the existing book name and key theme. The publisher
+reuses exact-source pre-title translations and their translated themes; custom
+titles are translated normally. Packs and checksums are written before the live
+manifest is updated. Missing source books remain explicitly unavailable.
+
 If Prisma reports that `book_prologues.title` does not exist, stop the server,
 run `npm run db:deploy`, then restart `npm run dev`. Do not use `prisma migrate
 reset` or mark the new title migration as applied without actually running it.

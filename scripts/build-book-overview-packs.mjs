@@ -5,7 +5,7 @@ config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
   console.log('Usage: npm run build:book-overview-packs -- [--all | --languages en,fr] [--concurrency 2] [--provider google-free|runtime] [--dry-run]');
-  console.log('Reads backend/.env and DB prologues directly. Default: all 39 languages, Google free. Dry run reads source only, with no translations/R2 writes.');
+  console.log('Reads backend/.env and DB prologues directly, including translated titles. Default: all 39 languages, Google free. Dry run reads source only, with no translations/R2 writes.');
 } else {
   let cache; let prisma;
   const controller = new AbortController();
@@ -34,6 +34,12 @@ if (args.includes('--help')) {
     const snapshot = await data.readOverviewSnapshot();
     console.log(`DB source: ${Object.keys(snapshot.books).length} overviews; ${snapshot.missingBooks.length} missing; revision ${snapshot.revision}`);
     if (snapshot.missingBooks.length) console.log(`Missing source books: ${snapshot.missingBooks.join(', ')}`);
+    const missingTitles = Object.values(snapshot.books).filter(book => !book.title?.trim()).map(book => book.bookName);
+    console.log(`Title coverage: ${Object.keys(snapshot.books).length - missingTitles.length}/${Object.keys(snapshot.books).length}; ${languages.length} language(s) selected`);
+    if (missingTitles.length) {
+      console.warn(`Missing source titles: ${missingTitles.join(', ')}. Run npm run seed:book-prologue-titles -- --apply to fill only blank titles.`);
+      if (!dryRun) throw new Error('Missing source titles');
+    }
     if (!dryRun) {
       const storage = await import('../src/services/objectStorage.js');
       if (!storage.isObjectStorageConfigured()) throw new Error('Configure R2 in backend/.env before publishing');
