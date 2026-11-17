@@ -2,19 +2,26 @@ import { cache } from "../../services/cacheService.js";
 import { prisma } from "../../config/db.js";
 import { normalizeLanguage, translateMany } from "../../utils/translator.js";
 import {
+  deleteJournalEntry,
   getAllJournalEntries,
   getJournalEntry,
   getJournalExportCopy,
   getJournalPrompts,
   getJournalTemplates,
   getUserJournalEntriesForAdmin,
+  toggleFavorite,
+  updateJournalEntry,
 } from "./service.js";
 
 jest.mock("../../config/db.js", () => ({
   prisma: {
     journalEntry: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       count: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      deleteMany: jest.fn(),
     },
   },
 }));
@@ -263,6 +270,7 @@ describe("journal public content translation", () => {
   test("returns canonical journal content to the editor", async () => {
     const source = {
       id: 22n,
+      userId: "user-1",
       title: "Canonical title",
       content: "Canonical content",
     };
@@ -276,8 +284,29 @@ describe("journal public content translation", () => {
     expect(translateMany).not.toHaveBeenCalled();
     expect(result.returnData).toEqual({
       id: 22,
+      userId: "user-1",
       title: "Canonical title",
       content: "Canonical content",
+      isOwner: true,
+    });
+  });
+
+  test("marks published entries from other readers as not owned", async () => {
+    cache.getOrSet.mockResolvedValue({
+      id: 24n,
+      userId: "someone-else",
+      title: "Shared reflection",
+      content: "A published entry",
+      isPublished: true,
+    });
+
+    const result = await getJournalEntry({ id: 24, lang: "en" }, "user-1");
+
+    expect(result.returnCode).toBe(200);
+    expect(result.returnData).toMatchObject({
+      id: 24,
+      userId: "someone-else",
+      isOwner: false,
     });
   });
 
@@ -342,6 +371,94 @@ describe("journal public content translation", () => {
       id: 4,
       title: "fr:Grace",
       content: "fr:Amazing grace",
+    });
+  });
+});
+
+describe("journal entry ownership enforcement", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    translateMany.mockImplementation(async (texts, lang) =>
+      texts.map((text) => `${lang}:${text}`),
+    );
+  });
+
+  test("rejects updates from a reader who does not own the entry", async () => {
+    prisma.journalEntry.findFirst.mockResolvedValue(null);
+
+    const result = await updateJournalEntry(
+      { id: 5, content: "changed" },
+      "user-2",
+    );
+
+    expect(result.returnCode).toBe(404);
+    expect(prisma.journalEntry.findFirst).toHaveBeenCalledWith({
+      where: { id: 5n, userId: "user-2" },
+    });
+    expect(prisma.journalEntry.update).not.toHaveBeenCalled();
+  });
+
+  test("rejects deletes from a reader who does not own the entry", async () => {
+    prisma.journalEntry.deleteMany.mockResolvedValue({ count: 0 });
+
+    const result = await deleteJournalEntry({ id: 6 }, "user-2");
+
+    expect(result.returnCode).toBe(404);
+    expect(prisma.journalEntry.deleteMany).toHaveBeenCalledWith({
+      where: { id: 6n, userId: "user-2" },
+    });
+    expect(prisma.journalEntry.delete).not.toHaveBeenCalled();
+  });
+
+  test("deletes only the owner's entry", async () => {
+    prisma.journalEntry.deleteMany.mockResolvedValue({ count: 1 });
+
+    const result = await deleteJournalEntry({ id: 8 }, "user-1");
+
+    expect(result.returnCode).toBe(200);
+    expect(prisma.journalEntry.deleteMany).toHaveBeenCalledWith({
+      where: { id: 8n, userId: "user-1" },
+    });
+    expect(prisma.journalEntry.delete).not.toHaveBeenCalled();
+  });
+
+  test("rejects deletes without an authenticated user", async () => {
+    const result = await deleteJournalEntry({ id: 9 }, undefined);
+
+    expect(result.returnCode).toBe(401);
+    expect(prisma.journalEntry.deleteMany).not.toHaveBeenCalled();
+  });
+
+  test("rejects favorite toggles from a reader who does not own the entry", async () => {
+    prisma.journalEntry.findFirst.mockResolvedValue(null);
+
+    const result = await toggleFavorite({ id: 7 }, "user-2");
+
+    expect(result.returnCode).toBe(404);
+    expect(prisma.journalEntry.findFirst).toHaveBeenCalledWith({
+      where: { id: 7n, userId: "user-2" },
+    });
+    expect(prisma.journalEntry.update).not.toHaveBeenCalled();
+  });
+
+  test("marks the user's own list entries as owned", async () => {
+    prisma.journalEntry.findMany.mockResolvedValue([
+      {
+        id: 8n,
+        userId: "user-1",
+        title: "Mine",
+        content: "My entry",
+        createdOn: new Date("2026-03-04T00:00:00.000Z"),
+      },
+    ]);
+    prisma.journalEntry.count.mockResolvedValue(1);
+
+    const result = await getAllJournalEntries({ page: 1, pageSize: 20 }, "user-1");
+
+    expect(result.returnData.entries[0]).toMatchObject({
+      id: 8,
+      userId: "user-1",
+      isOwner: true,
     });
   });
 });

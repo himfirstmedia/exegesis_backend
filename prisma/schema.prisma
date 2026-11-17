@@ -585,8 +585,13 @@ model JournalEntry {
 
   @@index([userId])
   @@index([userId, createdOn])
-  @@index([bookName, chapter])
+  @@index([userId, updatedOn])
+  @@index([userId, isFavorite])
+  @@index([userId, isPublished])
+  @@index([bookName, chapter, verseNumber])
   @@index([category])
+  // Public discovery feed: filter by visibility, order by recency.
+  @@index([isPublished, createdOn])
   @@map("journal_entries")
 }
 

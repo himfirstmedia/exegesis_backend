@@ -212,18 +212,20 @@ export const deleteJournalEntry = async (data, userId) => {
   if (!id) {
     return { returnCode: 400, returnMessage: "Journal entry ID is required" };
   }
+  if (!userId) {
+    return { returnCode: 401, returnMessage: "Unauthorized" };
+  }
 
-  const existing = await prisma.journalEntry.findFirst({
+  // Ownership is part of the delete predicate rather than a separate lookup.
+  // A caller can therefore only ever remove entries they own, even when the
+  // entry is published and readable by everyone through the discovery feed.
+  const result = await prisma.journalEntry.deleteMany({
     where: { id: BigInt(id), userId },
   });
 
-  if (!existing) {
+  if (!result.count) {
     return { returnCode: 404, returnMessage: "Journal entry not found" };
   }
-
-  await prisma.journalEntry.delete({
-    where: { id: BigInt(id) },
-  });
 
   return { returnCode: 200, returnMessage: "Journal entry deleted successfully" };
 };
@@ -246,6 +248,18 @@ export const getJournalEntry = async (data, userId) => {
             { isPublished: true }, // Public entry from any user
           ],
         },
+        // The author is shown on the detail screen. Only public profile fields
+        // are selected so a shared entry never leaks private account data.
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              username: true,
+            },
+          },
+        },
       }),
     60,
   );
@@ -254,14 +268,21 @@ export const getJournalEntry = async (data, userId) => {
     return { returnCode: 404, returnMessage: "Journal entry not found" };
   }
 
+  const entryPayload = raw === true
+    ? journalEntry
+    : await localizeJournalEntries(journalEntry, lang);
+
   return {
     returnCode: 200,
     returnMessage: "Journal entry fetched successfully",
-    returnData: serializeBigInt(
-      raw === true
-        ? journalEntry
-        : await localizeJournalEntries(journalEntry, lang),
-    ),
+    // Ownership is evaluated on the server so clients can hide mutating
+    // actions for published entries that belong to another reader. The
+    // mutation endpoints still scope every write by userId — this flag is a
+    // UI hint, never an authorization decision.
+    returnData: serializeBigInt({
+      ...entryPayload,
+      isOwner: journalEntry.userId === userId,
+    }),
   };
 };
 
@@ -325,6 +346,18 @@ export const getAllJournalEntries = async (data, userId) => {
       skip: offset,
       take: pageSizeNum,
       orderBy,
+      // The author name is shown on journal cards. Select only public profile
+      // fields so the list never exposes account data.
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            username: true,
+          },
+        },
+      },
     }),
     prisma.journalEntry.count({ where: whereClause }),
   ]);
@@ -333,15 +366,18 @@ export const getAllJournalEntries = async (data, userId) => {
   const hasNext = pageNum < totalPages;
   const hasPrevious = pageNum > 1;
 
+  const localizedEntries = await localizeJournalEntries(
+    entries,
+    lang,
+    JOURNAL_LIST_TEXT_FIELDS,
+  );
+
   return {
     returnCode: 200,
     returnMessage: "Journal entries fetched successfully",
     returnData: serializeBigInt({
-      entries: await localizeJournalEntries(
-        entries,
-        lang,
-        JOURNAL_LIST_TEXT_FIELDS,
-      ),
+      // This list is always scoped to the authenticated user.
+      entries: localizedEntries.map((entry) => ({ ...entry, isOwner: true })),
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,
@@ -372,7 +408,12 @@ export const getJournalEntriesByVerse = async (data, userId) => {
   return {
     returnCode: 200,
     returnMessage: "Journal entries for verse fetched successfully",
-    returnData: serializeBigInt(await localizeJournalEntries(entries, lang)),
+    returnData: serializeBigInt(
+      (await localizeJournalEntries(entries, lang)).map((entry) => ({
+        ...entry,
+        isOwner: true,
+      })),
+    ),
   };
 };
 
@@ -1777,11 +1818,14 @@ export const getPublicEntries = async (data, userId) => {
   const totalPages = Math.ceil(totalCount / pageSizeNum);
   const hasNext = pageNum < totalPages;
 
-  // Attach liked and likeCount to each entry
+  // Attach liked, likeCount and ownership to each entry. The discovery feed
+  // includes entries from every reader, so the UI must only offer mutating
+  // actions when the signed-in reader owns the entry.
   const enriched = entries.map((e) => ({
     ...e,
     liked: e.likes.length > 0,
     likeCount: e._count.likes,
+    isOwner: e.userId === userId,
     _count: undefined,
     likes: undefined,
   }));
@@ -1836,7 +1880,10 @@ export const searchEntriesByStrongs = async (data, userId) => {
   return {
     returnCode: 200,
     returnData: serializeBigInt({
-      entries: await localizeJournalEntries(entries, lang),
+      entries: (await localizeJournalEntries(entries, lang)).map((entry) => ({
+        ...entry,
+        isOwner: true,
+      })),
       totalCount,
       page: pageNum,
       pageSize: pageSizeNum,
