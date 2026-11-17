@@ -14,8 +14,9 @@ complete. No production database changes or deployment were performed.
 | Backend complete unit suite | 99 suites, 895 tests passed |
 | Web complete unit suite | 478 tests passed |
 | Web TypeScript + production build | Passed; existing large Bible chunks and stale Browserslist warning |
-| App complete unit suite | 218 suites passed, 5 failed; 1,938 tests passed, 16 failed |
+| App complete unit suite | 223 suites passed, 4 failed; 1,962 tests passed, 14 failed |
 | App typecheck | Passed, zero errors |
+| Android Back on a rebuilt debug app | Passed on Pixel 7: panels/actions close, chapter picker closes, route history returns, root reader goes Home, Home root exits |
 | Reader/admin login and HTTP smoke | 14 checks passed, including missing-token 401 and reader-to-admin 403 |
 | Prisma validate | Passed; two existing required-creator/SetNull warnings |
 | Prisma migrate status | All 28 local migrations applied |
@@ -30,10 +31,11 @@ and JWTs were not written to test files or reports. Successful logins updated
 local login metadata only; no editorial saves were made. These checks prove
 current legacy API compatibility, **not** normalized end-to-end behavior.
 
-ADB device connectivity was confirmed. No APK was built. Authenticated browser
-and physical-device normalized flows remain unverified; the feature modules are
-not yet wired to shared storage. Testing the currently production-targeted UI
-would not validate the local normalization changes.
+ADB device connectivity was confirmed. A debug build was installed on the Pixel 7
+to verify the native Back bridge; no release APK was produced. Authenticated
+browser and physical-device normalized flows remain unverified; the feature
+modules are not yet wired to shared storage. Testing the currently
+production-targeted UI would not validate the local normalization changes.
 
 ## Blocking findings
 
@@ -57,12 +59,12 @@ would not validate the local normalization changes.
      mocked multi-selection hook (7 failures).
    - `app/__tests__/adminHooksWave.test.tsx`: missing `useOptionalLanguage` mock
      (5 failures).
-   - `app/__tests__/fileSizeConvention.test.ts`: two hooks exceed line limits
-     (1 failure).
+   - `app/__tests__/fileSizeConvention.test.ts`: `useLegacyLedger.ts` exceeds
+     the 500-line hook limit (1 failure).
    - `app/__tests__/LegalScreenChunks.test.tsx`: expected skeleton absent
      (1 failure).
-   - `app/__tests__/BibleReaderLoadingUi.test.tsx`: expected watermark opacities
-     differ from the current lighter watermark (2 failures).
+   The watermark expectations and the Back-handler navigation-context mock were
+   corrected; those cases now pass.
 
 Explanation `137` also has an apparent raw fingerprint difference from tied
 theme ordering. The six theme rows are otherwise identical; this is distinguished
