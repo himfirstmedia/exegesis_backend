@@ -3,6 +3,7 @@ import {
   serializeBigInt,
 } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
+import { validVerseRange, verseEndData } from '../../utils/verseRange.js';
 import { cache } from "../../services/cacheService.js";
 import { parseLocalDate, utcToday } from "../../utils/dates.js";
 import bcrypt from "bcryptjs";
@@ -576,6 +577,7 @@ export const deleteActivity = async (data) => {
 };
 
 export const addDailyVerse = async (data, adminId) => {
+  if (!validVerseRange(data.verseNumber, data.verseEnd)) return { status: 400, message: 'Select a valid starting verse and ending verse (end must not precede start).' };
   const {
     id,
     bookName,
@@ -616,6 +618,7 @@ export const addDailyVerse = async (data, adminId) => {
         bookName,
         chapter: BigInt(chapter),
         verseNumber: BigInt(verseNumber),
+        ...verseEndData(data.verseEnd),
         bibleVersion: bibleVersion || "KJV",
         displayDate: parseLocalDate(displayDate),
         displayTime: displayTime ? new Date(displayTime) : null,
@@ -643,6 +646,7 @@ export const addDailyVerse = async (data, adminId) => {
         bookName,
         chapter: BigInt(chapter),
         verseNumber: BigInt(verseNumber),
+        ...verseEndData(data.verseEnd),
         bibleVersion: bibleVersion || "KJV",
         displayDate: parseLocalDate(displayDate),
         displayTime: displayTime ? new Date(displayTime) : null,

@@ -177,6 +177,7 @@ model DailyVerse {
   bookName     String     @map("book_name")
   chapter      BigInt
   verseNumber  BigInt     @map("verse_number")
+  verseEnd     BigInt?    @map("verse_end")
   bibleVersion String?    @map("bible_version")
   displayDate  DateTime   @map("display_date")
   displayTime  DateTime?  @map("display_time")
@@ -335,6 +336,7 @@ model VerseExplanation {
   bookName     String    @map("book_name")
   chapter      BigInt
   verseNumber  BigInt    @map("verse_number")
+  verseEnd     BigInt?   @map("verse_end")
   bibleVersion String?   @map("bible_version")
   sortOrder    Int       @default(9999) @map("sort_order")
   createdBy    String?   @map("created_by")
@@ -411,6 +413,7 @@ model VerseCrossReference {
   bookName         String   @map("book_name")
   chapter          BigInt
   verseNumber      BigInt   @map("verse_number")
+  verseEnd         BigInt?  @map("verse_end")
   referenceText    String?  @map("reference_text") @db.Text
   commentary       String?  @db.Text
   sortOrder        Int      @default(0) @map("sort_order")

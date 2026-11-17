@@ -1,4 +1,5 @@
 import { serializeBigInt } from "../../utils/helpers.js";
+import { validVerseRange, verseEndData } from '../../utils/verseRange.js';
 import { localizeListPreviews } from '../admin/listPreview.js';
 import { prisma } from "../../config/db.js";
 import { canonicalBookIndex } from "../../constants/bible-books.js";
@@ -32,7 +33,15 @@ export const fetchVerseTextWithFallback = async (
   bookName,
   chapter,
   verseNumber,
+  verseEnd,
 ) => {
+  if (verseEnd && Number(verseEnd) > Number(verseNumber)) {
+    if (!validVerseRange(verseNumber, verseEnd)) return { text: '', translation: bibleVersion };
+    const numbers = Array.from({ length: Number(verseEnd) - Number(verseNumber) + 1 }, (_, i) => Number(verseNumber) + i);
+    let rows = await Promise.all(numbers.map(verse => fetchVerseTextWithFallback(bibleVersion, bookName, chapter, verse)));
+    if (new Set(rows.map(row => row.translation)).size > 1) rows = await Promise.all(numbers.map(verse => fetchVerseTextWithFallback('KJV', bookName, chapter, verse)));
+    return { text: rows.every(row => row.text) ? rows.map((row, i) => `${numbers[i]}. ${row.text}`).join('\n') : '', translation: rows[0]?.translation || bibleVersion };
+  }
   try {
     const verseData = await getVerse(
       bibleVersion,
@@ -1012,6 +1021,10 @@ export const getVerseExplanation = async (data) => {
 };
 
 export const addVerseExplanation = async (data, userId) => {
+  if (!validVerseRange(data.verseNumber, data.verseEnd)) return { status: 400, message: 'Invalid verse range' };
+  if ((data.crossReferences || []).some(cr => !cr.bookName || !Number.isInteger(Number(cr.chapter)) || Number(cr.chapter) < 1 || !validVerseRange(cr.verseNumber, cr.verseEnd))) {
+    return { status: 400, message: 'Complete each cross-reference passage or remove its empty row.' };
+  }
   const {
     bookName,
     chapter,
@@ -1073,6 +1086,7 @@ export const addVerseExplanation = async (data, userId) => {
             chapter: BigInt(chapter),
             verseNumber: BigInt(verseNumber),
             bibleVersion,
+            ...verseEndData(data.verseEnd),
             sortOrder,
             updatedBy: userId,
           },
@@ -1086,12 +1100,13 @@ export const addVerseExplanation = async (data, userId) => {
               verseNumber: BigInt(verseNumber),
             },
           },
-          update: { bibleVersion, sortOrder, updatedBy: userId },
+          update: { bibleVersion, ...verseEndData(data.verseEnd), sortOrder, updatedBy: userId },
           create: {
             bookName,
             chapter: BigInt(chapter),
             verseNumber: BigInt(verseNumber),
             bibleVersion,
+            ...verseEndData(data.verseEnd),
             sortOrder,
             createdBy: userId,
           },
@@ -1198,6 +1213,7 @@ export const addVerseExplanation = async (data, userId) => {
           bookName: cr.bookName,
           chapter: BigInt(cr.chapter),
           verseNumber: BigInt(cr.verseNumber),
+          ...verseEndData(cr.verseEnd),
           referenceText: cr.referenceText,
           commentary: cr.commentary,
           sortOrder: cr.sortOrder ?? i,
@@ -1498,6 +1514,7 @@ export const getVerseByDate = async (data) => {
           dailyVerse.bookName,
           Number(dailyVerse.chapter),
           Number(dailyVerse.verseNumber),
+          dailyVerse.verseEnd ? Number(dailyVerse.verseEnd) : undefined,
         );
 
       return {
@@ -1533,7 +1550,7 @@ export const getVerseByDate = async (data) => {
     message: "Verse fetched successfully",
     data: {
       ...dv,
-      reference: `${dv.bookName} ${dv.chapter}:${dv.verseNumber}`,
+      reference: `${dv.bookName} ${dv.chapter}:${dv.verseNumber}${dv.verseEnd && Number(dv.verseEnd) > Number(dv.verseNumber) ? `-${dv.verseEnd}` : ''}`,
       translation: bibleVersion,
       bibleVersion,
       text: verseText,
@@ -1604,6 +1621,7 @@ export const getTodaysVerse = async (data = {}) => {
           dailyVerse.bookName,
           Number(dailyVerse.chapter),
           Number(dailyVerse.verseNumber),
+          dailyVerse.verseEnd ? Number(dailyVerse.verseEnd) : undefined,
         );
 
       // Fetch explanation inside cache so it's cached together
