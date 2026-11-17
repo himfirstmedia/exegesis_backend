@@ -5,7 +5,7 @@ import { BIBLE_BOOK_NAMES } from '../bible/bookNames.js';
 export const overviewLanguages = Object.keys(BIBLE_BOOK_NAMES);
 export const overviewBooks = Object.keys(BIBLE_BOOK_NAMES.en);
 // Explicit public fields only: never publish editor IDs or other DB columns.
-export const overviewFields = ['author', 'authorDetail', 'audience', 'dateWritten', 'locationWritten',
+export const overviewFields = ['title', 'author', 'authorDetail', 'audience', 'dateWritten', 'locationWritten',
   'purpose', 'keyTheme', 'summary', 'background', 'lessons', 'chapters', 'structure',
   'applications', 'keyScripture', 'mainThemes', 'keyPeople', 'keyVerses', 'christConnection'];
 // Chapter counts are numeric. Scripture citations keep their original edition:

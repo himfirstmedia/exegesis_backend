@@ -925,6 +925,7 @@ model PushSetting {
 
 model BookPrologue {
   bookName          String   @id @map("book_name")
+  title             String?
   sortOrder         Int      @default(9999) @map("sort_order")
   author            String?
   authorDetail      String?  @map("author_detail")

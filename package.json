@@ -19,7 +19,7 @@
     "build:book-packs": "node scripts/build-book-packs.mjs",
     "build:book-overview-packs": "node scripts/build-book-overview-packs.mjs",
     "test:smoke:daily-verse": "node scripts/smoke-test-daily-verse.js",
-    "predev": "prisma generate",
+    "predev": "prisma migrate deploy && prisma generate",
     "dev": "nodemon src/bootstrap.js",
     "start": "prisma migrate deploy && prisma generate && node src/bootstrap.js",
     "seedmovies": "node prisma/seed.js",

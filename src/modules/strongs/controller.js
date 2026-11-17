@@ -82,8 +82,18 @@ export const adminUpdateEntry = asyncHandler(async (req, res) => {
     fullDefinition,
     partOfSpeech,
     language,
+    pronunciation: req.body.pronunciation,
+    grammaticalCase: req.body.grammaticalCase,
+    gender: req.body.gender,
+    number: req.body.number,
+    usageCount: req.body.usageCount,
+    crossReferences: req.body.crossReferences,
   });
   res.json(formatApiResponse(result));
+});
+
+export const adminDeleteEntry = asyncHandler(async (req, res) => {
+  res.json(formatApiResponse(await strongsService.adminDeleteEntry(req.body.strongsId)));
 });
 
 export const adminGetVerseUniqueWords = asyncHandler(async (req, res) => {
@@ -130,12 +140,13 @@ export const adminListVerseWordStudies = asyncHandler(async (req, res) => {
 });
 
 export const adminListAllVerseWordStudies = asyncHandler(async (req, res) => {
-  const { page, pageSize, search, bookName } = req.body;
+  const { page, pageSize, search, bookName, strongsId } = req.body;
   const result = await strongsService.adminListAllVerseWordStudies({
     page: page || 0,
     pageSize: pageSize || 50,
     search,
     bookName,
+    strongsId,
   });
   res.json(formatApiResponse(result));
 });

@@ -40,7 +40,11 @@ export function publishPendingOverviewPacks() {
         }
       }
     }));
-  })().catch(() => {
+  })().catch(error => {
+    if (error?.code === 'P2021' || error?.code === 'P2022') {
+      console.warn('[overview-packs] Database schema is outdated; run npm run db:deploy and restart. Publication will retry.');
+      return;
+    }
     console.warn('[overview-packs] Source/storage unavailable; publication will retry');
   }).finally(() => {
     running = undefined;

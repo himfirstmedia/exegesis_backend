@@ -1,9 +1,7 @@
 import { prisma } from '../../config/db.js';
-import { cache } from '../../services/cacheService.js';
 import { translateBibleTopics, translateStrongsData } from './translation.js';
 import { translateSearchPage } from './searchTranslation.js';
-
-const CACHE_TTL = 86400;
+import { editionKey, getEditorialReferences, withEditorialReferences } from './editorialWords.js';
 
 // URL callers often pass "g25" or "G25" while the dictionary stores zero-padded
 // ids such as "G0025". Normalizing here keeps both forms resolvable.
@@ -89,12 +87,9 @@ const addCrossReferenceTexts = async (entries, translation) => {
 
 export const getStrongsEntry = async (strongsId, lang) => {
   const normalizedId = normalizeStrongsId(strongsId);
-  const cacheKey = `v3:${normalizedId}`;
 
-  const cached = await cache.get('strongs', cacheKey);
-  if (cached) {
-    return translateResponse({ status: 200, message: 'Strongs entry fetched from cache', data: cached }, lang);
-  }
+  // Editorial records can change independently (explanation/resource editors).
+  // Read them fresh; translation itself remains content-key cached.
 
   const entry = await prisma.strongsDictionary.findUnique({
     where: { strongsId: normalizedId },
@@ -159,9 +154,9 @@ export const getStrongsEntry = async (strongsId, lang) => {
   };
 
   delete enrichedEntry.verseExplanationWordStudies;
-  await cache.set('strongs', cacheKey, enrichedEntry, CACHE_TTL);
-
-  return translateResponse({ status: 200, message: 'Strongs entry fetched successfully', data: enrichedEntry }, lang);
+  const refs = await getEditorialReferences({ strongsId: normalizedId });
+  const [currentEntry] = withEditorialReferences([enrichedEntry], refs);
+  return translateResponse({ status: 200, message: 'Strongs entry fetched successfully', data: currentEntry }, lang);
 };
 
 export const searchStrongs = async (query, limit = 2, offset = 0, lang = 'en', language) => {
@@ -344,17 +339,11 @@ export const getRelatedWords = async (strongsId, lang) => {
 
 export const getVersesByStrongs = async (strongsId, translation = 'Berean', limit = 50, lang) => {
   strongsId = normalizeStrongsId(strongsId);
-  const cacheKey = `${strongsId}:${translation}:${limit}`;
-
-  const cached = await cache.get('strongs-verses', cacheKey);
-  if (cached) {
-    return translateResponse({ status: 200, message: 'Verses fetched from cache', data: cached }, lang);
-  }
 
   const words = await prisma.verseWord.findMany({
     where: {
       strongsId,
-      translation,
+      translation: editionKey(translation) === 'BSB' ? { in: ['BSB', 'Berean'] } : translation,
     },
     take: limit,
     orderBy: [
@@ -381,9 +370,18 @@ export const getVersesByStrongs = async (strongsId, translation = 'Berean', limi
     reference: `${w.bookName} ${w.chapter}:${w.verse}`,
   }));
 
-  await cache.set('strongs-verses', cacheKey, result, CACHE_TTL);
+  const refs = (await getEditorialReferences({ strongsId }))
+    .filter(ref => ref.verse != null && editionKey(ref.translation) === editionKey(translation));
+  const existing = new Set(result.map(ref => `${ref.bookName}:${ref.chapter}:${ref.verse}`));
+  for (const ref of refs) {
+    const key = `${ref.bookName}:${ref.chapter}:${ref.verse}`;
+    if (existing.has(key)) continue;
+    existing.add(key);
+    result.push({ bookName: ref.bookName, chapter: ref.chapter, verse: ref.verse,
+      text: ref.surfaceText || '', wordOrder: 0, reference: `${ref.bookName} ${ref.chapter}:${ref.verse}` });
+  }
 
-  return translateResponse({ status: 200, message: 'Verses fetched successfully', data: result }, lang);
+  return translateResponse({ status: 200, message: 'Verses fetched successfully', data: result.slice(0, limit) }, lang);
 };
 
 export const getBookWords = async (bookName, limit = 4, offset = 0, lang = 'en', language = 'all') => {
@@ -391,46 +389,21 @@ export const getBookWords = async (bookName, limit = 4, offset = 0, lang = 'en',
   const languageFilter = language && language.toLowerCase() !== 'all'
     ? language.toLowerCase()
     : null;
-  const languageEntries = languageFilter
-    ? await prisma.strongsDictionary.findMany({
-        where: { language: { equals: languageFilter, mode: 'insensitive' } },
-        select: { strongsId: true },
-      })
-    : null;
-  const allowedIds = languageEntries?.map((entry) => entry.strongsId) || null;
-  const wordWhere = {
-    bookName,
-    strongsId: {
-      not: null,
-      ...(allowedIds ? { in: allowedIds } : {}),
-    },
+  const references = await getEditorialReferences({ bookName });
+  const editorialIds = [...new Set(references.map(ref => ref.strongsId))];
+  // Count/page dictionary rows, not occurrences: imported and editorial words
+  // form one stable, deduplicated set, including words with no imported mapping.
+  const where = {
+    ...(languageFilter ? { language: { equals: languageFilter, mode: 'insensitive' } } : {}),
+    OR: [{ verseWords: { some: { bookName } } }, { strongsId: { in: editorialIds } }],
   };
-  const verseWordIds = await prisma.verseWord.findMany({
-    where: wordWhere,
-    distinct: ['strongsId'],
-    orderBy: { strongsId: 'asc' },
-    skip: offset,
-    take: limit,
-    select: { strongsId: true },
-  });
-  const strongsIds = verseWordIds.map((row) => row.strongsId).filter(Boolean);
-  const totalRows = await prisma.verseWord.findMany({
-    where: wordWhere,
-    distinct: ['strongsId'],
-    select: { strongsId: true },
-  });
-  const total = totalRows.length;
-  if (strongsIds.length === 0) {
-    return {
-      status: 200,
-      message: 'No Strongs words found for this book',
-      data: { data: [], total, hasNext: false, contentLanguage: lang },
-    };
-  }
+  const total = await prisma.strongsDictionary.count({ where });
 
   // Fetch the Strong's entries with verseReferences for attachment info
   const entries = await prisma.strongsDictionary.findMany({
-    where: { strongsId: { in: strongsIds } },
+    where,
+    skip: offset,
+    take: limit,
     select: {
       strongsId: true,
       originalWord: true,
@@ -494,24 +467,18 @@ export const getBookWords = async (bookName, limit = 4, offset = 0, lang = 'en',
     };
   });
 
-  const translated = await translateSearchPage(enriched, lang);
+  const translated = await translateSearchPage(withEditorialReferences(enriched, references), lang);
   return {
     status: 200,
     message: 'Book words fetched successfully',
-    data: { data: translated, total, hasNext: offset + strongsIds.length < total, contentLanguage: lang },
+    data: { data: translated, total, hasNext: offset + entries.length < total && entries.length > 0, contentLanguage: lang },
   };
 };
 
 export const getVerseWords = async (bookName, chapter, verseNumber, translation = 'Berean', lang) => {
-  const cacheKey = `${translation}:${bookName}:${chapter}:${verseNumber ?? 'all'}`;
-
-  const cached = await cache.get('verse-words', cacheKey);
-  if (cached) {
-    return translateResponse({ status: 200, message: 'Verse words fetched from cache', data: cached }, lang);
-  }
 
   const where = {
-    translation,
+    translation: editionKey(translation) === 'BSB' ? { in: ['BSB', 'Berean'] } : translation,
     bookName,
     chapter: BigInt(chapter),
     ...(verseNumber != null && verseNumber > 0 ? { verse: BigInt(verseNumber) } : {}),
@@ -568,8 +535,6 @@ export const getVerseWords = async (bookName, chapter, verseNumber, translation 
     } : null,
   }));
 
-  await cache.set('verse-words', cacheKey, result, CACHE_TTL);
-
   return translateResponse({ status: 200, message: 'Verse words fetched successfully', data: result }, lang);
 };
 
@@ -612,19 +577,25 @@ export const getTopicVerses = async (topicName, limit = 50, lang) => {
 };
 
 export const adminUpdateEntry = async (strongsId, data) => {
+  strongsId = normalizeStrongsId(strongsId);
   const existing = await prisma.strongsDictionary.findUnique({ where: { strongsId } });
+  if ((!existing && !data.shortDefinition?.trim()) || (data.shortDefinition !== undefined && !data.shortDefinition.trim())) {
+    return { status: 400, message: 'A short definition is required' };
+  }
+  const expectedLanguage = strongsId.startsWith('H') ? 'hebrew' : 'greek';
+  if (data.language && data.language !== expectedLanguage) {
+    return { status: 400, message: 'Strong’s language must match its H (Hebrew) or G (Greek) ID' };
+  }
+  const fields = ['adminExplanation', 'originalWord', 'transliteration', 'shortDefinition', 'fullDefinition',
+    'partOfSpeech', 'pronunciation', 'grammaticalCase', 'gender', 'number', 'usageCount', 'crossReferences'];
+  const payload = Object.fromEntries(fields.filter(key => data[key] !== undefined).map(key => [key, data[key]]));
   if (!existing) {
     // Create new entry if it doesn't exist
     const created = await prisma.strongsDictionary.create({
       data: {
         strongsId,
-        adminExplanation: data.adminExplanation || null,
-        originalWord: data.originalWord || null,
-        transliteration: data.transliteration || null,
-        shortDefinition: data.shortDefinition || '',
-        fullDefinition: data.fullDefinition || null,
-        partOfSpeech: data.partOfSpeech || null,
-        language: data.language || 'greek',
+        ...payload,
+        language: expectedLanguage,
       },
     });
     return { status: 200, message: 'Strongs entry created', data: created };
@@ -633,29 +604,32 @@ export const adminUpdateEntry = async (strongsId, data) => {
   const updated = await prisma.strongsDictionary.update({
     where: { strongsId },
     data: {
-      ...(data.adminExplanation !== undefined ? { adminExplanation: data.adminExplanation } : {}),
-      ...(data.originalWord !== undefined ? { originalWord: data.originalWord } : {}),
-      ...(data.transliteration !== undefined ? { transliteration: data.transliteration } : {}),
-      ...(data.shortDefinition !== undefined ? { shortDefinition: data.shortDefinition } : {}),
-      ...(data.fullDefinition !== undefined ? { fullDefinition: data.fullDefinition } : {}),
-      ...(data.partOfSpeech !== undefined ? { partOfSpeech: data.partOfSpeech } : {}),
-      ...(data.language !== undefined ? { language: data.language } : {}),
+      ...payload,
+      language: expectedLanguage,
     },
   });
   return { status: 200, message: 'Strongs entry updated', data: updated };
 };
 
-export const getVerseUniqueWords = async (bookName, chapter, verse, translation = 'BSB', page = 0, pageSize = 50, lang) => {
-  const cacheKey = `unique:v3:${translation}:${bookName}:${chapter}:${verse ?? 'all'}:p${page}:s${pageSize}`;
-
-  const cached = await cache.get('verse-words', cacheKey);
-  if (cached) {
-    return translateResponse({ status: 200, message: 'Verse unique words fetched from cache', data: cached }, lang);
+export const adminDeleteEntry = async (strongsId) => {
+  strongsId = normalizeStrongsId(strongsId);
+  const entry = await prisma.strongsDictionary.findUnique({ where: { strongsId }, include: { _count: { select: {
+    verseWords: true, studyToolWords: true, verseWordStudies: true, verseExplanationWordStudies: true,
+  } } } });
+  if (!entry) return { status: 404, message: 'Strong’s entry not found' };
+  const references = await getEditorialReferences({ strongsId });
+  if (Object.values(entry._count).some(Boolean) || references.length) {
+    return { status: 409, message: 'This word is in use. Remove its editorial links in their original editors first; imported Scripture mappings must be preserved.' };
   }
+  await prisma.strongsDictionary.delete({ where: { strongsId } });
+  return { status: 200, message: 'Unused Strong’s entry deleted' };
+};
+
+export const getVerseUniqueWords = async (bookName, chapter, verse, translation = 'BSB', page = 0, pageSize = 50, lang) => {
 
   // Get all verse_word records — optionally filtered by chapter and/or verse
   const where = {
-    translation,
+    translation: editionKey(translation) === 'BSB' ? { in: ['BSB', 'Berean'] } : translation,
     bookName,
     ...(chapter != null && chapter > 0 ? { chapter: BigInt(chapter) } : {}),
     ...(verse != null && verse > 0 ? { verse: BigInt(verse) } : {}),
@@ -743,7 +717,12 @@ export const getVerseUniqueWords = async (bookName, chapter, verse, translation 
     }
   }
 
-  const enrichedEntries = await addCrossReferenceTexts(uniqueEntries, translation);
+  const refs = (await getEditorialReferences({ bookName, chapter, verse }))
+    .filter(ref => editionKey(ref.translation) === editionKey(translation));
+  const missingIds = [...new Set(refs.map(ref => ref.strongsId))].filter(id => !seenIds.has(id));
+  const editorialEntries = missingIds.length ? await prisma.strongsDictionary.findMany({ where: { strongsId: { in: missingIds } }, orderBy: { strongsId: 'asc' } }) : [];
+  for (const entry of editorialEntries) uniqueEntries.push({ ...entry, surfaceText: refs.find(ref => ref.strongsId === entry.strongsId)?.surfaceText || null });
+  const enrichedEntries = await addCrossReferenceTexts(withEditorialReferences(uniqueEntries, refs), translation);
   const total = enrichedEntries.length;
 
   // Apply pagination
@@ -753,7 +732,8 @@ export const getVerseUniqueWords = async (bookName, chapter, verse, translation 
 
   const result = { data: paginated, total, hasNext };
 
-  await cache.set('verse-words', cacheKey, result, 3600);
+  // This includes independently edited attachments/resources; do not retain a
+  // stale aggregate after an administrator changes one of those sources.
 
   return translateResponse({
     status: 200,
@@ -827,6 +807,10 @@ export const syncVerseReferences = async (strongsId) => {
 };
 
 export const upsertVerseWordStudy = async ({ strongsId, bookName, chapter, verse, translation, surfaceText, adminExplanation, createdBy }) => {
+  strongsId = normalizeStrongsId(strongsId);
+  translation = editionKey(translation) === 'BSB' ? 'BSB' : translation;
+  const entry = await prisma.strongsDictionary.findUnique({ where: { strongsId } });
+  if (!entry) return { status: 400, message: 'Create the dictionary entry before attaching this word' };
   const effectiveVerse = verse || null;
 
   // Find existing study using the compound unique key that includes verse
@@ -856,18 +840,6 @@ export const upsertVerseWordStudy = async ({ strongsId, bookName, chapter, verse
   } else {
     // Ensure Strong's entry exists to satisfy FK constraint. If missing,
     // create a minimal placeholder so the new verseWordStudy can reference it.
-    if (strongsId) {
-      try {
-        await prisma.strongsDictionary.upsert({
-          where: { strongsId },
-          update: {},
-          create: { strongsId, shortDefinition: `Imported entry for ${strongsId}`, language: 'hebrew' },
-        });
-      } catch (e) {
-        // Log but continue — if creation fails, the subsequent create may fail
-        console.error('[upsertVerseWordStudy] Could not ensure Strongs entry exists:', e);
-      }
-    }
 
     result = await prisma.verseWordStudy.create({
       data: {
@@ -935,6 +907,7 @@ export const deleteVerseWordStudy = async (id) => {
     where: { id },
     select: { strongsId: true },
   });
+  if (!study) return { status: 404, message: 'Verse word study not found' };
   await prisma.verseWordStudy.delete({ where: { id } });
 
   // Sync verse references after deletion
@@ -945,7 +918,9 @@ export const deleteVerseWordStudy = async (id) => {
   return { status: 200, message: 'Verse word study deleted' };
 };
 
-export const adminListAllVerseWordStudies = async ({ page = 0, pageSize = 50, search, bookName }) => {
+export const adminListAllVerseWordStudies = async ({ page = 0, pageSize = 50, search, bookName, strongsId }) => {
+  page = Math.max(0, Math.floor(Number(page) || 0));
+  pageSize = Math.min(100, Math.max(1, Math.floor(Number(pageSize) || 50)));
   const where = {};
   if (search) {
     where.OR = [
@@ -956,6 +931,7 @@ export const adminListAllVerseWordStudies = async ({ page = 0, pageSize = 50, se
     ];
   }
   if (bookName) where.bookName = bookName;
+  if (strongsId) where.strongsId = normalizeStrongsId(strongsId);
 
   const [data, total] = await Promise.all([
     prisma.verseWordStudy.findMany({
@@ -1055,6 +1031,8 @@ export const syncAllVerseReferences = async () => {
 };
 
 export const adminListEntries = async ({ page, pageSize, search, language, hasAdminExplanation }) => {
+  page = Math.max(0, Math.floor(Number(page) || 0));
+  pageSize = Math.min(100, Math.max(1, Math.floor(Number(pageSize) || 50)));
   const where = {};
   if (search) {
     where.OR = [

@@ -4,8 +4,10 @@ import { serializeBigInt } from '../../utils/helpers.js';
 import { normalizeLanguage, translateMany } from '../../utils/translator.js';
 import { withContentLanguage } from '../../utils/contentLanguage.js';
 import { requestOverviewPackPublication } from './pack-worker.js';
+import { CANONICAL_BOOK_ORDER } from '../../constants/bible-books.js';
 
 const TRANSLATABLE_FIELDS = [
+  'title',
   'summary',
   'background',
   'lessons',
@@ -228,6 +230,7 @@ export const getAllBookPrologues = async (body) => {
 export const upsertBookPrologue = async (userId, body) => {
   const {
     bookName,
+    title,
     author,
     authorDetail,
     audience,
@@ -249,8 +252,13 @@ export const upsertBookPrologue = async (userId, body) => {
   } = body || {};
 
   if (!bookName) return { status: 400, message: 'bookName is required' };
+  if (!CANONICAL_BOOK_ORDER.includes(bookName)) return { status: 400, message: 'Select a valid Bible book from the list' };
+  if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.trim().length > 300)) {
+    return { status: 400, message: 'Title must contain between 1 and 300 characters' };
+  }
 
   const data = {
+    ...(title !== undefined ? { title: title.trim() } : {}),
     author: author || null,
     authorDetail: authorDetail || null,
     audience: audience || null,

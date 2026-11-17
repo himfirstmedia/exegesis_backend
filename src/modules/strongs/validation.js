@@ -1,4 +1,8 @@
 import { z } from 'zod/v4';
+import { CANONICAL_BOOK_ORDER } from '../../constants/bible-books.js';
+
+const strongsId = z.string().trim().toUpperCase().regex(/^[GH]\d{1,5}$/, 'Use a Strong’s ID such as H7225 or G3056');
+const editorialText = z.string().max(30000).nullable().optional();
 
 const lang = z.string().optional();
 
@@ -57,24 +61,32 @@ export const getVerseUniqueWordsSchema = z.object({
 });
 
 export const adminUpdateEntrySchema = z.object({
-  strongsId: z.string().min(1, 'strongsId is required'),
-  adminExplanation: z.string().optional(),
-  originalWord: z.string().optional(),
-  transliteration: z.string().optional(),
+  strongsId,
+  adminExplanation: editorialText,
+  originalWord: z.string().max(1000).nullable().optional(),
+  transliteration: z.string().max(1000).nullable().optional(),
   shortDefinition: z.string().optional(),
-  fullDefinition: z.string().optional(),
-  partOfSpeech: z.string().optional(),
-  language: z.string().optional(),
+  fullDefinition: editorialText,
+  partOfSpeech: z.string().max(100).nullable().optional(),
+  language: z.enum(['greek', 'hebrew']).optional(),
+  pronunciation: z.string().max(500).nullable().optional(),
+  grammaticalCase: z.string().max(100).nullable().optional(),
+  gender: z.string().max(100).nullable().optional(),
+  number: z.string().max(100).nullable().optional(),
+  usageCount: z.number().int().min(0).nullable().optional(),
+  crossReferences: z.string().max(5000).nullable().optional(),
 });
 
+export const adminDeleteEntrySchema = z.object({ strongsId });
+
 export const adminUpsertVerseWordStudySchema = z.object({
-  strongsId: z.string().min(1, 'strongsId is required'),
-  bookName: z.string().min(1, 'bookName is required'),
-  chapter: z.coerce.number().int().min(1, 'chapter is required'),
-  verse: z.coerce.number().int().min(1, 'verse is required'),
-  translation: z.string().optional(),
+  strongsId,
+  bookName: z.enum(CANONICAL_BOOK_ORDER),
+  chapter: z.coerce.number().int().min(1).max(150),
+  verse: z.coerce.number().int().min(1).max(176),
+  translation: z.string().trim().min(1).max(100).optional(),
   surfaceText: z.string().optional(),
-  adminExplanation: z.string().optional(),
+  adminExplanation: editorialText,
 });
 
 export const adminDeleteVerseWordStudySchema = z.object({

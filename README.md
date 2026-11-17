@@ -31,9 +31,18 @@ Node 22 too. From this directory:
 nvm install
 nvm use
 npm install
-npx prisma generate
 npm run dev
 ```
+
+`npm run dev` first applies committed migrations with `prisma migrate deploy`,
+then generates Prisma Client. Both development and production startup stop if
+migrations fail, rather than running against an outdated schema. These commands
+use the database in `DATABASE_URL`: use a local database for isolated development.
+They never reset the database or seed/replace existing content.
+
+If Prisma reports that `book_prologues.title` does not exist, stop the server,
+run `npm run db:deploy`, then restart `npm run dev`. Do not use `prisma migrate
+reset` or mark the new title migration as applied without actually running it.
 
 After switching Node versions, stop the old development server and run
 `npm run dev` again. An already-running Node 20/nodemon process keeps its old

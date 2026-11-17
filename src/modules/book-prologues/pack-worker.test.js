@@ -30,6 +30,20 @@ test('failed publications are retried on a later reconciliation rather than lost
   await worker.publishPendingOverviewPacks();
   expect(builder.buildOverviewPack).toHaveBeenCalledTimes(4);
 });
+test.each(['P2021', 'P2022'])('schema error %s reports the migration fix and remains retryable', async code => {
+  const source = require('./pack-data.js');
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    source.readOverviewSnapshot.mockRejectedValueOnce(Object.assign(new Error('sensitive database details'), { code }));
+    await worker.publishPendingOverviewPacks();
+    expect(warn).toHaveBeenCalledWith('[overview-packs] Database schema is outdated; run npm run db:deploy and restart. Publication will retry.');
+    expect(builder.buildOverviewPack).not.toHaveBeenCalled();
+    await worker.publishPendingOverviewPacks();
+    expect(builder.buildOverviewPack).toHaveBeenCalledTimes(2);
+  } finally {
+    warn.mockRestore();
+  }
+});
 test('a new admin change aborts obsolete work and schedules the latest snapshot', async () => {
   let signal;
   builder.buildOverviewPack.mockImplementationOnce(async (_language, options) => {

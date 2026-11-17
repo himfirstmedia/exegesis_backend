@@ -63,6 +63,46 @@ test('successful admin additions/edits and deletions wake the overview publisher
   expect(requestOverviewPackPublication).toHaveBeenCalledTimes(2);
 });
 
+describe('prologue titles and canonical book names', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('creates a title and returns it when the prologue is reloaded', async () => {
+    const source = makePrologue({ title: 'Beginnings and Covenant' });
+    prisma.bookPrologue.upsert.mockResolvedValue(source);
+    const saved = await upsertBookPrologue('editor', { bookName: 'Genesis', title: '  Beginnings and Covenant  ', summary: 'Overview' });
+    expect(prisma.bookPrologue.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ bookName: 'Genesis', title: 'Beginnings and Covenant' }),
+      update: expect.objectContaining({ title: 'Beginnings and Covenant' }),
+    }));
+    expect(saved.data.title).toBe('Beginnings and Covenant');
+    prisma.bookPrologue.findUnique.mockResolvedValue(source);
+    expect((await getBookPrologue({ bookName: 'Genesis' })).data.title).toBe('Beginnings and Covenant');
+  });
+
+  test('updates a title and includes it in the admin list', async () => {
+    const source = makePrologue({ title: 'A New Title' });
+    prisma.bookPrologue.upsert.mockResolvedValue(source);
+    await upsertBookPrologue('editor', { bookName: 'Genesis', title: 'A New Title' });
+    expect(prisma.bookPrologue.upsert.mock.calls[0][0].update.title).toBe('A New Title');
+    prisma.bookPrologue.findMany.mockResolvedValue([source]);
+    prisma.bookPrologue.count.mockResolvedValue(1);
+    expect((await getAllBookPrologues({})).data.data[0].title).toBe('A New Title');
+  });
+
+  test('does not clear a saved title when an older client omits it', async () => {
+    prisma.bookPrologue.upsert.mockResolvedValue(makePrologue({ title: 'Existing' }));
+    await upsertBookPrologue('editor', { bookName: 'Genesis', summary: 'Updated summary' });
+    expect(prisma.bookPrologue.upsert.mock.calls[0][0].update).not.toHaveProperty('title');
+  });
+
+  test('rejects invalid names and invalid titles without writing', async () => {
+    for (const body of [{ bookName: 'genisis', title: 'Title' }, { bookName: 'Genesis', title: ' ' }, { bookName: 'Genesis', title: 123 }, { bookName: 'Genesis', title: 'x'.repeat(301) }]) {
+      expect((await upsertBookPrologue('editor', body)).status).toBe(400);
+    }
+    expect(prisma.bookPrologue.upsert).not.toHaveBeenCalled();
+  });
+});
+
 describe('book prologue translation', () => {
   beforeEach(() => {
     jest.clearAllMocks();

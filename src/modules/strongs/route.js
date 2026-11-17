@@ -14,6 +14,7 @@ import {
   searchTopicsSchema,
   getTopicVersesSchema,
   adminUpdateEntrySchema,
+  adminDeleteEntrySchema,
   adminUpsertVerseWordStudySchema,
   adminDeleteVerseWordStudySchema,
   adminSyncVerseReferencesSchema,
@@ -35,6 +36,7 @@ router.post('/verse-unique-words', authenticate, validate(getVerseUniqueWordsSch
 
 // Admin routes
 router.post('/admin/update-entry', authenticate, requireAdmin, validate(adminUpdateEntrySchema, 'body'), strongsController.adminUpdateEntry);
+router.post('/admin/delete-entry', authenticate, requireAdmin, validate(adminDeleteEntrySchema, 'body'), strongsController.adminDeleteEntry);
 router.post('/admin/list-entries', authenticate, requireAdmin, strongsController.adminListEntries);
 router.post('/admin/get-verse-words', authenticate, requireAdmin, strongsController.adminGetVerseWords);
 router.post('/admin/get-verse-unique-words', authenticate, requireAdmin, strongsController.adminGetVerseUniqueWords);
