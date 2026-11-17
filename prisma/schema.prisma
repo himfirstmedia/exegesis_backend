@@ -174,6 +174,8 @@ model Verification {
 
 model DailyVerse {
   id           BigInt     @id @default(autoincrement())
+  sharedStudyId BigInt? @map("shared_study_id")
+  sharedStudy PassageStudy? @relation(fields: [sharedStudyId], references: [id], onDelete: Restrict)
   bookName     String     @map("book_name")
   chapter      BigInt
   verseNumber  BigInt     @map("verse_number")
@@ -210,6 +212,8 @@ model DailyVerse {
 
 model DailyDevotion {
   id                   BigInt     @id @default(autoincrement())
+  sharedStudyId BigInt? @map("shared_study_id")
+  sharedStudy PassageStudy? @relation(fields: [sharedStudyId], references: [id], onDelete: Restrict)
   title                String
   content              String
   bookName             String?    @map("book_name")
@@ -333,6 +337,8 @@ model Note {
 
 model VerseExplanation {
   id           BigInt    @id @default(autoincrement())
+  sharedStudyId BigInt? @map("shared_study_id")
+  sharedStudy PassageStudy? @relation(fields: [sharedStudyId], references: [id], onDelete: Restrict)
   bookName     String    @map("book_name")
   chapter      BigInt
   verseNumber  BigInt    @map("verse_number")
@@ -680,11 +686,177 @@ model StrongsDictionary {
   createdOn        DateTime        @default(now()) @map("created_on")
   updatedOn        DateTime?       @updatedAt @map("updated_on")
   verseWords       VerseWord[]
+  sharedStudyIdentifier StrongsIdentifier?
   studyToolWords   StudyToolWord[]
   verseWordStudies VerseWordStudy[]
   verseExplanationWordStudies VerseWordStudyEntry[] @relation("VerseExplanationStrongs")
 
   @@map("strongs_dictionary")
+}
+
+// Shared editorial content. Legacy columns remain until compatibility reads,
+// conflict review and data reconciliation have passed; no UI contract changes.
+model BibleBook {
+  id Int @id
+  name String @unique
+  passages ScripturePassage[]
+  @@map("bible_books")
+}
+
+model BibleEdition {
+  id String @id
+  name String
+  studies PassageStudy[]
+  crossReferences StudyCrossReference[]
+  @@map("bible_editions")
+}
+
+model ScripturePassage {
+  id BigInt @id @default(autoincrement())
+  bookId Int @map("book_id")
+  startChapter Int @map("start_chapter")
+  startVerse Int @map("start_verse")
+  endChapter Int @map("end_chapter")
+  endVerse Int @map("end_verse")
+  book BibleBook @relation(fields: [bookId], references: [id], onDelete: Restrict)
+  studies PassageStudy[]
+  crossReferences StudyCrossReference[]
+  @@unique([bookId, startChapter, startVerse, endChapter, endVerse])
+  @@map("scripture_passages")
+}
+
+enum SharedStudyStatus {
+  DRAFT
+  REVIEW
+  PUBLISHED
+}
+
+model PassageStudy {
+  id BigInt @id @default(autoincrement())
+  passageId BigInt @map("passage_id")
+  bibleEditionId String @map("bible_edition_id")
+  languageCode String @default("en") @map("language_code")
+  status SharedStudyStatus @default(DRAFT)
+  introduction String? @db.Text
+  explanation String? @db.Text
+  application String? @db.Text
+  backgroundAuthor String? @map("background_author") @db.Text
+  backgroundBook String? @map("background_book") @db.Text
+  backgroundContext String? @map("background_context") @db.Text
+  finalThoughts String? @map("final_thoughts") @db.Text
+  version Int @default(1)
+  createdOn DateTime @default(now()) @map("created_on")
+  updatedOn DateTime @updatedAt @map("updated_on")
+  passage ScripturePassage @relation(fields: [passageId], references: [id], onDelete: Restrict)
+  bibleEdition BibleEdition @relation(fields: [bibleEditionId], references: [id], onDelete: Restrict)
+  takeaways StudyTakeaway[]
+  practicalApplications StudyPracticalApplication[]
+  words StudyWord[]
+  crossReferences StudyCrossReference[]
+  themes StudyTheme[]
+  dailyVerses DailyVerse[]
+  devotions DailyDevotion[]
+  explanations VerseExplanation[]
+  sources StudyMigrationSource[]
+  @@unique([passageId, bibleEditionId, languageCode])
+  @@map("passage_studies")
+}
+
+model StudyTakeaway {
+  id BigInt @id @default(autoincrement())
+  studyId BigInt @map("study_id")
+  text String @db.Text
+  sortOrder Int @default(0) @map("sort_order")
+  study PassageStudy @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  @@index([studyId, sortOrder])
+  @@map("study_takeaways")
+}
+
+model StudyPracticalApplication {
+  id BigInt @id @default(autoincrement())
+  studyId BigInt @map("study_id")
+  text String @db.Text
+  sortOrder Int @default(0) @map("sort_order")
+  study PassageStudy @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  @@index([studyId, sortOrder])
+  @@map("study_practical_applications")
+}
+
+model StudyTheme {
+  id BigInt @id @default(autoincrement())
+  studyId BigInt @map("study_id")
+  text String
+  sortOrder Int @default(0) @map("sort_order")
+  study PassageStudy @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  @@index([studyId, sortOrder])
+  @@map("study_themes")
+}
+
+model StudyWord {
+  id BigInt @id @default(autoincrement())
+  studyId BigInt @map("study_id")
+  surfaceText String @map("surface_text")
+  contextualMeaning String @map("contextual_meaning") @db.Text
+  sortOrder Int @default(0) @map("sort_order")
+  study PassageStudy @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  strongLinks StudyWordStrong[]
+  @@index([studyId, sortOrder])
+  @@map("study_words")
+}
+
+model StudyWordStrong {
+  studyWordId BigInt @map("study_word_id")
+  strongsId String @map("strongs_id")
+  studyWord StudyWord @relation(fields: [studyWordId], references: [id], onDelete: Cascade)
+  strongs StrongsIdentifier @relation(fields: [strongsId], references: [id], onDelete: Restrict)
+  @@id([studyWordId, strongsId])
+  @@index([strongsId])
+  @@map("study_word_strongs")
+}
+
+// An editorial identifier is not a dictionary definition. Imported studies may
+// reference IDs whose lexical entry has not yet been loaded.
+model StrongsIdentifier {
+  id String @id
+  dictionaryId String? @unique @map("dictionary_id")
+  dictionary StrongsDictionary? @relation(fields: [dictionaryId], references: [strongsId], onDelete: SetNull)
+  studyLinks StudyWordStrong[]
+  @@map("strongs_identifiers")
+}
+
+model StudyCrossReference {
+  id BigInt @id @default(autoincrement())
+  studyId BigInt @map("study_id")
+  passageId BigInt @map("passage_id")
+  bibleEditionId String @map("bible_edition_id")
+  // Retained for lossless migration; may differ intentionally from edition text.
+  quotationOverride String? @map("quotation_override") @db.Text
+  commentary String? @db.Text
+  sortOrder Int @default(0) @map("sort_order")
+  study PassageStudy @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  passage ScripturePassage @relation(fields: [passageId], references: [id], onDelete: Restrict)
+  bibleEdition BibleEdition @relation(fields: [bibleEditionId], references: [id], onDelete: Restrict)
+  @@index([studyId, sortOrder])
+  @@index([passageId])
+  @@map("study_cross_references")
+}
+
+// Immutable source evidence and restartable migration receipts. Never used as
+// the live study document; differing/invalid records remain pending review.
+model StudyMigrationSource {
+  id BigInt @id @default(autoincrement())
+  sourceType String @map("source_type")
+  sourceId BigInt @map("source_id")
+  sourceHash String @map("source_hash")
+  original Json
+  status String // LINKED | CONFLICT | INVALID | NO_PASSAGE
+  issues Json
+  studyId BigInt? @map("study_id")
+  createdOn DateTime @default(now()) @map("created_on")
+  study PassageStudy? @relation(fields: [studyId], references: [id], onDelete: Restrict)
+  @@unique([sourceType, sourceId])
+  @@index([status])
+  @@map("study_migration_sources")
 }
 
 model SearchIndex {
