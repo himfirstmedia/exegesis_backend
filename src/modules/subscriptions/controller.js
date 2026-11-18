@@ -2,6 +2,7 @@ import Stripe from "stripe";
 import { prisma } from "../../config/db.js";
 import { formatApiResponse } from "../../utils/helpers.js";
 import { normalizeLanguage, translateMany } from "../../utils/translator.js";
+import { MONTHLY_PLAN_CENTS, isPublishedPlan } from './planPolicy.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { timeout: 10000 });
 const FRONTEND_URL =
@@ -69,6 +70,7 @@ const YEARLY_PRICE_ENV = {
 // ─── Resolve price ID ─────────────────────────────────────────────────────────
 
 const getPriceId = async (tier, interval) => {
+  if (interval !== 'month') return null;
   // 1. Try DB first (stripePriceId from SubscriptionTier table)
   const tierId = interval === "month" ? `${tier}_monthly` : tier;
   const tierRecord = await prisma.subscriptionTier.findUnique({
@@ -139,10 +141,10 @@ export const createCheckoutSession = async (req, res) => {
   try {
     const { tier, interval } = req.body;
     const userId = req.user.id;
-    if (interval !== undefined && !['month', 'year'].includes(interval)) {
+    if (interval !== undefined && interval !== 'month') {
       return res.status(400).json(formatApiResponse({ status: 400, message: 'Invalid billing interval' }));
     }
-    const billingInterval = interval === "month" ? "month" : "year";
+    const billingInterval = 'month';
 
     if (!tier || !["legacy_sower", "covenant_sower"].includes(tier)) {
       return res.status(400).json(
@@ -199,6 +201,14 @@ export const createCheckoutSession = async (req, res) => {
           message: "Stripe price ID not configured for this plan",
         }),
       );
+    }
+
+    // Never charge a rounded/different price from the advertised monthly plan.
+    const checkoutPrice = await stripe.prices.retrieve(priceId);
+    if (!checkoutPrice.active || checkoutPrice.currency !== 'usd' ||
+        checkoutPrice.unit_amount !== MONTHLY_PLAN_CENTS[tier] ||
+        checkoutPrice.recurring?.interval !== 'month' || checkoutPrice.recurring?.interval_count !== 1) {
+      return res.status(409).json(formatApiResponse({ status: 409, message: 'Plan pricing is being updated. Please try again later.' }));
     }
 
     // ── Reuse or create Stripe customer (no duplicates) ──────────────────
@@ -327,25 +337,6 @@ export const createPortalSession = async (req, res) => {
   }
 };
 
-// ─── Stripe tier cache (in-memory, 5-min TTL) ─────────────────────────────────
-
-let stripeTiersCache = null;
-let stripeTiersCacheTime = 0;
-const STRIPE_TIERS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-// Maps our internal tier IDs to Stripe price IDs from env vars.
-// Monthly variants are fetched alongside yearly for completeness.
-const TIER_PRICE_MAP = {
-  legacy_sower: {
-    yearly: process.env.STRIPE_LEGACY_SOWER_PRICE_ID,
-    monthly: process.env.STRIPE_LEGACY_SOWER_MONTHLY_PRICE_ID,
-  },
-  covenant_sower: {
-    yearly: process.env.STRIPE_COVENANT_SOWER_PRICE_ID,
-    monthly: process.env.STRIPE_COVENANT_SOWER_MONTHLY_PRICE_ID,
-  },
-};
-
 // ─── Hardcoded fallback (used when both Stripe and DB are unreachable) ────
 
 const FALLBACK_TIERS = [
@@ -358,22 +349,6 @@ const FALLBACK_TIERS = [
     features: ["Bible reading", "Daily verse", "Basic tools"],
     isActive: true,
     sortOrder: 0,
-  },
-  {
-    id: "legacy_sower",
-    name: "Legacy Sower",
-    price: 33.33,
-    currency: "usd",
-    interval: "year",
-    features: [
-      "Advanced word study (Strong's Concordance)",
-      "In-depth verse explanations",
-      "Lab (AI-assisted study)",
-      "Higher-rate API access",
-      "Legacy badge",
-    ],
-    isActive: true,
-    sortOrder: 1,
   },
   {
     id: "legacy_sower_monthly",
@@ -392,20 +367,6 @@ const FALLBACK_TIERS = [
     sortOrder: 1,
   },
   {
-    id: "covenant_sower",
-    name: "Covenant Sower",
-    price: 77.77,
-    currency: "usd",
-    interval: "year",
-    features: [
-      "Everything in Legacy Sower",
-      "Priority support",
-      "Covenant badge",
-    ],
-    isActive: true,
-    sortOrder: 2,
-  },
-  {
     id: "covenant_sower_monthly",
     name: "Covenant Sower",
     price: 7.77,
@@ -421,123 +382,31 @@ const FALLBACK_TIERS = [
   },
 ];
 
-// ─── buildTiersFromStripe ─────────────────────────────────────────────────────
-// Fetches products + prices from Stripe so the app always shows
-// real-time plan names, prices, and features without manual DB sync.
-
-async function buildTiersFromStripe() {
-  if (
-    stripeTiersCache &&
-    Date.now() - stripeTiersCacheTime < STRIPE_TIERS_CACHE_TTL
-  ) {
-    return stripeTiersCache;
-  }
-
-  const tiers = [];
-
-  for (const [tierId, priceIds] of Object.entries(TIER_PRICE_MAP)) {
-    // Fetch the yearly price (primary source for product metadata)
-    const yearlyPriceId = priceIds.yearly;
-    if (!yearlyPriceId) continue;
-
-    let yearlyPrice;
+/** Monthly catalogue independent of historical yearly products/prices. */
+async function buildMonthlyTiers() {
+  const tiers = [FALLBACK_TIERS[0]];
+  for (const [baseId, cents] of Object.entries(MONTHLY_PLAN_CENTS)) {
+    const id = `${baseId}_monthly`;
+    const stored = await prisma.subscriptionTier.findUnique({ where: { id } });
+    if (stored?.isActive === false) continue;
+    const priceId = stored?.stripePriceId || process.env[MONTHLY_PRICE_ENV[baseId]];
+    if (!priceId) continue;
     try {
-      yearlyPrice = await stripe.prices.retrieve(yearlyPriceId, {
-        expand: ["product"],
-      });
-    } catch (e) {
-      console.warn(
-        `[Stripe] Failed to retrieve yearly price ${yearlyPriceId} for ${tierId}:`,
-        e.message,
-      );
-      continue;
-    }
-
-    const product = yearlyPrice.product;
-    if (!yearlyPrice.active || !product || product.deleted || !product.active ||
-        yearlyPrice.unit_amount == null || yearlyPrice.recurring?.interval !== 'year') continue;
-
-    // Parse features from product metadata (expected as JSON string array)
-    let features = [];
-    try {
-      if (product.metadata?.features) {
-        const parsed = JSON.parse(product.metadata.features);
-        features = Array.isArray(parsed) ? parsed.filter(value => typeof value === 'string' && value.trim()) : [];
-      }
-    } catch {
-      // non-fatal; leave features empty
-    }
-
-    const shared = {
-      name: product.name,
-      description: product.description || undefined,
-      currency: yearlyPrice.currency,
-      features,
-      isActive: product.active,
-      sortOrder: parseInt(
-        product.metadata?.sortOrder || String(tiers.length + 1),
-        10,
-      ),
-      maxSlots: product.metadata?.maxSlots
-        ? parseInt(product.metadata.maxSlots, 10)
-        : undefined,
-      stripeProductId: product.id,
-    };
-
-    // Yearly entry
-    tiers.push({
-      id: tierId,
-      ...shared,
-      price: yearlyPrice.unit_amount / 100,
-      interval: yearlyPrice.recurring?.interval || "year",
-      stripePriceId: yearlyPrice.id,
-    });
-
-    // Monthly entry (separate price ID from env vars)
-    const monthlyPriceId = priceIds.monthly;
-    if (monthlyPriceId) {
-      try {
-        const monthlyPrice = await stripe.prices.retrieve(monthlyPriceId);
-        if (!monthlyPrice.active || monthlyPrice.unit_amount == null ||
-            monthlyPrice.recurring?.interval !== 'month' ||
-            (typeof monthlyPrice.product === 'string' ? monthlyPrice.product : monthlyPrice.product?.id) !== product.id) continue;
-        tiers.push({
-          id: `${tierId}_monthly`,
-          ...shared,
-          currency: monthlyPrice.currency,
-          price: monthlyPrice.unit_amount / 100,
-          interval: monthlyPrice.recurring?.interval || "month",
-          stripePriceId: monthlyPrice.id,
-        });
-      } catch (e) {
-        console.warn(
-          `[Stripe] Failed to retrieve monthly price ${monthlyPriceId} for ${tierId}:`,
-          e.message,
-        );
-      }
-    }
+      const price = await stripe.prices.retrieve(priceId, { expand: ['product'] });
+      const product = price.product;
+      if (!price.active || price.unit_amount !== cents || price.currency !== 'usd' ||
+          price.recurring?.interval !== 'month' || price.recurring?.interval_count !== 1 ||
+          !product || typeof product === 'string' || product.deleted || !product.active) continue;
+      let features = stored?.features || FALLBACK_TIERS.find(tier => tier.id === id)?.features || [];
+      try { if (product.metadata?.features) features = JSON.parse(product.metadata.features); } catch { /* reviewed defaults */ }
+      tiers.push({ ...stored, id, name: product.name, description: product.description || '',
+        price: cents / 100, currency: 'usd', interval: 'month', isActive: true,
+        features: Array.isArray(features) ? features.filter(item => typeof item === 'string') : [],
+        stripePriceId: price.id, stripeProductId: product.id,
+        sortOrder: baseId === 'legacy_sower' ? 1 : 2 });
+    } catch (error) { console.warn('[Subscription] Monthly price unavailable:', id, error.type || error.message); }
   }
-
-  if (tiers.length === 0) return [];
-
-  // Sort by sortOrder from product metadata
-  tiers.sort((a, b) => a.sortOrder - b.sortOrder);
-
-  // Prepend the free tier (not in Stripe)
-  tiers.unshift({
-    id: "free",
-    name: "Free",
-    price: 0,
-    currency: "usd",
-    interval: "none",
-    features: ["Bible reading", "Daily verse", "Basic tools"],
-    isActive: true,
-    sortOrder: 0,
-  });
-
-  stripeTiersCache = tiers;
-  stripeTiersCacheTime = Date.now();
-  return tiers;
+  return tiers.length > 1 ? tiers : [];
 }
 
 // ─── listTiers ────────────────────────────────────────────────────────────────
@@ -608,7 +477,7 @@ export const listTiers = async (req, res) => {
 
   try {
     // 1. Try Stripe first — real-time prices from the source of truth
-    const fromStripe = await buildTiersFromStripe();
+    const fromStripe = await buildMonthlyTiers();
     if (fromStripe.length > 0) {
       const tiers = await translateTierFields(fromStripe, lang);
       return res.json(
@@ -624,6 +493,7 @@ export const listTiers = async (req, res) => {
     let tiers = await prisma.subscriptionTier.findMany({
       orderBy: { sortOrder: "asc" },
     });
+    tiers = (tiers || []).filter(isPublishedPlan);
     if (tiers && tiers.length > 0) {
       tiers = await translateTierFields(tiers, lang);
       return res.json(
@@ -636,7 +506,7 @@ export const listTiers = async (req, res) => {
     }
 
     // 3. Last resort — hardcoded defaults so the app never breaks
-    tiers = await translateTierFields(FALLBACK_TIERS, lang);
+    tiers = await translateTierFields(FALLBACK_TIERS.filter(isPublishedPlan), lang);
     return res.json(
       formatApiResponse({
         status: 200,
@@ -667,10 +537,11 @@ const resolveTierFromPriceId = async (priceId, interval) => {
   });
   if (tier) return tier.id;
 
-  // Fallback: check env var mapping (TIER_PRICE_MAP)
-  for (const [tierId, prices] of Object.entries(TIER_PRICE_MAP)) {
-    if (prices.yearly === priceId) return tierId;
-    if (prices.monthly === priceId) return `${tierId}_monthly`;
+  // Historical yearly subscriptions still need status reconciliation even
+  // though those prices are no longer available for new purchases.
+  for (const tierId of Object.keys(MONTHLY_PLAN_CENTS)) {
+    if (process.env[YEARLY_PRICE_ENV[tierId]] === priceId) return tierId;
+    if (process.env[MONTHLY_PRICE_ENV[tierId]] === priceId) return `${tierId}_monthly`;
   }
 
   try {

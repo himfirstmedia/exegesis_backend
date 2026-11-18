@@ -20,7 +20,7 @@ jest.mock("stripe", () => {
 
 jest.mock("../../config/db.js", () => ({
   prisma: {
-    systemUser: { findFirst: jest.fn(), update: jest.fn() },
+    systemUser: { findFirst: jest.fn(), update: jest.fn(), findMany: jest.fn(), count: jest.fn() },
     journalLike: { deleteMany: jest.fn() },
     exegesisSession: { deleteMany: jest.fn() },
     journalEntry: { deleteMany: jest.fn() },
@@ -52,7 +52,7 @@ jest.mock("../../utils/emailTemplates.js", () => ({
   default: {},
 }));
 
-const { deleteUser } = require("./service.js");
+const { deleteUser, getUsersByAdmin } = require("./service.js");
 // Capture the Stripe instance the service constructed at module load.
 const stripeInstance = require("stripe").default.mock.results[0].value;
 const { prisma: mockPrisma } = require("../../config/db.js");
@@ -68,6 +68,32 @@ const payingUser = {
   profilePhotoUrl: "https://cdn.example.com/profile-photo.jpg",
   coverPhotoUrl: "/media/covers/cover.jpg",
 };
+
+describe('user list account lifecycle', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPrisma.systemUser.findMany.mockResolvedValue([]);
+    mockPrisma.systemUser.count.mockResolvedValue(0);
+  });
+  test('excludes deleted/tombstoned accounts from ordinary searches and counts', async () => {
+    await getUsersByAdmin({ search: 'Claire' }, 'admin');
+    const where = mockPrisma.systemUser.findMany.mock.calls[0][0].where;
+    expect(where.NOT.OR).toEqual(expect.arrayContaining([
+      { accountStatus: 'deleted' }, { deletedAt: { not: null } },
+      { email: { endsWith: '@exegesis.invalid' } },
+    ]));
+    expect(where.OR).toHaveLength(4);
+    expect(mockPrisma.systemUser.count).toHaveBeenCalledWith({ where });
+  });
+  test('archive explicitly includes only deleted accounts, with the same pagination filter', async () => {
+    await getUsersByAdmin({ accountView: 'deleted', page: 2 }, 'admin');
+    const query = mockPrisma.systemUser.findMany.mock.calls[0][0];
+    expect(query.where.NOT).toBeUndefined();
+    expect(query.where.AND[0].OR).toHaveLength(3);
+    expect(query.skip).toBe(10);
+    expect(mockPrisma.systemUser.count).toHaveBeenCalledWith({ where: query.where });
+  });
+});
 
 describe("deleteUser — billing-safe soft delete", () => {
   beforeEach(() => {

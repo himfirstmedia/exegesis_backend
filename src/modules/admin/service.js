@@ -114,12 +114,16 @@ const localizeAdminContent = async (
 };
 
 export const getUsersByAdmin = async (data, adminId) => {
-  const { search, userId, page = 1, pageSize = 10 } = data;
+  const { search, userId, page = 1, pageSize = 10, accountView } = data;
   const pageNum = parseInt(page) || 1;
   const pageSizeNum = Math.min(parseInt(pageSize) || 10, 100);
   const offset = (pageNum - 1) * pageSizeNum;
 
-  const whereClause = {};
+  const deletedAccount = { OR: [
+    { accountStatus: 'deleted' }, { deletedAt: { not: null } },
+    { email: { endsWith: '@exegesis.invalid' } },
+  ] };
+  const whereClause = accountView === 'deleted' ? { AND: [deletedAccount] } : { NOT: deletedAccount };
   if (userId) {
     whereClause.id = userId;
   } else if (search) {

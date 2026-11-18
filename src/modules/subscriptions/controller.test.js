@@ -84,12 +84,35 @@ const getStripeInstance = () => stripeInstance;
 // calls but keeps the per-test resolved implementations.
 beforeEach(() => {
   jest.clearAllMocks();
+  stripeInstance.subscriptions.retrieve.mockReset();
+  stripeInstance.prices.retrieve.mockImplementation(async id => ({
+    id, active: true, currency: 'usd',
+    unit_amount: String(id).includes('covenant') ? 777 : 333,
+    recurring: { interval: 'month', interval_count: 1 },
+  }));
 });
 
 test('checkout refuses unknown billing intervals before any Stripe call', async () => {
   const res = makeRes();
   await createCheckoutSession({ user: { id: 'u' }, body: { tier: 'legacy_sower', interval: 'week' } }, res);
   expect(res.status).toHaveBeenCalledWith(400);
+  expect(stripeInstance.checkout.sessions.create).not.toHaveBeenCalled();
+});
+
+test('checkout refuses retired yearly offers', async () => {
+  const res = makeRes();
+  await createCheckoutSession({ user: { id: 'u' }, body: { tier: 'legacy_sower', interval: 'year' } }, res);
+  expect(res.statusCode).toBe(400);
+  expect(stripeInstance.checkout.sessions.create).not.toHaveBeenCalled();
+});
+
+test('checkout rejects the old $7.78 Stripe price before charging', async () => {
+  getPrisma().systemUser.findUnique.mockResolvedValue({ id: 'u', subscriptionTier: 'free' });
+  getPrisma().subscriptionTier.findUnique.mockResolvedValue({ stripePriceId: 'price_old' });
+  stripeInstance.prices.retrieve.mockResolvedValue({ active: true, currency: 'usd', unit_amount: 778, recurring: { interval: 'month', interval_count: 1 } });
+  const res = makeRes();
+  await createCheckoutSession({ user: { id: 'u' }, body: { tier: 'covenant_sower', interval: 'month' } }, res);
+  expect(res.statusCode).toBe(409);
   expect(stripeInstance.checkout.sessions.create).not.toHaveBeenCalled();
 });
 
@@ -210,6 +233,35 @@ describe("getSubscriptionStatus — single-response guarantee", () => {
     expect(stripeInstance.customers.list).not.toHaveBeenCalled();
     expect(res.body.returnCode).toBe(200);
     expect(res.body.returnData.subscriptionTier).toBe("covenant_sower");
+  });
+});
+
+describe('Stripe cancellation status consistency', () => {
+  const paidUser = () => ({ subscriptionTier: 'covenant_sower_monthly', stripeCustomerId: 'cus_test', stripeSubscriptionId: 'sub_test', accessExpiresAt: new Date('2030-01-01'), accountStatus: 'active' });
+  test('immediate Stripe cancellation clears database and response access', async () => {
+    const prisma = getPrisma();
+    prisma.systemUser.findUnique.mockResolvedValue(paidUser());
+    prisma.systemUser.update.mockResolvedValue({});
+    prisma.subscriptionTier.findUnique.mockResolvedValue({ id: 'free' });
+    stripeInstance.subscriptions.retrieve.mockResolvedValue({ id: 'sub_test', status: 'canceled' });
+    stripeInstance.subscriptions.list.mockResolvedValue({ data: [] });
+    const res = makeRes();
+    await getSubscriptionStatus({ user: { id: 'u' } }, res);
+    expect(prisma.systemUser.update).toHaveBeenCalledWith({ where: { id: 'u' }, data: { subscriptionTier: 'free', stripeSubscriptionId: null, accessExpiresAt: null } });
+    expect(res.body.returnData).toMatchObject({ subscriptionTier: 'free', stripeSubscriptionId: null, accessExpiresAt: null });
+    expect(res.json).toHaveBeenCalledTimes(1);
+  });
+  test('scheduled cancellation retains access only through the actual paid period', async () => {
+    const prisma = getPrisma();
+    prisma.systemUser.findUnique.mockResolvedValue(paidUser());
+    prisma.subscriptionTier.findUnique.mockResolvedValue({ id: 'covenant_sower_monthly' });
+    prisma.subscriptionTier.findFirst.mockResolvedValue({ id: 'covenant_sower_monthly' });
+    const end = 1893456000;
+    stripeInstance.subscriptions.retrieve.mockResolvedValue({ id: 'sub_test', status: 'active', cancel_at_period_end: true, current_period_end: end, items: { data: [{ price: { id: 'price_covenant_monthly', recurring: { interval: 'month' } } }] } });
+    const res = makeRes();
+    await getSubscriptionStatus({ user: { id: 'u' } }, res);
+    expect(res.body.returnData.subscriptionTier).toBe('covenant_sower_monthly');
+    expect(new Date(res.body.returnData.accessExpiresAt).getTime()).toBe(end * 1000);
   });
 });
 
@@ -382,12 +434,12 @@ describe("listTiers field-safe translation", () => {
     const prisma = getPrisma();
     const translator = require("../../utils/translator.js");
     const tier = {
-      id: "legacy_sower",
+      id: "legacy_sower_monthly",
       name: "Legacy Sower",
       description: "For committed readers",
-      price: 33.33,
+      price: 3.33,
       currency: "usd",
-      interval: "year",
+      interval: "month",
       stripeProductId: "prod_legacy",
       stripePriceId: "price_legacy",
       features: ["Advanced study", "Legacy badge"],
@@ -456,12 +508,12 @@ describe("listTiers field-safe translation", () => {
     const prisma = getPrisma();
     const translator = require("../../utils/translator.js");
     const tier = {
-      id: "covenant_sower",
+      id: "covenant_sower_monthly",
       name: "Covenant Sower",
       description: "Full access",
-      price: 77.77,
+      price: 7.77,
       currency: "usd",
-      interval: "year",
+      interval: "month",
       features: ["Priority support"],
       isActive: true,
       sortOrder: 2,
