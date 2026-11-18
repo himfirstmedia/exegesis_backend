@@ -110,10 +110,12 @@ async function ensurePassage(tx, identity) {
  * write and before commit. Shared edits require an explicit expected version;
  * merely attaching a new source may only fill missing/equal content. */
 export async function writeStudy(tx, type, source, { expectedVersion, allowSharedEdit = false } = {}) {
+  const table = { explanation: 'verseExplanation', verse: 'dailyVerse', devotion: 'dailyDevotion' }[type];
+  if (!table) throw new SharedStudyError('Unsupported study source', [type], 400);
   const normalized = normalizeSource(type, source);
   if (normalized.status === 'NO_PASSAGE') {
     // Removing a devotion's passage must not leave an old study linked.
-    await tx.dailyDevotion.update({ where: { id: source.id }, data: { sharedStudyId: null } });
+    await tx[table].update({ where: { id: source.id }, data: { sharedStudyId: null } });
     return null;
   }
   if (normalized.status !== 'LINKED') throw new SharedStudyError('Study content needs correction', normalized.issues, 400);
@@ -136,8 +138,6 @@ export async function writeStudy(tx, type, source, { expectedVersion, allowShare
       document = comparison.merged;
     }
   }
-  const table = { explanation: 'verseExplanation', verse: 'dailyVerse', devotion: 'dailyDevotion' }[type];
-  if (!table) throw new SharedStudyError('Unsupported study source', [type], 400);
   if (existing && same(studyDocument(existing), document)) {
     await tx[table].update({ where: { id: source.id }, data: { sharedStudyId: existing.id } });
     return { id: existing.id, version: existing.version };

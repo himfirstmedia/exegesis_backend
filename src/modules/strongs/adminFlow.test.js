@@ -1,5 +1,6 @@
 jest.mock('../../config/db.js', () => ({ prisma: {
   strongsDictionary: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+  studyWord: { findMany: jest.fn() },
   verseWordStudy: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   verseWordStudyEntry: { findMany: jest.fn() }, verseResource: { findMany: jest.fn() },
   verseWord: { findMany: jest.fn() }, searchIndex: { findMany: jest.fn() },
@@ -14,7 +15,7 @@ import { authenticate, requireAdmin } from '../../middlewares/auth.middleware.js
 
 beforeEach(() => {
   jest.clearAllMocks();
-  for (const table of ['verseWordStudy', 'verseWordStudyEntry', 'verseResource', 'verseWord', 'searchIndex']) prisma[table].findMany.mockResolvedValue([]);
+  for (const table of ['studyWord', 'verseWordStudy', 'verseWordStudyEntry', 'verseResource', 'verseWord', 'searchIndex']) prisma[table].findMany.mockResolvedValue([]);
   prisma.strongsDictionary.findUnique.mockResolvedValue(null);
   prisma.strongsDictionary.findMany.mockResolvedValue([]);
   prisma.strongsDictionary.count.mockResolvedValue(0);

@@ -19,6 +19,41 @@ import {
   translateDailyExegesisContent,
   translateDailyVerseContent,
 } from "../bible/dailyContentTranslation.js";
+import {
+  sharedStudyReaders,
+  writeDailyContent,
+} from "../shared-study/client.js";
+import { SharedStudyError } from "../shared-study/repository.js";
+
+const sharedStudy = () => sharedStudyReaders(prisma);
+
+const dateKey = value => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+};
+
+/** Every cached daily-verse view that depends on this row's identity/date. */
+const dailyVerseCacheKeys = row => {
+  if (!row) return [];
+  return [
+    "todays-verse:v2",
+    ...["en", "ar", "es", "fr"].map(lang => `todays-verse:v2:${lang}`),
+    row.displayDate && `verse-by-date:v2:${dateKey(row.displayDate)}`,
+    row.bookName &&
+      `daily-verse-ref:${row.bookName}:${row.chapter}:${row.verseNumber}`,
+  ].filter(Boolean);
+};
+
+/** Every cached devotion view that depends on this row's display date. */
+const dailyDevotionCacheKeys = row => {
+  if (!row) return [];
+  return [
+    "todays-devotion",
+    ...["en", "ar", "es", "fr"].map(lang => `todays-devotion:${lang}`),
+    row.displayDate && `devotion-by-date:${dateKey(row.displayDate)}`,
+  ].filter(Boolean);
+};
 
 const getAdminTranslationTimeBudget = () => {
   const value = Number.parseInt(
@@ -610,64 +645,52 @@ export const addDailyVerse = async (data, adminId) => {
     };
   }
 
+  const previous = id
+    ? await prisma.dailyVerse.findUnique({ where: { id: BigInt(id) } })
+    : null;
+
+  const legacyData = {
+    bookName,
+    chapter: BigInt(chapter),
+    verseNumber: BigInt(verseNumber),
+    ...verseEndData(data.verseEnd),
+    bibleVersion: bibleVersion || "KJV",
+    displayDate: parseLocalDate(displayDate),
+    displayTime: displayTime ? new Date(displayTime) : null,
+    reflection,
+    explanation,
+    learnMore,
+    application,
+    verseIntroduction,
+    backgroundAuthor,
+    backgroundBook,
+    backgroundContext,
+    wordStudies,
+    practicalApplications,
+    keyThemes,
+    crossReferences,
+    finalThoughts,
+    takeaways,
+    isPublished: published ?? true,
+    ...(id ? { updatedBy: adminId } : { createdBy: adminId }),
+  };
+
   let dailyVerse;
-  if (id) {
-    dailyVerse = await prisma.dailyVerse.update({
-      where: { id: BigInt(id) },
-      data: {
-        bookName,
-        chapter: BigInt(chapter),
-        verseNumber: BigInt(verseNumber),
-        ...verseEndData(data.verseEnd),
-        bibleVersion: bibleVersion || "KJV",
-        displayDate: parseLocalDate(displayDate),
-        displayTime: displayTime ? new Date(displayTime) : null,
-        reflection,
-        explanation,
-        learnMore,
-        application,
-        verseIntroduction,
-        backgroundAuthor,
-        backgroundBook,
-        backgroundContext,
-        wordStudies,
-        practicalApplications,
-        keyThemes,
-        crossReferences,
-        finalThoughts,
-        takeaways,
-        isPublished: published ?? true,
-        updatedBy: adminId,
-      },
+  try {
+    dailyVerse = await writeDailyContent(prisma, "dailyVerse", {
+      id,
+      data: legacyData,
+      expectedVersion: data.sharedStudyVersion ?? data.expectedVersion,
     });
-  } else {
-    dailyVerse = await prisma.dailyVerse.create({
-      data: {
-        bookName,
-        chapter: BigInt(chapter),
-        verseNumber: BigInt(verseNumber),
-        ...verseEndData(data.verseEnd),
-        bibleVersion: bibleVersion || "KJV",
-        displayDate: parseLocalDate(displayDate),
-        displayTime: displayTime ? new Date(displayTime) : null,
-        reflection,
-        explanation,
-        learnMore,
-        application,
-        verseIntroduction,
-        backgroundAuthor,
-        backgroundBook,
-        backgroundContext,
-        wordStudies,
-        practicalApplications,
-        keyThemes,
-        crossReferences,
-        finalThoughts,
-        takeaways,
-        createdBy: adminId,
-        isPublished: published ?? true,
-      },
-    });
+  } catch (error) {
+    if (error instanceof SharedStudyError) {
+      return {
+        status: error.status,
+        message: error.message,
+        data: { issues: error.issues },
+      };
+    }
+    throw error;
   }
 
   const msg = id
@@ -675,14 +698,17 @@ export const addDailyVerse = async (data, adminId) => {
     : "Daily verse added successfully";
 
   // Admin changes must be visible immediately rather than waiting for the
-  // 30-minute daily-verse cache to expire.
-  await Promise.all([
-    cache.del("bible", "todays-verse:v2"),
-    cache.del("bible", "todays-verse:v2:en"),
-    cache.del("bible", "todays-verse:v2:ar"),
-    cache.del("bible", "todays-verse:v2:es"),
-    cache.del("bible", "todays-verse:v2:fr"),
-  ]);
+  // 30-minute daily-verse cache to expire. Clear both the old and new date/
+  // reference views because an edit can move the row.
+  await Promise.all(
+    [
+      ...new Set([
+        ...dailyVerseCacheKeys(previous),
+        ...dailyVerseCacheKeys(dailyVerse),
+      ]),
+    ].map(key => cache.del("bible", key)),
+  );
+  await cache.del("landing", `daily-verse:${dateKey(utcToday())}`);
 
   return { status: 200, message: msg, data: serializeBigInt(dailyVerse) };
 };
@@ -750,7 +776,7 @@ export const getAllDailyVerses = async (data) => {
   }
 
   const [dailyVerses, totalElements] = await Promise.all([
-    prisma.dailyVerse.findMany({
+    sharedStudy().dailyVerse.findMany({
       where: whereClause,
       orderBy: [{ updatedOn: "desc" }, { createdOn: "desc" }],
       skip: offset,
@@ -910,38 +936,39 @@ export const addDailyDevotion = async (data, adminId) => {
     takeaways: takeaways || null,
   };
 
+  const previous = id
+    ? await prisma.dailyDevotion.findUnique({ where: { id: BigInt(id) } })
+    : null;
+
+  const legacyData = {
+    title,
+    content,
+    bookName: bookName || null,
+    chapter: chapter ? BigInt(chapter) : null,
+    verseNumber: verseNumber ? BigInt(verseNumber) : null,
+    displayDate: parseLocalDate(displayDate),
+    displayTime: displayTime ? new Date(displayTime) : null,
+    isPublished: published ?? true,
+    ...richContent,
+    ...(id ? { updatedBy: adminId } : { createdBy: adminId }),
+  };
+
   let dailyDevotion;
-  if (id) {
-    dailyDevotion = await prisma.dailyDevotion.update({
-      where: { id: BigInt(id) },
-      data: {
-        title,
-        content,
-        bookName: bookName || null,
-        chapter: chapter ? BigInt(chapter) : null,
-        verseNumber: verseNumber ? BigInt(verseNumber) : null,
-        displayDate: parseLocalDate(displayDate),
-        displayTime: displayTime ? new Date(displayTime) : null,
-        isPublished: published ?? true,
-        updatedBy: adminId,
-        ...richContent,
-      },
+  try {
+    dailyDevotion = await writeDailyContent(prisma, "dailyDevotion", {
+      id,
+      data: legacyData,
+      expectedVersion: data.sharedStudyVersion ?? data.expectedVersion,
     });
-  } else {
-    dailyDevotion = await prisma.dailyDevotion.create({
-      data: {
-        title,
-        content,
-        bookName: bookName || null,
-        chapter: chapter ? BigInt(chapter) : null,
-        verseNumber: verseNumber ? BigInt(verseNumber) : null,
-        displayDate: parseLocalDate(displayDate),
-        displayTime: displayTime ? new Date(displayTime) : null,
-        createdBy: adminId,
-        isPublished: published ?? true,
-        ...richContent,
-      },
-    });
+  } catch (error) {
+    if (error instanceof SharedStudyError) {
+      return {
+        status: error.status,
+        message: error.message,
+        data: { issues: error.issues },
+      };
+    }
+    throw error;
   }
 
   const msg = id
@@ -949,14 +976,16 @@ export const addDailyDevotion = async (data, adminId) => {
     : "Daily devotion added successfully";
 
   // Admin changes must be visible immediately rather than waiting for the
-  // daily-devotion cache to expire.
-  await Promise.all([
-    cache.del("bible", "todays-devotion"),
-    cache.del("bible", "todays-devotion:en"),
-    cache.del("bible", "todays-devotion:ar"),
-    cache.del("bible", "todays-devotion:es"),
-    cache.del("bible", "todays-devotion:fr"),
-  ]);
+  // daily-devotion cache to expire. Clear both the old and new date views
+  // because an edit can move the row.
+  await Promise.all(
+    [
+      ...new Set([
+        ...dailyDevotionCacheKeys(previous),
+        ...dailyDevotionCacheKeys(dailyDevotion),
+      ]),
+    ].map(key => cache.del("bible", key)),
+  );
 
   return { status: 200, message: msg, data: serializeBigInt(dailyDevotion) };
 };
@@ -1005,7 +1034,7 @@ export const getAllDailyDevotions = async (data) => {
   });
   const totalPages = Math.ceil(totalElements / pageSize);
 
-  const rawContent = await prisma.dailyDevotion.findMany({
+  const rawContent = await sharedStudy().dailyDevotion.findMany({
     where: whereClause,
     orderBy: { displayDate: "desc" },
     skip: pageNum * pageSize,

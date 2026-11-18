@@ -3,6 +3,9 @@ import { serializeBigInt } from "../../utils/helpers.js";
 import { cache } from "../../services/cacheService.js";
 import { normalizeLanguage, translateMany } from "../../utils/translator.js";
 import { utcToday } from "../../utils/dates.js";
+import { sharedStudyReaders } from "../shared-study/client.js";
+
+const sharedStudy = () => sharedStudyReaders(prisma);
 
 // The landing page and the public /plans page are marketing surfaces read by
 // anonymous visitors, so everything here is public + cached. TTLs are short
@@ -141,11 +144,11 @@ export const getDailyVerse = async ({ lang = "en" } = {}) => {
     `daily-verse:${ymd(today)}`,
     async () => {
       const verse =
-        (await prisma.dailyVerse.findFirst({
+        (await sharedStudy().dailyVerse.findFirst({
           where: { isPublished: true, displayDate: today },
           orderBy: { createdOn: "desc" },
         })) ||
-        (await prisma.dailyVerse.findFirst({
+        (await sharedStudy().dailyVerse.findFirst({
           where: { isPublished: true, displayDate: { lt: today } },
           orderBy: { displayDate: "desc" },
         }));

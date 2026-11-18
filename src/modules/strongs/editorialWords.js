@@ -20,7 +20,43 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
     ...(bookName ? { bookName } : {}),
     ...(chapter > 0 ? { chapter } : {}),
   };
-  const [studies, detailed, resources] = await Promise.all([
+  const inChapter = chapter > 0
+    ? verse > 0
+      ? {
+          OR: [
+            { startChapter: { lt: chapter }, endChapter: { gt: chapter } },
+            { startChapter: chapter, endChapter: chapter, startVerse: { lte: verse }, endVerse: { gte: verse } },
+            { startChapter: chapter, endChapter: { gt: chapter }, startVerse: { lte: verse } },
+            { startChapter: { lt: chapter }, endChapter: chapter, endVerse: { gte: verse } },
+          ],
+        }
+      : { OR: [{ startChapter: { lt: chapter }, endChapter: { gt: chapter } }, { startChapter: chapter }, { endChapter: chapter }] }
+    : {};
+  const [sharedWords, studies, detailed, resources] = await Promise.all([
+    prisma.studyWord.findMany({
+      where: {
+        ...(strongsId ? { strongLinks: { some: { strongsId } } } : {}),
+        study: {
+          languageCode: 'en',
+          ...(bookName || chapter > 0 ? {
+            passage: {
+              ...(bookName ? { book: { name: bookName } } : {}),
+              ...inChapter,
+            },
+          } : {}),
+        },
+      },
+      include: {
+        strongLinks: true,
+        study: {
+          include: {
+            passage: { include: { book: true } },
+            themes: { orderBy: { sortOrder: 'asc' } },
+          },
+        },
+      },
+      orderBy: [{ studyId: 'asc' }, { sortOrder: 'asc' }],
+    }),
     prisma.verseWordStudy.findMany({
       where: { ...passage, ...(verse > 0 ? { verse } : {}), ...(strongsId ? { strongsId } : {}) },
       orderBy: [{ bookName: 'asc' }, { chapter: 'asc' }, { verse: 'asc' }],
@@ -45,6 +81,17 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
     }),
   ]);
   const refs = [];
+  // The shared study is canonical; put it first so it wins the reference-key
+  // merge over a legacy copy left behind by the compatibility window.
+  for (const word of sharedWords) {
+    const { passage: ref, bibleEditionId } = word.study;
+    for (const link of word.strongLinks) {
+      refs.push({ strongsId: link.strongsId, bookName: ref.book.name,
+        chapter: ref.startChapter, verse: ref.startVerse, translation: bibleEditionId,
+        surfaceText: word.surfaceText, adminExplanation: word.contextualMeaning,
+        sortOrder: word.sortOrder, themes: word.study.themes.map(theme => theme.text) });
+    }
+  }
   for (const row of detailed) {
     const parent = row.explanation;
     refs.push({ strongsId: row.strongsId, bookName: parent.bookName, chapter: Number(parent.chapter),

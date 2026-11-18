@@ -1,4 +1,5 @@
 jest.mock('../../config/db.js', () => ({ prisma: {
+  studyWord: { findMany: jest.fn() },
   verseWordStudy: { findMany: jest.fn() },
   verseWordStudyEntry: { findMany: jest.fn() },
   verseResource: { findMany: jest.fn() },
@@ -8,6 +9,7 @@ import { getEditorialReferences, withEditorialReferences, editionKey } from './e
 
 beforeEach(() => {
   jest.resetAllMocks();
+  prisma.studyWord.findMany.mockResolvedValue([]);
   prisma.verseWordStudy.findMany.mockResolvedValue([]);
   prisma.verseWordStudyEntry.findMany.mockResolvedValue([]);
   prisma.verseResource.findMany.mockResolvedValue([]);
@@ -37,6 +39,23 @@ it('keeps different verses/editions separate and drops removed links rather than
   expect(withEditorialReferences([entry], [])[0]).toMatchObject({ verseReferences: [], verseCount: 0 });
   const refs = ['BSB', 'KJV'].map(translation => ({ strongsId: 'G3056', bookName: 'John', chapter: 1, verse: 1, translation }));
   expect(withEditorialReferences([entry], refs)[0].verseCount).toBe(2);
+});
+
+it('prefers canonical shared-study words over their legacy copies', async () => {
+  prisma.studyWord.findMany.mockResolvedValue([{
+    surfaceText: 'beginning', contextualMeaning: 'shared context', sortOrder: 0,
+    strongLinks: [{ strongsId: 'H7225' }],
+    study: { bibleEditionId: 'BSB', passage: { startChapter: 1, startVerse: 1, book: { name: 'Genesis' } }, themes: [{ text: 'Creation' }] },
+  }]);
+  prisma.verseWordStudyEntry.findMany.mockResolvedValue([{
+    strongsId: 'H7225', sortOrder: 1, customDefinition: 'legacy context',
+    explanation: { bookName: 'Genesis', chapter: 1n, verseNumber: 1n, bibleVersion: 'Berean', themes: [] },
+  }]);
+  const refs = await getEditorialReferences({ bookName: 'Genesis', chapter: 1, verse: 1 });
+  const [entry] = withEditorialReferences([{ strongsId: 'H7225' }], refs);
+  expect(entry.verseReferences).toHaveLength(1);
+  expect(entry.verseReferences[0].adminExplanation).toBe('shared context');
+  expect(entry.contextualStudies[0]).toMatchObject({ customDefinition: 'shared context', themes: ['Creation'] });
 });
 
 it('ignores malformed legacy JSON safely', async () => {

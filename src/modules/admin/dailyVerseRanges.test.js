@@ -1,14 +1,33 @@
 jest.mock('stripe', () => ({ __esModule: true, default: jest.fn().mockImplementation(() => ({})) }));
 jest.mock('../../config/db.js', () => ({ prisma: {
-  dailyVerse: { create: jest.fn(), update: jest.fn() },
+  dailyVerse: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
   $transaction: jest.fn(),
 } }));
 jest.mock('../../services/cacheService.js', () => ({ cache: { del: jest.fn().mockResolvedValue(undefined) } }));
 jest.mock('../../utils/emailTemplates.js', () => ({ __esModule: true, default: {} }));
 jest.mock('../bible-translations/service.js', () => ({ getVerse: jest.fn() }));
+// The shared-study write is exercised by its own repository/client tests. Here
+// only the legacy range contract matters, so keep the boundary explicit.
+jest.mock('../shared-study/client.js', () => ({
+  sharedStudyReaders: jest.fn(),
+  writeDailyContent: jest.fn(),
+}));
+jest.mock('../shared-study/repository.js', () => ({
+  SharedStudyError: class SharedStudyError extends Error {
+    constructor(message, issues = [], status = 409) {
+      super(message);
+      this.status = status;
+      this.issues = issues;
+    }
+  },
+  writeStudy: jest.fn().mockResolvedValue(null),
+}));
 
 const { prisma } = require('../../config/db.js');
+const { cache } = require('../../services/cacheService.js');
 const { getVerse } = require('../bible-translations/service.js');
+const { writeDailyContent } = require('../shared-study/client.js');
+const { SharedStudyError, writeStudy } = require('../shared-study/repository.js');
 const { addDailyVerse } = require('./service.js');
 const { addVerseExplanation, fetchVerseTextWithFallback } = require('../bible/service.js');
 const { validVerseRange, verseEndData } = require('../../utils/verseRange.js');
@@ -17,6 +36,12 @@ beforeEach(() => {
   jest.clearAllMocks();
   prisma.dailyVerse.create.mockImplementation(async ({ data }) => ({ id: 1n, ...data }));
   prisma.dailyVerse.update.mockImplementation(async ({ data }) => ({ id: 1n, ...data }));
+  prisma.dailyVerse.findUnique.mockResolvedValue(null);
+  writeDailyContent.mockImplementation(async (client, model, { id, data }) =>
+    id
+      ? client[model].update({ where: { id: BigInt(id) }, data })
+      : client[model].create({ data }),
+  );
   getVerse.mockImplementation(async (_version, _book, _chapter, verse) => ({ text: `Verse ${verse}` }));
 });
 
@@ -27,6 +52,18 @@ test.each([undefined, 9])('daily verse create/edit preserves range (id: %s)', as
   expect(result.status).toBe(200);
   expect(Number(result.data.verseEnd)).toBe(10);
   expect((id ? prisma.dailyVerse.update : prisma.dailyVerse.create)).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ verseNumber: 6n, verseEnd: 10n }) }));
+});
+
+test('daily verse saves carry the shared-study version for optimistic locking', async () => {
+  await addDailyVerse({ ...verse, id: 9, sharedStudyVersion: 4 }, 'admin-1');
+  expect(writeDailyContent).toHaveBeenCalledWith(prisma, 'dailyVerse', expect.objectContaining({ id: 9, expectedVersion: 4 }));
+});
+
+test('daily verse version conflicts surface as 409 instead of 500', async () => {
+  writeDailyContent.mockRejectedValueOnce(new SharedStudyError('Shared study changed; reload before saving', ['version']));
+  const result = await addDailyVerse({ ...verse, id: 9, sharedStudyVersion: 3 }, 'admin-1');
+  expect(result.status).toBe(409);
+  expect(result.message).toMatch(/reload/i);
 });
 
 test.each([[10, 6], ['6-10', undefined], [0, 10], [6, 177]])('rejects invalid range %s-%s before database writes', async (start, end) => {
@@ -49,7 +86,10 @@ test('range reader returns the complete text, not just the starting verse', asyn
 test('explanations store the main range and cross-reference ranges', async () => {
   const table = () => ({ deleteMany: jest.fn().mockResolvedValue({}), createMany: jest.fn().mockResolvedValue({}) });
   const tx = {
-    verseExplanation: { upsert: jest.fn().mockImplementation(async ({ create }) => ({ id: 1n, ...create })) },
+    verseExplanation: {
+      upsert: jest.fn().mockImplementation(async ({ create }) => ({ id: 1n, ...create })),
+      findUnique: jest.fn().mockResolvedValue({ id: 1n, verseEnd: 10n }),
+    },
     verseExegesis: { upsert: jest.fn().mockResolvedValue({}) },
     verseWordStudyEntry: table(), versePracticalApplication: table(), verseCrossReference: table(), verseTheme: table(),
   };
@@ -58,6 +98,57 @@ test('explanations store the main range and cross-reference ranges', async () =>
   expect(result.status).toBe(200);
   expect(tx.verseExplanation.upsert.mock.calls[0][0].create.verseEnd).toBe(10n);
   expect(tx.verseCrossReference.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ verseNumber: 1n, verseEnd: 3n })] });
+});
+
+test('explanation saves pass the expected shared version into the transaction', async () => {
+  const table = () => ({ deleteMany: jest.fn().mockResolvedValue({}), createMany: jest.fn().mockResolvedValue({}) });
+  const tx = {
+    verseExplanation: {
+      upsert: jest.fn().mockResolvedValue({ id: 1n, sharedStudyId: 7n }),
+      update: jest.fn().mockResolvedValue({ id: 1n, sharedStudyId: 7n }),
+      findUnique: jest.fn().mockResolvedValue({ id: 1n, sharedStudyId: 7n }),
+    },
+    verseExegesis: { upsert: jest.fn().mockResolvedValue({}) },
+    verseWordStudyEntry: table(), versePracticalApplication: table(), verseCrossReference: table(), verseTheme: table(),
+  };
+  prisma.$transaction.mockImplementation(fn => fn(tx));
+  await addVerseExplanation({ ...verse, id: 1, sharedStudyVersion: 5 }, 'admin-1');
+  expect(writeStudy).toHaveBeenCalledWith(tx, 'explanation', expect.objectContaining({ id: 1n }), {
+    allowSharedEdit: true,
+    expectedVersion: 5,
+  });
+});
+
+test('daily verse saves invalidate every dependent view and the landing cache', async () => {
+  await addDailyVerse({ ...verse, id: 9, sharedStudyVersion: 2 }, 'admin-1');
+  const bibleKeys = cache.del.mock.calls
+    .filter(([namespace]) => namespace === 'bible')
+    .map(([, key]) => key);
+  expect(bibleKeys).toEqual(expect.arrayContaining([
+    'todays-verse:v2',
+    'todays-verse:v2:en',
+    'verse-by-date:v2:2026-11-18',
+  ]));
+  expect(cache.del).toHaveBeenCalledWith('landing', expect.stringContaining('daily-verse:'));
+});
+
+test('explanation saves invalidate explanation, resource and AI caches', async () => {
+  const table = () => ({ deleteMany: jest.fn().mockResolvedValue({}), createMany: jest.fn().mockResolvedValue({}) });
+  const tx = {
+    verseExplanation: {
+      upsert: jest.fn().mockResolvedValue({ id: 1n, sharedStudyId: 7n }),
+      update: jest.fn().mockResolvedValue({ id: 1n, sharedStudyId: 7n }),
+      findUnique: jest.fn().mockResolvedValue({ id: 1n, sharedStudyId: 7n }),
+    },
+    verseExegesis: { upsert: jest.fn().mockResolvedValue({}) },
+    verseWordStudyEntry: table(), versePracticalApplication: table(), verseCrossReference: table(), verseTheme: table(),
+  };
+  prisma.$transaction.mockImplementation(fn => fn(tx));
+  await addVerseExplanation({ ...verse, id: 1, sharedStudyVersion: 5 }, 'admin-1');
+  expect(cache.del).toHaveBeenCalledWith('bible', 'explanation-detailed:v4:Genesis:3:6');
+  expect(cache.del).toHaveBeenCalledWith('verse-resources', 'Genesis:3:6');
+  expect(cache.del).toHaveBeenCalledWith('verse-resources-counts', 'Genesis:3:6');
+  expect(cache.del).toHaveBeenCalledWith('ai', expect.stringContaining('Genesis:3:6'));
 });
 
 test('incomplete cross references return a clear validation error', async () => {

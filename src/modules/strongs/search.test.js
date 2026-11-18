@@ -1,6 +1,7 @@
 jest.mock('../../config/db.js', () => ({ prisma: {
   strongsDictionary: { findMany: jest.fn(), count: jest.fn() },
   verseWord: { findMany: jest.fn() },
+  studyWord: { findMany: jest.fn() },
   verseWordStudy: { findMany: jest.fn() },
   verseWordStudyEntry: { findMany: jest.fn() },
   verseResource: { findMany: jest.fn() },
@@ -14,6 +15,7 @@ import { searchStrongs, getBookWords } from './service.js';
 
 beforeEach(() => {
   jest.resetAllMocks();
+  prisma.studyWord.findMany.mockResolvedValue([]);
   prisma.verseWordStudy.findMany.mockResolvedValue([]);
   prisma.verseWordStudyEntry.findMany.mockResolvedValue([]);
   prisma.verseResource.findMany.mockResolvedValue([]);

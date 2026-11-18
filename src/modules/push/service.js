@@ -19,6 +19,9 @@ import { getMessaging } from "firebase-admin/messaging";
 import { prisma } from "../../config/db.js";
 import { formatApiResponse } from "../../utils/helpers.js";
 import { dueReminder, isValidTimeZone } from "./reminderTime.js";
+import { sharedStudyReaders } from "../shared-study/client.js";
+
+const sharedStudy = () => sharedStudyReaders(prisma);
 
 // ── Firebase Admin init (lazy, once) ─────────────────────────────────────────
 let messagingEnabled = false;
@@ -302,12 +305,12 @@ export const getUsersDueForReminder = async (utcNow = new Date()) => {
 export const getTodaysVerseForPush = async (day = new Date().toISOString().slice(0, 10)) => {
   const start = new Date(`${day}T00:00:00.000Z`);
   const end = new Date(start.getTime() + 86400000);
-  let dv = await prisma.dailyVerse.findFirst({
+  let dv = await sharedStudy().dailyVerse.findFirst({
     where: { displayDate: { gte: start, lt: end }, isPublished: true },
     orderBy: { displayDate: "asc" },
   });
   if (!dv) {
-    dv = await prisma.dailyVerse.findFirst({
+    dv = await sharedStudy().dailyVerse.findFirst({
       where: { isPublished: true, displayDate: { lt: end } },
       orderBy: { displayDate: "desc" },
     });

@@ -3,6 +3,7 @@ import { prisma } from '../../config/db.js';
 import { cache } from '../../services/cacheService.js';
 import { getVerse, getCatalog } from '../bible-translations/service.js';
 import { normalizeLanguage, translateMany, translateResult } from '../../utils/translator.js';
+import { sharedStudyReaders } from '../shared-study/client.js';
 
 const CACHE_TTL = 86400;
 
@@ -96,7 +97,7 @@ function parseTakeaways(value) {
 /** The normalized VerseExplanation record with every rich relation attached. */
 async function getExplanationRecord(bookName, chapter, verseNumber) {
   try {
-    return await prisma.verseExplanation.findUnique({
+    return await sharedStudyReaders(prisma).verseExplanation.findUnique({
       where: {
         bookName_chapter_verseNumber: {
           bookName,

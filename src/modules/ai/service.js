@@ -1,5 +1,6 @@
 import { prisma } from "../../config/db.js";
 import { cache } from "../../services/cacheService.js";
+import { sharedStudyReaders } from "../shared-study/client.js";
 import {
   normalizeBook,
   detectGenre,
@@ -319,6 +320,19 @@ export async function explainVerses(book, chapter, verse, depth = "standard") {
   return request;
 }
 
+/** Stored editorial content feeds generated explanations, so an editorial change
+ * must drop both the in-process and Redis copies for every depth. */
+export async function invalidateVerseExplanationCache(bookName, chapter, verse) {
+  const name = normalizeBook(bookName);
+  await Promise.all(
+    ["standard", "detailed"].flatMap((depth) => {
+      const cacheKey = `ai:${TEMPLATE_VERSION}:${name}:${chapter}:${verse}:${depth}`;
+      memCache.delete(cacheKey);
+      return [cache.del("ai", cacheKey)];
+    }),
+  );
+}
+
 async function explainVersesUncached(book, chapter, verse, depth = "standard") {
   const bookName = normalizeBook(book);
   const cacheKey = `ai:${TEMPLATE_VERSION}:${bookName}:${chapter}:${verse}:${depth}`;
@@ -341,7 +355,7 @@ async function explainVersesUncached(book, chapter, verse, depth = "standard") {
       where: { passageReference: ref },
       select: { introduction: true, contextSummary: true, teachingBody: true, application: true, prayer: true },
     }),
-    prisma.verseExplanation.findUnique({
+    sharedStudyReaders(prisma).verseExplanation.findUnique({
       where: { bookName_chapter_verseNumber: { bookName, chapter, verseNumber: verse } },
       select: {
         exegesis: {

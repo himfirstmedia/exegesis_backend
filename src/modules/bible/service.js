@@ -20,6 +20,11 @@ import {
   SOURCE_LANGUAGE,
   withContentLanguage,
 } from "../../utils/contentLanguage.js";
+import { sharedStudyReaders } from "../shared-study/client.js";
+import { SharedStudyError, writeStudy } from "../shared-study/repository.js";
+import { invalidateVerseExplanationCache } from "../ai/service.js";
+
+const sharedStudy = () => sharedStudyReaders(prisma);
 
 // Daily verses always need displayable text. If the stored bibleVersion has no
 // bundled XML (e.g. "WEB" from the app's local JSON list) we fall back to KJV
@@ -897,7 +902,7 @@ export const getVerseExplanation = async (data) => {
     "bible",
     verseExplanationCacheKey(bookName, chapter, verseNumber),
     async () => {
-      return prisma.verseExplanation.findUnique({
+      return sharedStudy().verseExplanation.findUnique({
         where: {
           bookName_chapter_verseNumber: {
             bookName,
@@ -1042,6 +1047,8 @@ export const addVerseExplanation = async (data, userId) => {
     learnMore,
     finalThoughts,
     takeaways,
+    sharedStudyVersion,
+    expectedVersion,
   } = data;
 
   const exegesis =
@@ -1159,20 +1166,9 @@ export const addVerseExplanation = async (data, userId) => {
           existingStrongIds = new Set(existing.map((e) => e.strongsId));
         }
 
-        const missing = inputStrongIds.filter(
-          (sid) => !existingStrongIds.has(sid),
-        );
-        if (missing.length > 0) {
-          const toCreate = missing.map((sid) => ({
-            strongsId: sid,
-            shortDefinition: `Imported entry for ${sid}`,
-          }));
-          await tx.strongsDictionary.createMany({
-            data: toCreate,
-            skipDuplicates: true,
-          });
-          missing.forEach((sid) => existingStrongIds.add(sid));
-        }
+        // Unknown identifiers stay unresolved in legacy rows; the shared write
+        // records them as StrongsIdentifier entries instead of inventing
+        // dictionary definitions.
 
         preparedWordStudies = wordStudies.map((ws, i) => ({
           explanationId: root.id,
@@ -1236,8 +1232,31 @@ export const addVerseExplanation = async (data, userId) => {
         });
       }
 
+      // 6. Store the same editorial content once per passage/edition/language
+      //    and link this explanation to it inside the same transaction.
+      const complete = await tx.verseExplanation.findUnique({
+        where: { id: root.id },
+        include: {
+          exegesis: true,
+          studyMetadata: true,
+          wordStudies: { orderBy: { sortOrder: "asc" } },
+          practicalApps: { orderBy: { sortOrder: "asc" } },
+          crossReferences: { orderBy: { sortOrder: "asc" } },
+          themes: { orderBy: { sortOrder: "asc" } },
+        },
+      });
+      const expectedSharedVersion = sharedStudyVersion ?? expectedVersion;
+      const savedStudy = await writeStudy(tx, "explanation", complete, {
+        allowSharedEdit: root.sharedStudyId != null,
+        expectedVersion:
+          expectedSharedVersion == null
+            ? undefined
+            : Number(expectedSharedVersion),
+      });
+
       return {
         ...root,
+        sharedStudyVersion: savedStudy?.version ?? null,
         exegesis: exegesis ? { ...exegesis, explanationId: root.id } : null,
         studyMetadata: pendingStudyMetadata,
         wordStudies: preparedWordStudies,
@@ -1247,10 +1266,21 @@ export const addVerseExplanation = async (data, userId) => {
       };
     });
 
-    await cache.del(
-      "bible",
-      verseExplanationCacheKey(bookName, chapter, verseNumber),
-    );
+    await Promise.all([
+      cache.del(
+        "bible",
+        verseExplanationCacheKey(bookName, chapter, verseNumber),
+      ),
+      cache.del(
+        "verse-resources",
+        `${bookName}:${chapter}:${verseNumber}`,
+      ),
+      cache.del(
+        "verse-resources-counts",
+        `${bookName}:${chapter}:${verseNumber}`,
+      ),
+      invalidateVerseExplanationCache(bookName, Number(chapter), Number(verseNumber)),
+    ]);
 
     const serializedResult = withLegacyVerseExplanationFields(
       serializeBigInt(result),
@@ -1264,6 +1294,13 @@ export const addVerseExplanation = async (data, userId) => {
       data: serializedResult,
     };
   } catch (error) {
+    if (error instanceof SharedStudyError) {
+      return {
+        status: error.status,
+        message: error.message,
+        data: { issues: error.issues },
+      };
+    }
     console.error("Error in addVerseExplanation transaction:", error);
     return {
       status: 500,
@@ -1298,7 +1335,7 @@ export const getAllVersesExplanation = async (data) => {
 
   const [explanations, totalCount] = await Promise.all([
     // Include small related payloads so list views can show explanation snippets
-    prisma.verseExplanation.findMany({
+    sharedStudy().verseExplanation.findMany({
       where: whereClause,
       skip: offset,
       take: pageSizeNum,
@@ -1494,7 +1531,7 @@ export const getVerseByDate = async (data) => {
       const startDate = parseLocalDate(date);
       const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000 - 1);
 
-      const dailyVerse = await prisma.dailyVerse.findFirst({
+      const dailyVerse = await sharedStudy().dailyVerse.findFirst({
         where: {
           displayDate: {
             gte: startDate,
@@ -1576,7 +1613,7 @@ export const getVerseByDate = async (data) => {
 /** Fetch verse explanation from DB by book/chapter/verse */
 async function getVerseExplanationData(bookName, chapter, verseNumber) {
   try {
-    return await prisma.verseExplanation.findUnique({
+    return await sharedStudy().verseExplanation.findUnique({
       where: {
         bookName_chapter_verseNumber: {
           bookName,
@@ -1600,13 +1637,13 @@ export const getTodaysVerse = async (data = {}) => {
     async () => {
       const today = utcToday();
 
-      let dailyVerse = await prisma.dailyVerse.findFirst({
+      let dailyVerse = await sharedStudy().dailyVerse.findFirst({
         where: { displayDate: { gte: today }, isPublished: true },
         orderBy: { displayDate: "asc" },
       });
 
       if (!dailyVerse) {
-        dailyVerse = await prisma.dailyVerse.findFirst({
+        dailyVerse = await sharedStudy().dailyVerse.findFirst({
           where: { isPublished: true },
           orderBy: { displayDate: "desc" },
         });
@@ -1703,7 +1740,7 @@ export const getDailyVerseByRef = async (data) => {
     "bible",
     `daily-verse-ref:${bookName}:${chapter}:${verseNumber}`,
     async () => {
-      const dailyVerse = await prisma.dailyVerse.findFirst({
+      const dailyVerse = await sharedStudy().dailyVerse.findFirst({
         where: {
           bookName: { equals: bookName, mode: "insensitive" },
           chapter: BigInt(chapter),
@@ -1745,13 +1782,13 @@ export const getTodaysDevotion = async (data = {}) => {
     async () => {
       const today = utcToday();
 
-      let dailyDevotion = await prisma.dailyDevotion.findFirst({
+      let dailyDevotion = await sharedStudy().dailyDevotion.findFirst({
         where: { displayDate: { gte: today }, isPublished: true },
         orderBy: { displayDate: "asc" },
       });
 
       if (!dailyDevotion) {
-        dailyDevotion = await prisma.dailyDevotion.findFirst({
+        dailyDevotion = await sharedStudy().dailyDevotion.findFirst({
           where: { isPublished: true },
           orderBy: { displayDate: "desc" },
         });
@@ -1806,7 +1843,7 @@ export const getDevotionByDate = async (data) => {
         isPublished: true,
       };
 
-      const devotions = await prisma.dailyDevotion.findMany({
+      const devotions = await sharedStudy().dailyDevotion.findMany({
         where: whereClause,
         orderBy: { displayDate: "asc" },
         take: 1,
@@ -1867,7 +1904,7 @@ export const getAllDailyDevotionsPublic = async (data) => {
   }
 
   const [devotions, totalElements] = await Promise.all([
-    prisma.dailyDevotion.findMany({
+    sharedStudy().dailyDevotion.findMany({
       where: whereClause,
       orderBy: { displayDate: "desc" },
       skip: pageNum * pageSize,
@@ -2330,14 +2367,31 @@ export const deleteVerseExplanation = async (data, userId) => {
   });
   await prisma.verseExplanation.delete({ where: { id: BigInt(id) } });
   if (existing) {
-    await cache.del(
-      "bible",
-      verseExplanationCacheKey(
-        existing.bookName,
-        existing.chapter,
-        existing.verseNumber,
+    const chapterNumber = Number(existing.chapter);
+    const verseNumber = Number(existing.verseNumber);
+    await Promise.all([
+      cache.del(
+        "bible",
+        verseExplanationCacheKey(
+          existing.bookName,
+          existing.chapter,
+          existing.verseNumber,
+        ),
       ),
-    );
+      cache.del(
+        "verse-resources",
+        `${existing.bookName}:${existing.chapter}:${existing.verseNumber}`,
+      ),
+      cache.del(
+        "verse-resources-counts",
+        `${existing.bookName}:${existing.chapter}:${existing.verseNumber}`,
+      ),
+      invalidateVerseExplanationCache(
+        existing.bookName,
+        chapterNumber,
+        verseNumber,
+      ),
+    ]);
   }
   return { status: 200, message: "Verse explanation deleted successfully" };
 };
