@@ -50,11 +50,14 @@ const transaction = existing => ({
   dailyVerse: { update: jest.fn() }, dailyDevotion: { update: jest.fn() },
 });
 
-test('a new source cannot silently overwrite a populated same-passage study', async () => {
+test('a new source linking to a same-passage study defers to the existing study content on conflicts', async () => {
   const tx = transaction(study());
-  await expect(writeStudy(tx, 'verse', source({ explanation: 'Different' }))).rejects.toMatchObject({ status: 409, issues: ['explanation'] });
+  // Incoming has 'Different' but existing has 'Explanation' — existing wins, no error thrown.
+  const result = await writeStudy(tx, 'verse', source({ explanation: 'Different' }));
+  // existing study content is unchanged so same() is true → only the FK is written
+  expect(result).toEqual({ id: 12n, version: 3 });
   expect(tx.passageStudy.updateMany).not.toHaveBeenCalled();
-  expect(tx.dailyVerse.update).not.toHaveBeenCalled();
+  expect(tx.dailyVerse.update).toHaveBeenCalledWith({ where: { id: 1n }, data: { sharedStudyId: 12n } });
 });
 
 test('linked shared edits require the current version, even if old source text matches', async () => {

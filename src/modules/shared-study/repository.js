@@ -134,7 +134,9 @@ export async function writeStudy(tx, type, source, { expectedVersion, allowShare
         throw new SharedStudyError('Shared study changed; reload before saving', ['version']);
       }
     } else {
-      if (comparison.conflicts.length) throw new SharedStudyError('This passage already has different shared content; review before linking', comparison.conflicts);
+      // First-time link (new daily verse or not yet linked): always use the
+      // merged result. Fields that only differ on the incoming side keep the
+      // existing study value — the shared content is authoritative. No 409.
       document = comparison.merged;
     }
   }
