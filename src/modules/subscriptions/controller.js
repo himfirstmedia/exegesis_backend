@@ -3,6 +3,7 @@ import { prisma } from "../../config/db.js";
 import { formatApiResponse } from "../../utils/helpers.js";
 import { normalizeLanguage, translateMany } from "../../utils/translator.js";
 import { MONTHLY_PLAN_CENTS, isPublishedPlan } from './planPolicy.js';
+import { verifiedMonthlyPrice } from './monthlyPrice.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { timeout: 10000 });
 const FRONTEND_URL =
@@ -193,7 +194,7 @@ export const createCheckoutSession = async (req, res) => {
       }
     }
 
-    const priceId = await getPriceId(tier, billingInterval);
+    let priceId = await getPriceId(tier, billingInterval);
     if (!priceId) {
       return res.status(500).json(
         formatApiResponse({
@@ -204,12 +205,11 @@ export const createCheckoutSession = async (req, res) => {
     }
 
     // Never charge a rounded/different price from the advertised monthly plan.
-    const checkoutPrice = await stripe.prices.retrieve(priceId);
-    if (!checkoutPrice.active || checkoutPrice.currency !== 'usd' ||
-        checkoutPrice.unit_amount !== MONTHLY_PLAN_CENTS[tier] ||
-        checkoutPrice.recurring?.interval !== 'month' || checkoutPrice.recurring?.interval_count !== 1) {
+    const checkoutPrice = await verifiedMonthlyPrice(stripe, tier, priceId);
+    if (!checkoutPrice) {
       return res.status(409).json(formatApiResponse({ status: 409, message: 'Plan pricing is being updated. Please try again later.' }));
     }
+    priceId = checkoutPrice.id;
 
     // ── Reuse or create Stripe customer (no duplicates) ──────────────────
     const customerId = await getOrCreateStripeCustomer(user);
@@ -392,7 +392,8 @@ async function buildMonthlyTiers() {
     const priceId = stored?.stripePriceId || process.env[MONTHLY_PRICE_ENV[baseId]];
     if (!priceId) continue;
     try {
-      const price = await stripe.prices.retrieve(priceId, { expand: ['product'] });
+      const price = await verifiedMonthlyPrice(stripe, baseId, priceId);
+      if (!price) continue;
       const product = price.product;
       if (!price.active || price.unit_amount !== cents || price.currency !== 'usd' ||
           price.recurring?.interval !== 'month' || price.recurring?.interval_count !== 1 ||
@@ -550,7 +551,10 @@ const resolveTierFromPriceId = async (priceId, interval) => {
     });
     const product = price.product;
     if (product && typeof product === "object" && !product.deleted) {
-      if (product.metadata?.tierId) return product.metadata.tierId;
+      if (product.metadata?.tierId) {
+        const base = product.metadata.tierId.replace(/_monthly$/, '');
+        return interval === 'month' ? `${base}_monthly` : base;
+      }
       const slug = product.name
         ?.toLowerCase()
         .replace(/[^a-z0-9]+/g, "_")

@@ -22,7 +22,10 @@ linked to Stripe's 333-cent and 777-cent prices. The old 778-cent price and know
 annual prices were archived in Stripe; historical tier rows were deactivated,
 not deleted. Existing subscriptions and invoices were not canceled or deleted.
 Database monthly price mappings take precedence over deployment environment
-fallbacks. The local Covenant monthly price environment fallback was corrected;
+fallbacks. A stale/archived configured price also resolves through its own Stripe
+product to an active exact approved monthly price; unrelated products and $7.78
+are never accepted. This covers deployments still configured with an old price ID.
+The local Covenant monthly price environment fallback was corrected;
 no secrets are stored in this report or committed.
 
 Three database accounts linked to already-canceled Stripe subscriptions were
@@ -58,7 +61,7 @@ including default formatting and numeric full-date option calls. Other UI
 languages retain their locale and numeral conventions. Storage/API timestamps
 and date-input values are unchanged.
 
-- Backend: 100 suites, 908 tests passed.
+- Backend: 101 suites, 911 tests passed.
 - Web: 83 files, 498 tests passed; production build and TypeScript passed.
 - App: 228 suites, 1,985 tests and 6 snapshots passed; zero typecheck errors.
 - Actual Stripe test API + disposable localhost database cancellation check passed:

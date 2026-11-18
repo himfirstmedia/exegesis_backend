@@ -196,12 +196,12 @@ describe("getSubscriptionStatus — single-response guarantee", () => {
     expect(res.json).toHaveBeenCalledTimes(1);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.body.returnCode).toBe(200);
-    expect(res.body.returnData.subscriptionTier).toBe("covenant_sower");
+    expect(res.body.returnData.subscriptionTier).toBe("covenant_sower_monthly");
     // The DB was reconciled with the Stripe truth.
     expect(prisma.systemUser.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "u1" },
-        data: expect.objectContaining({ subscriptionTier: "covenant_sower" }),
+        data: expect.objectContaining({ subscriptionTier: "covenant_sower_monthly" }),
       }),
     );
   });

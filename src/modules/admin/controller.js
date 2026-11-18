@@ -1028,8 +1028,8 @@ export const syncStripeTiers = async (req, res) => {
 
 const DEFAULT_TIERS = [
   { id: "free", name: "Free Reader", price: 0, interval: "none", sortOrder: 0, maxSlots: null, features: ["Bible reading", "Daily verse", "Basic tools"] },
-  { id: "legacy_sower_monthly", name: "Legacy Sower", price: 3.33, interval: "month", sortOrder: 1, maxSlots: 1000, features: ["Full Legacy Ledger and study tools"] },
-  { id: "covenant_sower_monthly", name: "Covenant Sower", price: 7.77, interval: "month", sortOrder: 2, maxSlots: null, features: ["Full access and future modules"] },
+  { id: "legacy_sower_monthly", name: "Legacy Sower Monthly", price: 3.33, interval: "month", sortOrder: 1, maxSlots: 1000, features: ["Full Legacy Ledger and study tools"] },
+  { id: "covenant_sower_monthly", name: "Covenant Sower Monthly", price: 7.77, interval: "month", sortOrder: 2, maxSlots: null, features: ["Full access and future modules"] },
 ];
 
 export const seedSubscriptionTiers = async (req, res) => {

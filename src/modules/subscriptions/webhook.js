@@ -67,7 +67,10 @@ const resolveTierFromPriceId = async (priceId, interval) => {
     });
     const product = price.product;
     if (product && typeof product === "object" && !product.deleted) {
-      if (product.metadata?.tierId) return product.metadata.tierId;
+      if (product.metadata?.tierId) {
+        const base = product.metadata.tierId.replace(/_monthly$/, '');
+        return interval === 'month' ? `${base}_monthly` : base;
+      }
       const slug = product.name
         ?.toLowerCase()
         .replace(/[^a-z0-9]+/g, "_")
