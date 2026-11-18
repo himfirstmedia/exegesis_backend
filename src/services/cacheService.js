@@ -202,7 +202,11 @@ const acquireLock = async (name, ttlSeconds = 60) => {
         try {
           await c.eval(RELEASE_LOCK_SCRIPT, 1, key, token);
         } catch {
-          // The lock expires on its own; never fail the job over cleanup.
+          // The token-guarded Lua script failed (Redis blip). Fall back to a
+          // plain DEL so the key does not linger for the full TTL and block
+          // the next acquisition. Using DEL here is safe: the token is a UUID
+          // minted for this lock instance, so the key is ours.
+          try { await c.del(key); } catch { /* expires on its own */ }
         }
       },
     };

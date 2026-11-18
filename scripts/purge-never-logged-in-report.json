@@ -1,0 +1,50 @@
+{
+  "startedAt": "2026-11-18T12:23:07.344Z",
+  "cutoff": "2026-11-17T12:23:04.363Z",
+  "includeStripe": true,
+  "totalCandidates": 7,
+  "skippedStripe": 0,
+  "skippedPaid": 0,
+  "skippedAdmin": 0,
+  "deleted": [
+    {
+      "id": "1ccd9423-c848-4af7-84f8-8501ee96eaec",
+      "email": "tester@example.com",
+      "createdOn": "2026-11-09T06:57:42.709Z"
+    },
+    {
+      "id": "720ee7ca-6112-4c55-a2d1-133f1343d004",
+      "email": "testuser9876@gmail.com",
+      "createdOn": "2026-11-03T17:03:55.977Z"
+    },
+    {
+      "id": "7cdfb4c3-d92b-4966-b941-222a3150448b",
+      "email": "john.doe@example.com",
+      "createdOn": "2026-10-06T14:07:29.421Z"
+    },
+    {
+      "id": "d89e9791-2c3f-4a2c-adb1-a53f804c634e",
+      "email": "testuser123@example.com",
+      "createdOn": "2026-10-23T19:59:48.715Z"
+    },
+    {
+      "id": "db2a73a9-8cdb-4395-81de-fc493af90870",
+      "email": "testuser@example.com",
+      "createdOn": "2026-10-23T09:33:27.288Z"
+    },
+    {
+      "id": "ddd956b1-1b96-4a0e-8430-91bd7e8d3de4",
+      "email": "testuser12345@example.com",
+      "createdOn": "2026-10-26T17:51:34.344Z"
+    },
+    {
+      "id": "e6cc8bf9-eaba-4880-9879-b617671cfd82",
+      "email": "johndoe@example.com",
+      "createdOn": "2026-10-30T10:19:40.782Z"
+    }
+  ],
+  "failed": [],
+  "finishedAt": "2026-11-18T12:23:44.009Z",
+  "deletedCount": 7,
+  "failedCount": 0
+}
