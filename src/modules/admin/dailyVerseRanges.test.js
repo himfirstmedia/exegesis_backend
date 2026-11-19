@@ -1,6 +1,7 @@
 jest.mock('stripe', () => ({ __esModule: true, default: jest.fn().mockImplementation(() => ({})) }));
 jest.mock('../../config/db.js', () => ({ prisma: {
-  dailyVerse: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
+  dailyVerse: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn() },
+  dailyDevotion: { findFirst: jest.fn() },
   $transaction: jest.fn(),
 } }));
 jest.mock('../../services/cacheService.js', () => ({ cache: { del: jest.fn().mockResolvedValue(undefined) } }));
@@ -8,6 +9,7 @@ jest.mock('../../utils/emailTemplates.js', () => ({ __esModule: true, default: {
 jest.mock('../bible-translations/service.js', () => ({ getVerse: jest.fn() }));
 jest.mock('../shared-study/client.js', () => ({
   sharedStudyReaders: jest.fn(),
+  writeDailyContent: jest.fn(),
 }));
 jest.mock('../shared-study/repository.js', () => ({
   SharedStudyError: class SharedStudyError extends Error {
@@ -23,7 +25,7 @@ jest.mock('../shared-study/repository.js', () => ({
 const { prisma } = require('../../config/db.js');
 const { cache } = require('../../services/cacheService.js');
 const { getVerse } = require('../bible-translations/service.js');
-const { addDailyVerse } = require('./service.js');
+const { addDailyVerse, addDailyDevotion } = require('./service.js');
 const { addVerseExplanation, fetchVerseTextWithFallback } = require('../bible/service.js');
 const { validVerseRange, verseEndData } = require('../../utils/verseRange.js');
 
@@ -32,6 +34,7 @@ beforeEach(() => {
   prisma.dailyVerse.create.mockImplementation(async ({ data }) => ({ id: 1n, ...data }));
   prisma.dailyVerse.update.mockImplementation(async ({ data }) => ({ id: 1n, ...data }));
   prisma.dailyVerse.findUnique.mockResolvedValue(null);
+  prisma.dailyVerse.findFirst.mockResolvedValue(null);
   getVerse.mockImplementation(async (_version, _book, _chapter, verse) => ({ text: `Verse ${verse}` }));
 });
 
@@ -50,6 +53,54 @@ test('daily verse create/edit writes directly to prisma without touching shared 
   // shared-study layer must not be involved
   const { writeStudy } = require('../shared-study/repository.js');
   expect(writeStudy).not.toHaveBeenCalled();
+});
+
+test('rejects a daily verse when another verse already occupies the date', async () => {
+  prisma.dailyVerse.findFirst.mockResolvedValueOnce({
+    id: 42n, displayDate: new Date('2026-11-18T00:00:00Z'),
+    bookName: 'John', chapter: 3n, verseNumber: 16n,
+  });
+  const result = await addDailyVerse(verse, 'admin-1');
+  expect(result.status).toBe(409);
+  expect(result.data.conflicts[0]).toMatchObject({
+    type: 'date',
+    existing: { id: 42, bookName: 'John', chapter: 3, verseNumber: 16 },
+  });
+  expect(prisma.dailyVerse.create).not.toHaveBeenCalled();
+});
+
+test('editing a verse excludes its own id from the date-conflict check', async () => {
+  const result = await addDailyVerse({ ...verse, id: 9 }, 'admin-1');
+  expect(result.status).toBe(200);
+  expect(prisma.dailyVerse.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+    where: expect.objectContaining({ id: { not: 9n } }),
+  }));
+});
+
+test('editing a verse without moving its date skips the conflict check', async () => {
+  prisma.dailyVerse.findUnique.mockResolvedValueOnce({
+    id: 9n, displayDate: new Date('2026-11-18T00:00:00Z'),
+    bookName: 'Genesis', chapter: 3n, verseNumber: 6n,
+  });
+  const result = await addDailyVerse({ ...verse, id: 9 }, 'admin-1');
+  expect(result.status).toBe(200);
+  expect(prisma.dailyVerse.findFirst).not.toHaveBeenCalled();
+});
+
+test('rejects a daily devotion when another devotion already occupies the date', async () => {
+  prisma.dailyDevotion.findFirst.mockResolvedValueOnce({
+    id: 4n, displayDate: new Date('2026-11-18T00:00:00Z'),
+    title: 'Existing devotion', content: 'Body',
+  });
+  const result = await addDailyDevotion({
+    title: 'New devotion', content: 'New body', displayDate: '2026-11-18',
+  }, 'admin-1');
+  expect(result.status).toBe(409);
+  expect(result.data.conflicts[0]).toMatchObject({
+    type: 'date', existing: { id: 4, title: 'Existing devotion' },
+  });
+  const { writeDailyContent } = require('../shared-study/client.js');
+  expect(writeDailyContent).not.toHaveBeenCalled();
 });
 
 test.each([[10, 6], ['6-10', undefined], [0, 10], [6, 177]])('rejects invalid range %s-%s before database writes', async (start, end) => {

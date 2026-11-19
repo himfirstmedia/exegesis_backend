@@ -21,9 +21,37 @@ import {
 } from "../bible/dailyContentTranslation.js";
 import {
   sharedStudyReaders,
+  writeDailyContent,
 } from "../shared-study/client.js";
+import { SharedStudyError } from "../shared-study/repository.js";
 
 const sharedStudy = () => sharedStudyReaders(prisma);
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Normalize any date value to UTC midnight of that calendar day. */
+const utcDayStart = value => {
+  const date = parseLocalDate(value);
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+};
+
+/**
+ * Find another row (of the same model) scheduled on the same calendar day.
+ * `id` is excluded so editing a row without moving its date never conflicts
+ * with itself.
+ */
+const findDateConflict = async (model, displayDate, id) => {
+  const start = utcDayStart(displayDate);
+  return prisma[model].findFirst({
+    where: {
+      displayDate: { gte: start, lt: new Date(start.getTime() + DAY_MS) },
+      ...(id ? { id: { not: BigInt(id) } } : {}),
+    },
+    orderBy: { id: "asc" },
+  });
+};
 
 const dateKey = value => {
   if (!value) return null;
@@ -651,6 +679,23 @@ export const addDailyVerse = async (data, adminId) => {
     ? await prisma.dailyVerse.findUnique({ where: { id: BigInt(id) } })
     : null;
 
+  // Only guard when the verse is new or moved to a different day. Edits that
+  // keep their date must not be blocked by a legacy duplicate on that day.
+  const dateChanged =
+    !previous || dateKey(previous.displayDate) !== dateKey(utcDayStart(displayDate));
+  if (dateChanged) {
+    const dateConflict = await findDateConflict("dailyVerse", displayDate, id);
+    if (dateConflict) {
+      return {
+        status: 409,
+        message: "A daily verse already exists for this date",
+        data: {
+          conflicts: [{ type: "date", existing: serializeBigInt(dateConflict) }],
+        },
+      };
+    }
+  }
+
   const legacyData = {
     bookName,
     chapter: BigInt(chapter),
@@ -910,6 +955,26 @@ export const addDailyDevotion = async (data, adminId) => {
     };
   }
 
+  const previous = id
+    ? await prisma.dailyDevotion.findUnique({ where: { id: BigInt(id) } })
+    : null;
+
+  // Only guard when the devotion is new or moved to a different day.
+  const dateChanged =
+    !previous || dateKey(previous.displayDate) !== dateKey(utcDayStart(displayDate));
+  if (dateChanged) {
+    const dateConflict = await findDateConflict("dailyDevotion", displayDate, id);
+    if (dateConflict) {
+      return {
+        status: 409,
+        message: "A daily devotion already exists for this date",
+        data: {
+          conflicts: [{ type: "date", existing: serializeBigInt(dateConflict) }],
+        },
+      };
+    }
+  }
+
   const richContent = {
     bibleVersion: bibleVersion || null,
     reflection: reflection || null,
@@ -927,10 +992,6 @@ export const addDailyDevotion = async (data, adminId) => {
     finalThoughts: finalThoughts || null,
     takeaways: takeaways || null,
   };
-
-  const previous = id
-    ? await prisma.dailyDevotion.findUnique({ where: { id: BigInt(id) } })
-    : null;
 
   const legacyData = {
     title,
