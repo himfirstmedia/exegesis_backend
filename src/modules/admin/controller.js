@@ -215,6 +215,23 @@ export const addDailyVerse = async (req, res) => {
   }
 };
 
+export const checkDailyVerseDate = async (req, res) => {
+  try {
+    const result = await adminService.checkDailyVerseDate(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Check daily verse date error:", error);
+    return res
+      .status(500)
+      .json(
+        formatApiResponse({
+          status: 500,
+          message: "Error checking daily verse date: " + error.message,
+        }),
+      );
+  }
+};
+
 export const getAllDailyVerses = async (req, res) => {
   try {
     const result = await adminService.getAllDailyVerses(req.body);

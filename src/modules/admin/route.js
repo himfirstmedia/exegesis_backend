@@ -150,6 +150,12 @@ router.post(
   adminController.addDailyVerse,
 );
 router.post(
+  "/check-daily-verse-date",
+  authenticate,
+  requireAdmin,
+  adminController.checkDailyVerseDate,
+);
+router.post(
   "/get-all-daily-verses",
   authenticate,
   requireAdmin,

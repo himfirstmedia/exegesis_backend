@@ -750,6 +750,26 @@ export const addDailyVerse = async (data, adminId) => {
   return { status: 200, message: msg, data: serializeBigInt(dailyVerse) };
 };
 
+/**
+ * Lightweight preflight used by the editor to warn as soon as a date is picked.
+ * The save path performs the same check authoritatively.
+ */
+export const checkDailyVerseDate = async (data) => {
+  const { date, excludeId } = data || {};
+  if (!date) {
+    return { status: 400, message: "date is required" };
+  }
+
+  const existing = await findDateConflict("dailyVerse", date, excludeId);
+  return {
+    status: 200,
+    message: existing
+      ? "A daily verse already exists for this date"
+      : "Date is available",
+    data: { existing: existing ? serializeBigInt(existing) : null },
+  };
+};
+
 export const getAllDailyVerses = async (data) => {
   const {
     page = 0,

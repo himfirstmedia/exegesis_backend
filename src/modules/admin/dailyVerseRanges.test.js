@@ -25,7 +25,7 @@ jest.mock('../shared-study/repository.js', () => ({
 const { prisma } = require('../../config/db.js');
 const { cache } = require('../../services/cacheService.js');
 const { getVerse } = require('../bible-translations/service.js');
-const { addDailyVerse, addDailyDevotion } = require('./service.js');
+const { addDailyVerse, addDailyDevotion, checkDailyVerseDate } = require('./service.js');
 const { addVerseExplanation, fetchVerseTextWithFallback } = require('../bible/service.js');
 const { validVerseRange, verseEndData } = require('../../utils/verseRange.js');
 
@@ -85,6 +85,27 @@ test('editing a verse without moving its date skips the conflict check', async (
   const result = await addDailyVerse({ ...verse, id: 9 }, 'admin-1');
   expect(result.status).toBe(200);
   expect(prisma.dailyVerse.findFirst).not.toHaveBeenCalled();
+});
+
+test('preflight date check returns the existing verse for a taken date', async () => {
+  prisma.dailyVerse.findFirst.mockResolvedValueOnce({
+    id: 42n, displayDate: new Date('2026-11-18T00:00:00Z'),
+    bookName: 'John', chapter: 3n, verseNumber: 16n,
+  });
+  const result = await checkDailyVerseDate({ date: '2026-11-18', excludeId: 9 });
+  expect(result.status).toBe(200);
+  expect(result.data.existing).toMatchObject({
+    id: 42, bookName: 'John', chapter: 3, verseNumber: 16,
+  });
+  expect(prisma.dailyVerse.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+    where: expect.objectContaining({ id: { not: 9n } }),
+  }));
+});
+
+test('preflight date check reports a free date', async () => {
+  const result = await checkDailyVerseDate({ date: '2026-11-18' });
+  expect(result.status).toBe(200);
+  expect(result.data.existing).toBeNull();
 });
 
 test('rejects a daily devotion when another devotion already occupies the date', async () => {
