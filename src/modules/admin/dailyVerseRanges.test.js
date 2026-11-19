@@ -124,6 +124,22 @@ test('rejects a daily devotion when another devotion already occupies the date',
   expect(writeDailyContent).not.toHaveBeenCalled();
 });
 
+test.each([
+  { bookName: 'John' },
+  { bookName: 'John', chapter: 3 },
+  { chapter: 3, verseNumber: 16 },
+])('rejects an incomplete devotion Bible reference: %p', async reference => {
+  const result = await addDailyDevotion({
+    title: 'Devotion', content: 'Body', displayDate: '2026-11-18', ...reference,
+  }, 'admin-1');
+  expect(result).toMatchObject({
+    status: 400,
+    message: 'bookName, chapter, and verseNumber must be provided together',
+  });
+  const { writeDailyContent } = require('../shared-study/client.js');
+  expect(writeDailyContent).not.toHaveBeenCalled();
+});
+
 test.each([[10, 6], ['6-10', undefined], [0, 10], [6, 177]])('rejects invalid range %s-%s before database writes', async (start, end) => {
   expect((await addDailyVerse({ ...verse, verseNumber: start, verseEnd: end }, 'admin-1')).status).toBe(400);
   expect(prisma.dailyVerse.create).not.toHaveBeenCalled();

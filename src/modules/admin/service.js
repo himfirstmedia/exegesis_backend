@@ -975,6 +975,17 @@ export const addDailyDevotion = async (data, adminId) => {
     };
   }
 
+  // A Bible reference is optional, but once started it must identify a
+  // complete verse. Testament is deliberately not part of the API contract;
+  // the selected book is sufficient to identify it.
+  const hasAnyReference = Boolean(bookName || chapter || verseNumber);
+  if (hasAnyReference && (!bookName || !chapter || !verseNumber)) {
+    return {
+      status: 400,
+      message: "bookName, chapter, and verseNumber must be provided together",
+    };
+  }
+
   const previous = id
     ? await prisma.dailyDevotion.findUnique({ where: { id: BigInt(id) } })
     : null;
