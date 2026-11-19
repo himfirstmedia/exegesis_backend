@@ -1531,7 +1531,7 @@ export const getVerseByDate = async (data) => {
       const startDate = parseLocalDate(date);
       const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000 - 1);
 
-      const dailyVerse = await sharedStudy().dailyVerse.findFirst({
+      const dailyVerse = await prisma.dailyVerse.findFirst({
         where: {
           displayDate: {
             gte: startDate,
@@ -1637,13 +1637,13 @@ export const getTodaysVerse = async (data = {}) => {
     async () => {
       const today = utcToday();
 
-      let dailyVerse = await sharedStudy().dailyVerse.findFirst({
+      let dailyVerse = await prisma.dailyVerse.findFirst({
         where: { displayDate: { gte: today }, isPublished: true },
         orderBy: { displayDate: "asc" },
       });
 
       if (!dailyVerse) {
-        dailyVerse = await sharedStudy().dailyVerse.findFirst({
+        dailyVerse = await prisma.dailyVerse.findFirst({
           where: { isPublished: true },
           orderBy: { displayDate: "desc" },
         });
@@ -1740,7 +1740,7 @@ export const getDailyVerseByRef = async (data) => {
     "bible",
     `daily-verse-ref:${bookName}:${chapter}:${verseNumber}`,
     async () => {
-      const dailyVerse = await sharedStudy().dailyVerse.findFirst({
+      const dailyVerse = await prisma.dailyVerse.findFirst({
         where: {
           bookName: { equals: bookName, mode: "insensitive" },
           chapter: BigInt(chapter),

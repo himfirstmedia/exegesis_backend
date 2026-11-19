@@ -6,11 +6,8 @@ jest.mock('../../config/db.js', () => ({ prisma: {
 jest.mock('../../services/cacheService.js', () => ({ cache: { del: jest.fn().mockResolvedValue(undefined) } }));
 jest.mock('../../utils/emailTemplates.js', () => ({ __esModule: true, default: {} }));
 jest.mock('../bible-translations/service.js', () => ({ getVerse: jest.fn() }));
-// The shared-study write is exercised by its own repository/client tests. Here
-// only the legacy range contract matters, so keep the boundary explicit.
 jest.mock('../shared-study/client.js', () => ({
   sharedStudyReaders: jest.fn(),
-  writeDailyContent: jest.fn(),
 }));
 jest.mock('../shared-study/repository.js', () => ({
   SharedStudyError: class SharedStudyError extends Error {
@@ -26,8 +23,6 @@ jest.mock('../shared-study/repository.js', () => ({
 const { prisma } = require('../../config/db.js');
 const { cache } = require('../../services/cacheService.js');
 const { getVerse } = require('../bible-translations/service.js');
-const { writeDailyContent } = require('../shared-study/client.js');
-const { SharedStudyError, writeStudy } = require('../shared-study/repository.js');
 const { addDailyVerse } = require('./service.js');
 const { addVerseExplanation, fetchVerseTextWithFallback } = require('../bible/service.js');
 const { validVerseRange, verseEndData } = require('../../utils/verseRange.js');
@@ -37,11 +32,6 @@ beforeEach(() => {
   prisma.dailyVerse.create.mockImplementation(async ({ data }) => ({ id: 1n, ...data }));
   prisma.dailyVerse.update.mockImplementation(async ({ data }) => ({ id: 1n, ...data }));
   prisma.dailyVerse.findUnique.mockResolvedValue(null);
-  writeDailyContent.mockImplementation(async (client, model, { id, data }) =>
-    id
-      ? client[model].update({ where: { id: BigInt(id) }, data })
-      : client[model].create({ data }),
-  );
   getVerse.mockImplementation(async (_version, _book, _chapter, verse) => ({ text: `Verse ${verse}` }));
 });
 
@@ -54,16 +44,12 @@ test.each([undefined, 9])('daily verse create/edit preserves range (id: %s)', as
   expect((id ? prisma.dailyVerse.update : prisma.dailyVerse.create)).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ verseNumber: 6n, verseEnd: 10n }) }));
 });
 
-test('daily verse saves carry the shared-study version for optimistic locking', async () => {
-  await addDailyVerse({ ...verse, id: 9, sharedStudyVersion: 4 }, 'admin-1');
-  expect(writeDailyContent).toHaveBeenCalledWith(prisma, 'dailyVerse', expect.objectContaining({ id: 9, expectedVersion: 4 }));
-});
-
-test('daily verse version conflicts surface as 409 instead of 500', async () => {
-  writeDailyContent.mockRejectedValueOnce(new SharedStudyError('Shared study changed; reload before saving', ['version']));
-  const result = await addDailyVerse({ ...verse, id: 9, sharedStudyVersion: 3 }, 'admin-1');
-  expect(result.status).toBe(409);
-  expect(result.message).toMatch(/reload/i);
+test('daily verse create/edit writes directly to prisma without touching shared study', async () => {
+  await addDailyVerse({ ...verse, id: 9 }, 'admin-1');
+  expect(prisma.dailyVerse.update).toHaveBeenCalled();
+  // shared-study layer must not be involved
+  const { writeStudy } = require('../shared-study/repository.js');
+  expect(writeStudy).not.toHaveBeenCalled();
 });
 
 test.each([[10, 6], ['6-10', undefined], [0, 10], [6, 177]])('rejects invalid range %s-%s before database writes', async (start, end) => {
@@ -113,6 +99,7 @@ test('explanation saves pass the expected shared version into the transaction', 
   };
   prisma.$transaction.mockImplementation(fn => fn(tx));
   await addVerseExplanation({ ...verse, id: 1, sharedStudyVersion: 5 }, 'admin-1');
+  const { writeStudy } = require('../shared-study/repository.js');
   expect(writeStudy).toHaveBeenCalledWith(tx, 'explanation', expect.objectContaining({ id: 1n }), {
     allowSharedEdit: true,
     expectedVersion: 5,

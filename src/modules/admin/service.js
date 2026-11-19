@@ -21,9 +21,7 @@ import {
 } from "../bible/dailyContentTranslation.js";
 import {
   sharedStudyReaders,
-  writeDailyContent,
 } from "../shared-study/client.js";
-import { SharedStudyError } from "../shared-study/repository.js";
 
 const sharedStudy = () => sharedStudyReaders(prisma);
 
@@ -681,22 +679,12 @@ export const addDailyVerse = async (data, adminId) => {
 
   let dailyVerse;
   try {
-    dailyVerse = await writeDailyContent(prisma, "dailyVerse", {
-      id,
-      data: legacyData,
-      expectedVersion: data.sharedStudyVersion ?? data.expectedVersion,
-    });
+    dailyVerse = id
+      ? await prisma.dailyVerse.update({ where: { id: BigInt(id) }, data: legacyData })
+      : await prisma.dailyVerse.create({ data: legacyData });
   } catch (error) {
-    if (error instanceof SharedStudyError) {
-      return {
-        status: error.status,
-        message: error.message,
-        data: { issues: error.issues },
-      };
-    }
     throw error;
   }
-
   const msg = id
     ? "Daily verse updated successfully"
     : "Daily verse added successfully";
@@ -780,7 +768,7 @@ export const getAllDailyVerses = async (data) => {
   }
 
   const [dailyVerses, totalElements] = await Promise.all([
-    sharedStudy().dailyVerse.findMany({
+    prisma.dailyVerse.findMany({
       where: whereClause,
       orderBy: [{ updatedOn: "desc" }, { createdOn: "desc" }],
       skip: offset,
