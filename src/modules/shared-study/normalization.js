@@ -93,8 +93,10 @@ export function normalizeSource(type, row) {
     }
     if (!item || typeof item !== 'object') { issues.push('words: invalid item'); return null; }
     const strongs = String(item.strongsIds?.join('/') || item.strongsId || item.strongs || item.Strongs || '');
-    const ids = [...new Set(strongs.match(/\b[HG]\d+\b/gi)?.map(id => id.toUpperCase()) || [])];
-    if (strongs && (!ids.length || ids.some(id => !/^[HG][1-9][0-9]*$/.test(id)))) issues.push('words: invalid Strong\'s identifier');
+    // Permissive by design so real-world variants pass: leading zeros, suffix
+    // letters and case differences are preserved rather than rejected.
+    const ids = [...new Set(strongs.match(/\b[HG]0*[0-9]+[a-z]?\b/gi)?.map(id => id.toUpperCase()) || [])];
+    if (strongs && (!ids.length || ids.some(id => !/^[HG]0*[0-9]+[A-Z]?$/.test(id)))) issues.push('words: invalid Strong\'s identifier');
     const transliteration = strongs.match(/^(.*?)\s*[-–—]\s*Strong['’]?s\s+/i)?.[1];
     const word = { surfaceText: String(item.surfaceText || item.word || ''), contextualMeaning: String(item.customDefinition || item.definition || ''), strongsIds: ids };
     if (transliteration) word.surfaceText += ` · ${transliteration}`;

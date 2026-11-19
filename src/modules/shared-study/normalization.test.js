@@ -40,6 +40,18 @@ test('preserves compound Strong’s identities without inventing dictionary defi
   expect(result.payload.study.words[0]).toMatchObject({ strongsIds: ['H589', 'H430'], contextualMeaning: 'The covenant God' });
 });
 
+test.each([
+  ['G11', ['G11']],
+  ['g11', ['G11']],
+  ['H0853', ['H0853']],
+  ['H430a', ['H430A']],
+  ['H589/H430', ['H589', 'H430']],
+])('accepts real-world Strong’s variant %s', (strongsId, expected) => {
+  const result = normalizeSource('verse', daily({ wordStudies: [{ surfaceText: 'Word', strongsId, customDefinition: 'Meaning' }] }));
+  expect(result.status).toBe('LINKED');
+  expect(result.payload.study.words[0].strongsIds).toEqual(expected);
+});
+
 test('parses en-dash references, quotations and commentary without overwriting Scripture', () => {
   const result = normalizeSource('verse', daily({ crossReferences: 'Psalm 46:1 – Keep the original quotation' }));
   expect(result.status).toBe('LINKED');
