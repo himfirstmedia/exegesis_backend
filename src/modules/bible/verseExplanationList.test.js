@@ -68,22 +68,49 @@ describe("getAllVersesExplanation localization", () => {
     });
 
     const item = result.data.explanations[0];
-    // Cards render the legacy fields, so they must follow the translation.
+    // Cards render the short snippet, so it must follow the translation.
     expect(item.explanation).toBe("fr:God gave his Son");
     // The card shows the creator's name, not their id.
     expect(item.creatorName).toBe("Ada Lovelace");
     expect(item.creatorName).not.toBe(record().createdBy);
-    expect(item.application).toBe("fr:Trust him");
-    expect(item.exegesis.explanationText).toBe("fr:God gave his Son");
-    expect(item.exegesis.applicationText).toBe("fr:Trust him");
     // The canonical snapshot still carries English for the edit screen.
     expect(item.source).toMatchObject({
       explanation: "God gave his Son",
-      application: "Trust him",
       bookName: "John",
     });
-    expect(item.source.exegesis.explanationText).toBe("God gave his Son");
     expect(translateMany).toHaveBeenCalledTimes(2);
+  });
+
+  test("returns only list fields instead of hydrated study internals", async () => {
+    prisma.verseExplanation.findMany.mockResolvedValue([record()]);
+    prisma.verseExplanation.count.mockResolvedValue(1);
+    prisma.systemUser.findMany.mockResolvedValue([]);
+
+    const result = await getAllVersesExplanation({ page: 1, pageSize: 4 });
+    const item = result.data.explanations[0];
+
+    expect(item).toMatchObject({
+      id: 7,
+      bookName: "John",
+      chapter: 3,
+      verseNumber: 16,
+      creatorName: null,
+      explanation: "God gave his Son",
+    });
+    for (const key of [
+      "exegesis",
+      "studyMetadata",
+      "application",
+      "wordStudies",
+      "practicalApps",
+      "crossReferences",
+      "themes",
+      "sharedStudyId",
+      "createdBy",
+      "updatedBy",
+    ]) {
+      expect(item).not.toHaveProperty(key);
+    }
   });
 
   test("omits the source payload unless the admin opts in", async () => {

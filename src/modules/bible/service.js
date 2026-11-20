@@ -1340,6 +1340,38 @@ const resolveVerseExplanationCreatorNames = async (explanations) => {
   }
 };
 
+// List cards only render these fields. Hydrated study internals (wordStudies,
+// crossReferences, themes, full exegesis/studyMetadata documents, ...) are
+// deliberately dropped so the list response stays small and quick to render.
+const VERSE_EXPLANATION_LIST_FIELDS = [
+  "id",
+  "bookName",
+  "chapter",
+  "verseNumber",
+  "verseEnd",
+  "bibleVersion",
+  "sortOrder",
+  "promptIds",
+  "createdOn",
+  "updatedOn",
+  "creatorName",
+  "explanation",
+  "learnMore",
+];
+
+const toVerseExplanationListItem = (item) => {
+  if (!item) return item;
+  const listItem = Object.fromEntries(
+    VERSE_EXPLANATION_LIST_FIELDS.filter((key) => key in item).map((key) => [
+      key,
+      item[key],
+    ]),
+  );
+  if (item.preview) listItem.preview = item.preview;
+  if (item.source) listItem.source = toVerseExplanationListItem(item.source);
+  return listItem;
+};
+
 export const getAllVersesExplanation = async (data) => {
   const {
     page = 1,
@@ -1365,14 +1397,34 @@ export const getAllVersesExplanation = async (data) => {
   }
 
   const [explanations, totalCount] = await Promise.all([
-    // Include small related payloads so list views can show explanation snippets
+    // Select only the fields list cards need. Hydration still resolves the
+    // shared study internally, but selectFields drops the heavy related payloads.
     sharedStudy().verseExplanation.findMany({
       where: whereClause,
       skip: offset,
       take: pageSizeNum,
-      include: {
-        exegesis: true,
-        studyMetadata: true,
+      select: {
+        id: true,
+        bookName: true,
+        chapter: true,
+        verseNumber: true,
+        verseEnd: true,
+        bibleVersion: true,
+        sortOrder: true,
+        createdBy: true,
+        createdOn: true,
+        updatedBy: true,
+        updatedOn: true,
+        exegesis: {
+          select: { explanationText: true, applicationText: true },
+        },
+        studyMetadata: {
+          select: {
+            introduction: true,
+            finalThoughts: true,
+            takeaways: true,
+          },
+        },
       },
       // Canonical Bible order (Genesis first), with book/chapter/verse as a
       // stable fallback inside each book.
@@ -1400,7 +1452,8 @@ export const getAllVersesExplanation = async (data) => {
   await resolveVerseExplanationCreatorNames(serialized.explanations);
 
   if (data.listPreview === true) {
-    serialized.explanations = await localizeListPreviews(serialized.explanations, lang, 'explanation');
+    const previews = await localizeListPreviews(serialized.explanations, lang, 'explanation');
+    serialized.explanations = previews.map(toVerseExplanationListItem);
     return { status: 200, message: 'Verse explanations fetched successfully', data: serialized };
   }
 
@@ -1445,7 +1498,10 @@ export const getAllVersesExplanation = async (data) => {
   const result = {
     status: 200,
     message: "Verse explanations fetched successfully",
-    data: serialized,
+    data: {
+      ...serialized,
+      explanations: serialized.explanations.map(toVerseExplanationListItem),
+    },
   };
   return result;
 };
