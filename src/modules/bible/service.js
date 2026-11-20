@@ -16,6 +16,7 @@ import {
   translateDailyExegesisContent,
   translateDailyVerseContent,
 } from "./dailyContentTranslation.js";
+import { shapeDailyDevotion } from "./dailyDevotionShape.js";
 import {
   SOURCE_LANGUAGE,
   withContentLanguage,
@@ -1802,7 +1803,7 @@ export const getTodaysDevotion = async (data = {}) => {
   if (!base)
     return { status: 404, message: "No daily devotion found for today" };
 
-  const dv = serializeBigInt(base);
+  const dv = serializeBigInt(shapeDailyDevotion(base));
   const result = {
     status: 200,
     message: "Today's devotion fetched successfully",
@@ -1813,7 +1814,7 @@ export const getTodaysDevotion = async (data = {}) => {
     .toLowerCase();
   if (normLang === "en") return result;
 
-  const translationKey = `todays-devotion:v7:translated:${normLang}:${dailyTranslationSourceKey(dv)}`;
+  const translationKey = `todays-devotion:v8:translated:${normLang}:${dailyTranslationSourceKey(dv)}`;
   return getCachedDailyTranslationOrWarm({
     cacheKey: translationKey,
     sourceResult: result,
@@ -1857,7 +1858,7 @@ export const getDevotionByDate = async (data) => {
   if (!base)
     return { status: 404, message: "No devotion found for the given date" };
 
-  const dv = serializeBigInt(base);
+  const dv = serializeBigInt(shapeDailyDevotion(base));
   const result = {
     status: 200,
     message: "Devotion fetched successfully",
@@ -1913,7 +1914,7 @@ export const getAllDailyDevotionsPublic = async (data) => {
     prisma.dailyDevotion.count({ where: whereClause }),
   ]);
 
-  let content = serializeBigInt(devotions);
+  let content = serializeBigInt(devotions.map(shapeDailyDevotion));
   const totalPages = Math.ceil(totalElements / pageSize);
 
   if (lang !== "en" && content.length > 0) {

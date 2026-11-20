@@ -19,6 +19,7 @@ import {
   translateDailyExegesisContent,
   translateDailyVerseContent,
 } from "../bible/dailyContentTranslation.js";
+import { devotionList, devotionStorageFields, shapeDailyDevotion } from "../bible/dailyDevotionShape.js";
 import {
   sharedStudyReaders,
   writeDailyContent,
@@ -952,8 +953,10 @@ export const addDailyDevotion = async (data, adminId) => {
     displayDate,
     displayTime,
     reflection,
+    reflectionQuestions,
     explanation,
     learnMore,
+    prayer,
     application,
     verseIntroduction,
     backgroundAuthor,
@@ -965,27 +968,34 @@ export const addDailyDevotion = async (data, adminId) => {
     crossReferences,
     finalThoughts,
     takeaways,
+    learningPoints,
     published,
   } = data;
 
-  if (!title || !content || !displayDate) {
+  const devotionalExplanation = explanation || content;
+  const devotionalQuestions = reflectionQuestions || reflection;
+  const devotionalPrayer = prayer || learnMore;
+  const devotionalLearningPoints = learningPoints || takeaways;
+  const questions = devotionList(devotionalQuestions);
+  const applications = devotionList(practicalApplications);
+  const lessons = devotionList(devotionalLearningPoints);
+
+  const hasAnyReference = Boolean(bookName || chapter || verseNumber);
+  if (hasAnyReference && (!bookName || !chapter || !verseNumber)) {
+    return { status: 400, message: "bookName, chapter, and verseNumber must be provided together" };
+  }
+
+  if (!title || !devotionalExplanation || !displayDate || !questions.length || !devotionalPrayer || !applications.length) {
     return {
       status: 400,
-      message: "title, content, and displayDate are required",
+      message: "title, explanation, reflectionQuestions, prayer, practicalApplications, and displayDate are required",
     };
   }
+  if (lessons.length !== 3) return { status: 400, message: "learningPoints must contain exactly three items" };
 
   // A Bible reference is optional, but once started it must identify a
   // complete verse. Testament is deliberately not part of the API contract;
   // the selected book is sufficient to identify it.
-  const hasAnyReference = Boolean(bookName || chapter || verseNumber);
-  if (hasAnyReference && (!bookName || !chapter || !verseNumber)) {
-    return {
-      status: 400,
-      message: "bookName, chapter, and verseNumber must be provided together",
-    };
-  }
-
   const previous = id
     ? await prisma.dailyDevotion.findUnique({ where: { id: BigInt(id) } })
     : null;
@@ -1008,25 +1018,27 @@ export const addDailyDevotion = async (data, adminId) => {
 
   const richContent = {
     bibleVersion: bibleVersion || null,
-    reflection: reflection || null,
-    explanation: explanation || null,
-    learnMore: learnMore || null,
+    ...devotionStorageFields({
+      explanation: devotionalExplanation,
+      reflectionQuestions: questions,
+      prayer: devotionalPrayer,
+      practicalApplications: applications,
+      learningPoints: lessons,
+    }),
     application: application || null,
     verseIntroduction: verseIntroduction || null,
     backgroundAuthor: backgroundAuthor || null,
     backgroundBook: backgroundBook || null,
     backgroundContext: backgroundContext || null,
     wordStudies: wordStudies || null,
-    practicalApplications: practicalApplications || null,
     keyThemes: keyThemes || null,
     crossReferences: crossReferences || null,
     finalThoughts: finalThoughts || null,
-    takeaways: takeaways || null,
   };
 
   const legacyData = {
     title,
-    content,
+    content: devotionalExplanation,
     bookName: bookName || null,
     chapter: chapter ? BigInt(chapter) : null,
     verseNumber: verseNumber ? BigInt(verseNumber) : null,
@@ -1071,7 +1083,7 @@ export const addDailyDevotion = async (data, adminId) => {
     ].map(key => cache.del("bible", key)),
   );
 
-  return { status: 200, message: msg, data: serializeBigInt(dailyDevotion) };
+  return { status: 200, message: msg, data: serializeBigInt(shapeDailyDevotion(dailyDevotion)) };
 };
 
 export const getAllDailyDevotions = async (data) => {
@@ -1125,10 +1137,11 @@ export const getAllDailyDevotions = async (data) => {
     take: pageSize,
   });
 
+  const shapedContent = rawContent.map(shapeDailyDevotion);
   const content = serializeBigInt(
     data?.listPreview === true
-      ? await localizeListPreviews(rawContent, lang, 'devotion')
-      : await localizeAdminContent(rawContent, lang, translateDailyDevotionContent, includeSource),
+      ? await localizeListPreviews(shapedContent, lang, 'devotion')
+      : await localizeAdminContent(shapedContent, lang, translateDailyDevotionContent, includeSource),
   );
 
   return {

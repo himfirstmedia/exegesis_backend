@@ -211,6 +211,9 @@ model DailyVerse {
 }
 
 model DailyDevotion {
+  // Public devotional fields are exposed as explanation, reflectionQuestions,
+  // prayer, practicalApplications, and learningPoints. Historical columns are
+  // retained here so existing records and shared-study links remain migration-safe.
   id                   BigInt     @id @default(autoincrement())
   sharedStudyId BigInt? @map("shared_study_id")
   sharedStudy PassageStudy? @relation(fields: [sharedStudyId], references: [id], onDelete: Restrict)

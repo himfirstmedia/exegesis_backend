@@ -36,8 +36,8 @@ test.each(Object.keys(PREVIEW_FIELDS))('%s translates only bounded visible field
 });
 
 test('English gets bounded previews without any translation requests', async () => {
-  const [result] = await localizeListPreviews([{ content: 'A word '.repeat(200) }], 'en', 'devotion');
-  expect(result.preview.content.length).toBeLessThanOrEqual(241);
+  const [result] = await localizeListPreviews([{ explanation: 'A word '.repeat(200) }], 'en', 'devotion');
+  expect(result.preview.explanation.length).toBeLessThanOrEqual(241);
   expect(translateMany).not.toHaveBeenCalled();
 });
 

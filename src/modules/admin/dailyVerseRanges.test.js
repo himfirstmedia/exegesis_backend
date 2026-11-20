@@ -114,7 +114,8 @@ test('rejects a daily devotion when another devotion already occupies the date',
     title: 'Existing devotion', content: 'Body',
   });
   const result = await addDailyDevotion({
-    title: 'New devotion', content: 'New body', displayDate: '2026-11-18',
+    title: 'New devotion', explanation: 'New body', reflectionQuestions: ['Question?'], prayer: 'Amen',
+    practicalApplications: ['Act'], learningPoints: ['One', 'Two', 'Three'], displayDate: '2026-11-18',
   }, 'admin-1');
   expect(result.status).toBe(409);
   expect(result.data.conflicts[0]).toMatchObject({
@@ -122,6 +123,38 @@ test('rejects a daily devotion when another devotion already occupies the date',
   });
   const { writeDailyContent } = require('../shared-study/client.js');
   expect(writeDailyContent).not.toHaveBeenCalled();
+});
+
+test('stores the structured devotional fields and exactly three learning points', async () => {
+  const { writeDailyContent } = require('../shared-study/client.js');
+  writeDailyContent.mockImplementationOnce(async (_client, _model, request) => ({ id: 8n, ...request.data }));
+  const result = await addDailyDevotion({
+    title: 'The Church Must Take Holiness Seriously',
+    explanation: 'Paul calls the church to humble, restorative accountability.',
+    reflectionQuestions: ['What needs correction in my own life?'],
+    prayer: 'Father, give us truth, grace, and humility. Amen.',
+    practicalApplications: ['Examine your own life before criticizing culture.'],
+    learningPoints: ['Unbelievers need the gospel.', 'The church must pursue holiness.', 'Correction should seek restoration.'],
+    displayDate: '2026-11-19',
+  }, 'admin-1');
+  expect(result.status).toBe(200);
+  expect(result.data).toMatchObject({
+    explanation: 'Paul calls the church to humble, restorative accountability.',
+    prayer: 'Father, give us truth, grace, and humility. Amen.',
+  });
+  expect(JSON.parse(result.data.reflectionQuestions)).toHaveLength(1);
+  expect(JSON.parse(result.data.learningPoints)).toHaveLength(3);
+  expect(result.data).not.toHaveProperty('content');
+  expect(result.data).not.toHaveProperty('takeaways');
+});
+
+test('rejects a devotion unless it has exactly three learning points', async () => {
+  const result = await addDailyDevotion({
+    title: 'Devotion', explanation: 'Body', reflectionQuestions: ['Question?'],
+    prayer: 'Amen.', practicalApplications: ['Act'], learningPoints: ['Only one'],
+    displayDate: '2026-11-19',
+  }, 'admin-1');
+  expect(result).toMatchObject({ status: 400, message: 'learningPoints must contain exactly three items' });
 });
 
 test.each([

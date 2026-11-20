@@ -23,7 +23,7 @@ const VERSE_FIELDS = [
   "finalThoughts",
 ];
 
-const DEVOTION_FIELDS = ["title", "content", ...VERSE_FIELDS.filter(field => field !== "title")];
+const DEVOTION_FIELDS = ["title", "content", ...VERSE_FIELDS.filter(field => field !== "title"), "prayer"];
 const EXEGESIS_FIELDS = [
   "title",
   "introduction",
@@ -33,7 +33,7 @@ const EXEGESIS_FIELDS = [
   "prayer",
 ];
 
-const ARRAY_FIELDS = ["practicalApplications", "keyThemes", "takeaways"];
+const ARRAY_FIELDS = ["practicalApplications", "keyThemes", "takeaways", "reflectionQuestions", "learningPoints"];
 const translationWarnings = new Map();
 
 const getMaxBatchCharacters = () => {

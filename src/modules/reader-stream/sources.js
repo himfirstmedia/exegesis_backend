@@ -68,9 +68,8 @@ function bookDesignation(bookName) {
 const dailyVerse = ['title', 'text', 'reflection', 'verseIntroduction', 'explanation', 'application',
   'backgroundAuthor', 'backgroundBook', 'backgroundContext', 'wordStudies', 'practicalApplications',
   'keyThemes', 'crossReferences', 'finalThoughts', 'takeaways', 'learnMore'];
-const dailyDevotion = ['title', 'reflection', 'content', 'explanation', 'application',
-  'backgroundAuthor', 'backgroundBook', 'backgroundContext', 'wordStudies', 'practicalApplications',
-  'keyThemes', 'crossReferences', 'finalThoughts', 'takeaways', 'learnMore'];
+const dailyDevotion = ['title', 'explanation', 'reflectionQuestions', 'prayer',
+  'practicalApplications', 'learningPoints'];
 const book = ['title', 'summary', 'background', 'authorDetail', 'audience', 'purpose', 'lessons',
   'applications', 'keyScripture', 'structure', 'keyTheme', 'mainThemes', 'keyPeople',
   'keyVerses', 'christConnection', 'author', 'dateWritten', 'locationWritten'];
@@ -97,7 +96,7 @@ export async function loadReaderSource({ kind, params = {}, scope }) {
     case 'daily-devotion':
       result = await bible.getTodaysDevotion(input);
       if (result.data) result = { ...result, data: withWordStudyGloss(result.data) };
-      fields = dailyDevotion; atomicFields = ['title', 'reflection']; break;
+      fields = dailyDevotion; atomicFields = ['title']; break;
     case 'daily-exegesis':
       if (params.id) {
         const record = await prisma.dailyExegesis.findFirst({ where: { id: BigInt(params.id), isPublished: true } });

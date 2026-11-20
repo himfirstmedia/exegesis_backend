@@ -16,6 +16,12 @@ test('shared catalogue includes authored mobile and web copy', () => {
     'Account Actions',
     'Subscription management unavailable',
     'We could not open subscription management. Please try again.',
+    // Daily Devotional structured-reader headings must be available in every
+    // generated UI pack rather than remaining hard-coded English labels.
+    'Reflection Questions',
+    'Prayer',
+    'Practical Application',
+    'We Learn Three Things From This Devotional',
     // Authored copy that starts with a SQL keyword but is not SQL. The
     // extractor used to drop it, leaving these labels in English.
     'Create user',

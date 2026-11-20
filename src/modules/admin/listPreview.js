@@ -5,7 +5,7 @@ import { buildLocalizedReference, localizeBookName, localizeReferenceText } from
 // Keep canonical rows intact for editing and full-detail navigation.
 export const PREVIEW_FIELDS = {
   verse: { explanation: 80 },
-  devotion: { title: 100, content: 240 },
+  devotion: { title: 100, explanation: 240 },
   exegesis: { title: 100, teachingBody: 160 },
   journal: { title: 100, content: 280 },
   prologue: { keyTheme: 100, summary: 240 },

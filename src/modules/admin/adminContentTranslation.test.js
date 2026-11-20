@@ -122,7 +122,7 @@ describe("admin daily content localization", () => {
 
   test.each([
     ['verse', getAllDailyVerses, 'dailyVerse', 'explanation', translateDailyVerseContent],
-    ['devotion', getAllDailyDevotions, 'dailyDevotion', 'content', translateDailyDevotionContent],
+    ['devotion', getAllDailyDevotions, 'dailyDevotion', 'explanation', translateDailyDevotionContent],
     ['exegesis', getAllDailyExegesis, 'dailyExegesis', 'teachingBody', translateDailyExegesisContent],
   ])('%s list translates only its preview and preserves the canonical full record', async (_kind, getRows, model, field, fullTranslator) => {
     const text = 'Full article content. '.repeat(100);
