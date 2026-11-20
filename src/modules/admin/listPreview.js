@@ -30,7 +30,10 @@ export const localizeListPreviews = async (rows, lang, kind) => {
   const entries = [];
   const result = rows.map(row => {
     const preview = { contentLanguage: language };
-    for (const [field, limit] of Object.entries(PREVIEW_FIELDS[kind])) {
+    const fields = kind === 'verse' && !row.explanation
+      ? row.application ? { application: 80 } : { reflection: 80 }
+      : PREVIEW_FIELDS[kind];
+    for (const [field, limit] of Object.entries(fields)) {
       preview[field] = excerpt(row[field], limit);
       if (typeof preview[field] === 'string' && preview[field].trim()) {
         entries.push({ preview, field, value: preview[field], limit });

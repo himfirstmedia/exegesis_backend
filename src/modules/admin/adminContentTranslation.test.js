@@ -139,16 +139,53 @@ describe("admin daily content localization", () => {
     ['verse', getAllDailyVerses, 'dailyVerse', 'explanation', translateDailyVerseContent],
     ['devotion', getAllDailyDevotions, 'dailyDevotion', 'explanation', translateDailyDevotionContent],
     ['exegesis', getAllDailyExegesis, 'dailyExegesis', 'teachingBody', translateDailyExegesisContent],
-  ])('%s list translates only its preview and preserves the canonical full record', async (_kind, getRows, model, field, fullTranslator) => {
+  ])('%s list translates only its preview', async (kind, getRows, model, field, fullTranslator) => {
     const text = 'Full article content. '.repeat(100);
     prisma[model].findMany.mockResolvedValue([{ id: 1n, [field]: text, prayer: 'Hidden prayer' }]);
     prisma[model].count.mockResolvedValue(1);
-    const response = await getRows({ size: 4, lang: 'es', listPreview: true });
+    const response = await getRows({ size: 4, lang: 'es', listPreview: true, includeSource: true });
     expect(fullTranslator).not.toHaveBeenCalled();
-    expect(response.data.content[0][field]).toBe(text);
     expect(response.data.content[0].preview[field]).toMatch(/^es:/);
     expect(response.data.content[0].preview[field].length).toBeLessThan(300);
     expect(response.data.content[0].preview.prayer).toBeUndefined();
+    if (kind === 'exegesis') {
+      expect(response.data.content[0][field]).toBe(text);
+    } else {
+      // Verses and devotions now return card fields only; the full record is
+      // kept in source for the edit/detail screens.
+      expect(response.data.content[0][field]).toBeUndefined();
+      expect(response.data.content[0].source[field]).toBe(text);
+    }
+  });
+
+  test.each([
+    ['verse', getAllDailyVerses, 'dailyVerse'],
+    ['devotion', getAllDailyDevotions, 'dailyDevotion'],
+  ])('%s list response contains only card fields plus a short preview', async (kind, getRows, model) => {
+    prisma[model].findMany.mockResolvedValue([{
+      id: 1n, bookName: 'Psalms', chapter: 46n, verseNumber: 10n, verseEnd: null,
+      bibleVersion: 'BSB', title: 'Be still', explanation: 'Full explanation',
+      application: 'Full application', wordStudies: '[{"word":"still"}]',
+      finalThoughts: 'Hidden', createdBy: 'user-1', updatedBy: null,
+      createdOn: '2026-11-20T08:00:00.000Z', updatedOn: '2026-11-21T08:00:00.000Z',
+      displayDate: '2026-11-22T00:00:00.000Z', isPublished: true,
+      user: { firstName: 'John', lastName: 'Joe', username: 'johnjoe' },
+    }]);
+    prisma[model].count.mockResolvedValue(1);
+    const response = await getRows({ size: 4, lang: 'en', listPreview: true });
+    const item = response.data.content[0];
+    expect(Object.keys(item).sort()).toEqual([
+      'bookName', 'chapter', 'createdOn', 'creatorName', 'displayDate',
+      'id', 'isPublished', 'preview', 'verseNumber',
+      ...(kind === 'devotion' ? ['title', 'displayTime'] : ['verseEnd', 'bibleVersion']),
+    ].sort());
+    expect(item.preview.explanation).toBe('Full explanation');
+    expect(item.preview.prayer).toBeUndefined();
+    expect(item.source).toBeUndefined();
+    expect(prisma[model].findMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({ id: true, explanation: true }),
+    }));
+    expect(prisma[model].findMany.mock.calls[0][0].select).not.toHaveProperty('wordStudies');
   });
 
   test("Spanish uses the admin budget and never silently falls back to English", async () => {
@@ -250,7 +287,52 @@ describe("getAllDailyVerses admin filters", () => {
       expect.arrayContaining([
         { createdBy: { in: ["user-1"] } },
         { updatedBy: { in: ["user-1"] } },
+        { bibleVersion: { contains: "Ada", mode: "insensitive" } },
+        { reflection: { contains: "Ada", mode: "insensitive" } },
       ]),
     );
+  });
+
+  test("combines a passage search with both publish-date bounds", async () => {
+    await getAllDailyVerses({ search: 'Psalms 46:10', startDate: '2026-11-10', endDate: '2026-11-20' });
+    const where = prisma.dailyVerse.findMany.mock.calls[0][0].where;
+    expect(where.displayDate).toEqual({ gte: new Date('2026-11-10'), lte: new Date('2026-11-20') });
+    expect(where.OR).toContainEqual({ bookName: { contains: 'Psalms', mode: 'insensitive' }, chapter: 46n, verseNumber: 10n });
+  });
+});
+
+describe("getAllDailyDevotions search", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.dailyDevotion.findMany.mockResolvedValue([]);
+    prisma.dailyDevotion.count.mockResolvedValue(0);
+    prisma.systemUser.findMany.mockResolvedValue([]);
+  });
+
+  test("matches titles, books and resolved creator names", async () => {
+    prisma.systemUser.findMany.mockResolvedValue([
+      { id: "user-1", firstName: "Ada", lastName: "Lovelace", username: "ada" },
+    ]);
+    await getAllDailyDevotions({ page: 0, size: 12, search: "Ada" });
+    expect(prisma.dailyDevotion.findMany.mock.calls[0][0].where.AND).toEqual([
+      {
+        OR: [
+          { title: { contains: "Ada", mode: "insensitive" } },
+          { bookName: { contains: "Ada", mode: "insensitive" } },
+          { createdBy: { in: ["user-1"] } },
+          { updatedBy: { in: ["user-1"] } },
+        ],
+      },
+    ]);
+  });
+
+  test("keeps the smart default date window when searching", async () => {
+    await getAllDailyDevotions({ page: 0, size: 12, smartDefault: true, search: "Grace" });
+    const where = prisma.dailyDevotion.findMany.mock.calls[0][0].where;
+    expect(where.OR).toBeDefined();
+    expect(where.AND[0].OR).toEqual([
+      { title: { contains: "Grace", mode: "insensitive" } },
+      { bookName: { contains: "Grace", mode: "insensitive" } },
+    ]);
   });
 });

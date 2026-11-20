@@ -14,6 +14,7 @@ import {
 } from "../../services/accountDeletion.js";
 import { normalizeLanguage } from "../../utils/translator.js";
 import { localizeListPreviews } from './listPreview.js';
+import { dailyDevotionCardSelect, dailyVerseCardSelect, toDailyDevotionListItem, toDailyVerseListItem } from './listItems.js';
 import {
   translateDailyDevotionContent,
   translateDailyExegesisContent,
@@ -849,14 +850,26 @@ export const getAllDailyVerses = async (data) => {
   if (q || (creatorName && String(creatorName).trim())) {
     // The generic search also matches the names shown on the cards.
     const searchUserIds = q ? await findUserIdsByDisplayName(q) : [];
+    const reference = q && q.match(/^(.+?)\s+(\d+):(\d+)(?:[-–](\d+))?$/);
     const searchOr = [
       ...(q
         ? [
             { bookName: { contains: q, mode: "insensitive" } },
+            { bibleVersion: { contains: q, mode: "insensitive" } },
             { explanation: { contains: q, mode: "insensitive" } },
             { application: { contains: q, mode: "insensitive" } },
             { verseIntroduction: { contains: q, mode: "insensitive" } },
+            { backgroundAuthor: { contains: q, mode: "insensitive" } },
+            { backgroundBook: { contains: q, mode: "insensitive" } },
+            { backgroundContext: { contains: q, mode: "insensitive" } },
+            { wordStudies: { contains: q, mode: "insensitive" } },
+            { practicalApplications: { contains: q, mode: "insensitive" } },
+            { keyThemes: { contains: q, mode: "insensitive" } },
+            { crossReferences: { contains: q, mode: "insensitive" } },
             { finalThoughts: { contains: q, mode: "insensitive" } },
+            { takeaways: { contains: q, mode: "insensitive" } },
+            { reflection: { contains: q, mode: "insensitive" } },
+            { learnMore: { contains: q, mode: "insensitive" } },
           ]
         : []),
       ...(searchUserIds.length
@@ -865,6 +878,12 @@ export const getAllDailyVerses = async (data) => {
             { updatedBy: { in: searchUserIds } },
           ]
         : []),
+      ...(reference ? [{
+        bookName: { contains: reference[1], mode: "insensitive" },
+        chapter: BigInt(reference[2]),
+        verseNumber: BigInt(reference[3]),
+        ...(reference[4] ? { verseEnd: BigInt(reference[4]) } : {}),
+      }] : []),
     ];
     if (searchOr.length) whereClause.OR = searchOr;
 
@@ -890,7 +909,7 @@ export const getAllDailyVerses = async (data) => {
       orderBy: [{ updatedOn: "desc" }, { createdOn: "desc" }],
       skip: offset,
       take: pageSize,
-      include: {
+      ...(data?.listPreview === true && !includeSource ? { select: dailyVerseCardSelect } : { include: {
         user: {
           select: {
             firstName: true,
@@ -898,7 +917,7 @@ export const getAllDailyVerses = async (data) => {
             username: true,
           },
         },
-      },
+      } }),
     }),
     prisma.dailyVerse.count({ where: whereClause }),
   ]);
@@ -916,11 +935,12 @@ export const getAllDailyVerses = async (data) => {
   });
   if (data?.listPreview === true) {
     try {
+      const previews = await localizeListPreviews(rawContent, lang, 'verse');
       return {
         status: 200,
         message: "Daily verses fetched successfully",
         data: {
-          content: serializeBigInt(await localizeListPreviews(rawContent, lang, 'verse')),
+          content: serializeBigInt(previews.map(row => toDailyVerseListItem(row, includeSource))),
           currentPage: pageNum, pageSize, totalElements, totalPages,
           hasNext: pageNum < totalPages - 1, hasPrevious: pageNum > 0,
           isFirst: pageNum === 0, isLast: pageNum >= totalPages - 1,
@@ -1145,6 +1165,7 @@ export const getAllDailyDevotions = async (data) => {
     endDate,
     smartDefault,
     futureDays = 2,
+    search,
     lang,
     includeSource = false,
   } = data || {};
@@ -1152,6 +1173,7 @@ export const getAllDailyDevotions = async (data) => {
   const pageSize = Math.min(parseInt(size) || 12, 50);
 
   const whereClause = {};
+  if (data?.id) whereClause.id = BigInt(data.id);
 
   if (smartDefault) {
     const today = utcToday();
@@ -1176,6 +1198,24 @@ export const getAllDailyDevotions = async (data) => {
     }
   }
 
+  // The single search box matches the title, book and the display name shown
+  // on the card. AND keeps it compatible with the smart default date window.
+  const query = search && String(search).trim();
+  if (query) {
+    const userIds = await findUserIdsByDisplayName(query);
+    whereClause.AND = [
+      {
+        OR: [
+          { title: { contains: query, mode: "insensitive" } },
+          { bookName: { contains: query, mode: "insensitive" } },
+          ...(userIds.length
+            ? [{ createdBy: { in: userIds } }, { updatedBy: { in: userIds } }]
+            : []),
+        ],
+      },
+    ];
+  }
+
   const totalElements = await prisma.dailyDevotion.count({
     where: whereClause,
   });
@@ -1186,7 +1226,9 @@ export const getAllDailyDevotions = async (data) => {
     orderBy: { displayDate: "desc" },
     skip: pageNum * pageSize,
     take: pageSize,
-    include: { user: { select: { firstName: true, lastName: true, username: true } } },
+    ...(data?.listPreview === true && !includeSource
+      ? { select: dailyDevotionCardSelect }
+      : { include: { user: { select: { firstName: true, lastName: true, username: true } } } }),
   });
 
   const shapedContent = rawContent.map(({ user, ...record }) => ({
@@ -1197,7 +1239,8 @@ export const getAllDailyDevotions = async (data) => {
   }));
   const content = serializeBigInt(
     data?.listPreview === true
-      ? await localizeListPreviews(shapedContent, lang, 'devotion')
+      ? (await localizeListPreviews(shapedContent, lang, 'devotion'))
+          .map(row => toDailyDevotionListItem(row, includeSource))
       : await localizeAdminContent(shapedContent, lang, translateDailyDevotionContent, includeSource),
   );
 
