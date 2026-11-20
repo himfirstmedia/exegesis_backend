@@ -1372,12 +1372,48 @@ const toVerseExplanationListItem = (item) => {
   return listItem;
 };
 
+// Cards show user names while the rows only carry ids. Resolve display names
+// to ids so filters can match whoever created or last updated the record.
+const findUserIdsByDisplayName = async (value) => {
+  const query = String(value || "").trim();
+  if (!query) return [];
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const candidates = await prisma.systemUser.findMany({
+    where: {
+      OR: tokens.flatMap((token) => [
+        { firstName: { contains: token, mode: "insensitive" } },
+        { lastName: { contains: token, mode: "insensitive" } },
+        { username: { contains: token, mode: "insensitive" } },
+      ]),
+    },
+    select: { id: true, firstName: true, lastName: true, username: true },
+  });
+  return candidates
+    .filter((user) => {
+      const name = `${user.firstName || ""} ${user.lastName || ""} ${user.username || ""}`.toLowerCase();
+      return tokens.every((token) => name.includes(token));
+    })
+    .map((user) => user.id);
+};
+
+// Most recent activity wins: an update counts as newer than the creation.
+const latestActivityTime = (item) => {
+  const time = (value) => {
+    if (!value) return 0;
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+  return Math.max(time(item?.createdOn), time(item?.updatedOn));
+};
+
 export const getAllVersesExplanation = async (data) => {
   const {
     page = 1,
     pageSize = 20,
     bookName,
+    chapter,
     search,
+    creatorName,
     lang = "en",
     includeSource = false,
   } = data;
@@ -1387,22 +1423,48 @@ export const getAllVersesExplanation = async (data) => {
 
   const whereClause = {};
   if (bookName) whereClause.bookName = bookName;
-  if (search && String(search).trim()) {
-    const q = String(search).trim();
-    whereClause.OR = [
-      { bookName: { contains: q, mode: "insensitive" } },
-      { bibleVersion: { contains: q, mode: "insensitive" } },
-      { exegesis: { explanationText: { contains: q, mode: "insensitive" } } },
-    ];
+  if (chapter !== undefined && chapter !== null && chapter !== "") {
+    const chapterNum = Number(chapter);
+    if (!Number.isNaN(chapterNum)) whereClause.chapter = chapterNum;
   }
 
-  const [explanations, totalCount] = await Promise.all([
+  const q = search && String(search).trim();
+  if (q || (creatorName && String(creatorName).trim())) {
+    // The generic search also matches the names shown on the cards.
+    const searchUserIds = q ? await findUserIdsByDisplayName(q) : [];
+    const searchOr = [
+      ...(q
+        ? [
+            { bookName: { contains: q, mode: "insensitive" } },
+            { bibleVersion: { contains: q, mode: "insensitive" } },
+            { exegesis: { explanationText: { contains: q, mode: "insensitive" } } },
+          ]
+        : []),
+      ...(searchUserIds.length
+        ? [
+            { createdBy: { in: searchUserIds } },
+            { updatedBy: { in: searchUserIds } },
+          ]
+        : []),
+    ];
+    if (searchOr.length) whereClause.OR = searchOr;
+
+    // A dedicated name filter is an additional constraint, not an alternative.
+    if (creatorName && String(creatorName).trim()) {
+      const ids = await findUserIdsByDisplayName(creatorName);
+      whereClause.AND = [
+        { OR: [{ createdBy: { in: ids } }, { updatedBy: { in: ids } }] },
+      ];
+    }
+  }
+
+  const [matchedRows, totalCount] = await Promise.all([
     // Select only the fields list cards need. Hydration still resolves the
     // shared study internally, but selectFields drops the heavy related payloads.
+    // Sorting by the latest of createdOn/updatedOn needs both dates, so the
+    // ordered page is sliced after the (narrow) rows are fetched.
     sharedStudy().verseExplanation.findMany({
       where: whereClause,
-      skip: offset,
-      take: pageSizeNum,
       select: {
         id: true,
         bookName: true,
@@ -1437,6 +1499,18 @@ export const getAllVersesExplanation = async (data) => {
     }),
     prisma.verseExplanation.count({ where: whereClause }),
   ]);
+
+  const explanations = [...matchedRows]
+    .sort((a, b) => {
+      const byActivity = latestActivityTime(b) - latestActivityTime(a);
+      if (byActivity) return byActivity;
+      return (
+        String(a?.bookName || "").localeCompare(String(b?.bookName || "")) ||
+        Number(a?.chapter || 0) - Number(b?.chapter || 0) ||
+        Number(a?.verseNumber || 0) - Number(b?.verseNumber || 0)
+      );
+    })
+    .slice(offset, offset + pageSizeNum);
 
   const serialized = serializeBigInt({
     explanations,

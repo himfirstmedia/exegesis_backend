@@ -155,4 +155,68 @@ describe("getAllVersesExplanation localization", () => {
 
     expect(result.data.explanations[0].creatorName).toBeNull();
   });
+
+  test("orders by the most recent created or updated date and paginates", async () => {
+    const oldOnly = {
+      ...record(), id: 1n,
+      createdOn: new Date("2026-01-01T00:00:00.000Z"), updatedOn: null,
+    };
+    const updated = {
+      ...record(), id: 2n,
+      createdOn: new Date("2025-01-01T00:00:00.000Z"),
+      updatedOn: new Date("2026-03-01T00:00:00.000Z"),
+    };
+    const recent = {
+      ...record(), id: 3n,
+      createdOn: new Date("2026-02-01T00:00:00.000Z"), updatedOn: null,
+    };
+    prisma.verseExplanation.findMany.mockResolvedValue([oldOnly, updated, recent]);
+    prisma.verseExplanation.count.mockResolvedValue(3);
+    prisma.systemUser.findMany.mockResolvedValue([]);
+
+    const first = await getAllVersesExplanation({ page: 1, pageSize: 2 });
+    expect(first.data.explanations.map((item) => item.id)).toEqual([2, 3]);
+
+    const second = await getAllVersesExplanation({ page: 2, pageSize: 2 });
+    expect(second.data.explanations.map((item) => item.id)).toEqual([1]);
+  });
+
+  test("filters by exact book and chapter", async () => {
+    prisma.verseExplanation.findMany.mockResolvedValue([record()]);
+    prisma.verseExplanation.count.mockResolvedValue(1);
+    prisma.systemUser.findMany.mockResolvedValue([]);
+
+    await getAllVersesExplanation({ page: 1, pageSize: 4, bookName: "John", chapter: 3 });
+
+    expect(prisma.verseExplanation.findMany.mock.calls[0][0].where).toMatchObject({
+      bookName: "John",
+      chapter: 3,
+    });
+  });
+
+  test("filters by creator/updater display name and searches names", async () => {
+    prisma.verseExplanation.findMany.mockResolvedValue([record()]);
+    prisma.verseExplanation.count.mockResolvedValue(1);
+    prisma.systemUser.findMany.mockResolvedValue([
+      { id: "user-1", firstName: "John", lastName: "Joe", username: "johnjoe" },
+    ]);
+
+    await getAllVersesExplanation({ page: 1, pageSize: 4, creatorName: "John" });
+    expect(prisma.verseExplanation.findMany.mock.calls[0][0].where.AND).toEqual([
+      {
+        OR: [
+          { createdBy: { in: ["user-1"] } },
+          { updatedBy: { in: ["user-1"] } },
+        ],
+      },
+    ]);
+
+    await getAllVersesExplanation({ page: 1, pageSize: 4, search: "John" });
+    expect(prisma.verseExplanation.findMany.mock.calls[1][0].where.OR).toEqual(
+      expect.arrayContaining([
+        { createdBy: { in: ["user-1"] } },
+        { updatedBy: { in: ["user-1"] } },
+      ]),
+    );
+  });
 });
