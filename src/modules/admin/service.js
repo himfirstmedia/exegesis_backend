@@ -90,6 +90,30 @@ const getAdminTranslationTimeBudget = () => {
   return Number.isInteger(value) && value > 0 ? value : 9000;
 };
 
+// Cards show a display name while the row only stores a user id. Resolve
+// names to ids so list filters can match whoever created or updated a row.
+const findUserIdsByDisplayName = async (value) => {
+  const query = String(value || "").trim();
+  if (!query) return [];
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const candidates = await prisma.systemUser.findMany({
+    where: {
+      OR: tokens.flatMap((token) => [
+        { firstName: { contains: token, mode: "insensitive" } },
+        { lastName: { contains: token, mode: "insensitive" } },
+        { username: { contains: token, mode: "insensitive" } },
+      ]),
+    },
+    select: { id: true, firstName: true, lastName: true, username: true },
+  });
+  return candidates
+    .filter((user) => {
+      const name = `${user.firstName || ""} ${user.lastName || ""} ${user.username || ""}`.toLowerCase();
+      return tokens.every((token) => name.includes(token));
+    })
+    .map((user) => user.id);
+};
+
 /**
  * Localize admin list rows at display time. The stored rows stay canonical
  * English; only the response is translated, and every row falls back to its
@@ -780,9 +804,11 @@ export const getAllDailyVerses = async (data) => {
     smartDefault,
     futureDays = 2,
     bookName,
+    exactBookName,
     chapter,
     verseNumber,
     search,
+    creatorName,
     lang,
     includeSource = false,
   } = data || {};
@@ -803,7 +829,11 @@ export const getAllDailyVerses = async (data) => {
     }
   }
 
-  if (bookName) {
+  // The admin combobox sends an exact book; keep the older partial filter for
+  // callers that still search by a book fragment.
+  if (exactBookName) {
+    whereClause.bookName = exactBookName;
+  } else if (bookName) {
     whereClause.bookName = { contains: bookName, mode: "insensitive" };
   }
 
@@ -815,15 +845,36 @@ export const getAllDailyVerses = async (data) => {
     whereClause.verseNumber = BigInt(verseNumber);
   }
 
-  if (search && String(search).trim()) {
-    const q = String(search).trim();
-    whereClause.OR = [
-      { bookName: { contains: q, mode: "insensitive" } },
-      { explanation: { contains: q, mode: "insensitive" } },
-      { application: { contains: q, mode: "insensitive" } },
-      { verseIntroduction: { contains: q, mode: "insensitive" } },
-      { finalThoughts: { contains: q, mode: "insensitive" } },
+  const q = search && String(search).trim();
+  if (q || (creatorName && String(creatorName).trim())) {
+    // The generic search also matches the names shown on the cards.
+    const searchUserIds = q ? await findUserIdsByDisplayName(q) : [];
+    const searchOr = [
+      ...(q
+        ? [
+            { bookName: { contains: q, mode: "insensitive" } },
+            { explanation: { contains: q, mode: "insensitive" } },
+            { application: { contains: q, mode: "insensitive" } },
+            { verseIntroduction: { contains: q, mode: "insensitive" } },
+            { finalThoughts: { contains: q, mode: "insensitive" } },
+          ]
+        : []),
+      ...(searchUserIds.length
+        ? [
+            { createdBy: { in: searchUserIds } },
+            { updatedBy: { in: searchUserIds } },
+          ]
+        : []),
     ];
+    if (searchOr.length) whereClause.OR = searchOr;
+
+    // A dedicated name filter narrows the results further.
+    if (creatorName && String(creatorName).trim()) {
+      const ids = await findUserIdsByDisplayName(creatorName);
+      whereClause.AND = [
+        { OR: [{ createdBy: { in: ids } }, { updatedBy: { in: ids } }] },
+      ];
+    }
   }
 
   if (smartDefault) {

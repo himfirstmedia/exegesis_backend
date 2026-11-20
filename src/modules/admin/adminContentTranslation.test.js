@@ -11,6 +11,7 @@ jest.mock("../../config/db.js", () => ({
     dailyVerse: { findMany: jest.fn(), count: jest.fn() },
     dailyDevotion: { findMany: jest.fn(), count: jest.fn() },
     dailyExegesis: { findMany: jest.fn(), count: jest.fn() },
+    systemUser: { findMany: jest.fn() },
   },
 }));
 
@@ -206,5 +207,50 @@ describe("admin daily content localization", () => {
     // Without the explicit opt-in, admin responses stay lean.
     expect(devotions.data.content[0].source).toBeUndefined();
     expect(exegesis.data.content[0].source).toBeUndefined();
+  });
+});
+
+describe("getAllDailyVerses admin filters", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.dailyVerse.findMany.mockResolvedValue([]);
+    prisma.dailyVerse.count.mockResolvedValue(0);
+    prisma.systemUser.findMany.mockResolvedValue([]);
+  });
+
+  test("filters by exact book and chapter from the searchable selectors", async () => {
+    await getAllDailyVerses({ page: 0, size: 12, exactBookName: "John", chapter: 3 });
+    expect(prisma.dailyVerse.findMany.mock.calls[0][0].where).toMatchObject({
+      bookName: "John",
+      chapter: 3n,
+    });
+  });
+
+  test("filters by creator/updater display name", async () => {
+    prisma.systemUser.findMany.mockResolvedValue([
+      { id: "user-1", firstName: "John", lastName: "Joe", username: "johnjoe" },
+    ]);
+    await getAllDailyVerses({ page: 0, size: 12, creatorName: "John" });
+    expect(prisma.dailyVerse.findMany.mock.calls[0][0].where.AND).toEqual([
+      {
+        OR: [
+          { createdBy: { in: ["user-1"] } },
+          { updatedBy: { in: ["user-1"] } },
+        ],
+      },
+    ]);
+  });
+
+  test("generic search also matches creator and updater names", async () => {
+    prisma.systemUser.findMany.mockResolvedValue([
+      { id: "user-1", firstName: "Ada", lastName: "Lovelace", username: "ada" },
+    ]);
+    await getAllDailyVerses({ page: 0, size: 12, search: "Ada" });
+    expect(prisma.dailyVerse.findMany.mock.calls[0][0].where.OR).toEqual(
+      expect.arrayContaining([
+        { createdBy: { in: ["user-1"] } },
+        { updatedBy: { in: ["user-1"] } },
+      ]),
+    );
   });
 });
