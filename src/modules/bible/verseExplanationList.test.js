@@ -1,6 +1,7 @@
 jest.mock("../../config/db.js", () => ({
   prisma: {
     verseExplanation: { findMany: jest.fn(), count: jest.fn() },
+    systemUser: { findMany: jest.fn() },
   },
 }));
 jest.mock("../../modules/bible-translations/service.js", () => ({
@@ -36,6 +37,8 @@ const record = () => ({
   bibleVersion: "KJV",
   promptIds: null,
   sortOrder: 430,
+  createdBy: "user-1",
+  updatedBy: null,
   createdOn: new Date("2026-01-01T00:00:00.000Z"),
   updatedOn: new Date("2026-01-01T00:00:00.000Z"),
   exegesis: {
@@ -53,6 +56,9 @@ describe("getAllVersesExplanation localization", () => {
   test("translates the legacy fields the admin cards render and keeps canonical source", async () => {
     prisma.verseExplanation.findMany.mockResolvedValue([record()]);
     prisma.verseExplanation.count.mockResolvedValue(1);
+    prisma.systemUser.findMany.mockResolvedValue([
+      { id: "user-1", firstName: "Ada", lastName: "Lovelace", username: "ada" },
+    ]);
 
     const result = await getAllVersesExplanation({
       page: 1,
@@ -64,6 +70,9 @@ describe("getAllVersesExplanation localization", () => {
     const item = result.data.explanations[0];
     // Cards render the legacy fields, so they must follow the translation.
     expect(item.explanation).toBe("fr:God gave his Son");
+    // The card shows the creator's name, not their id.
+    expect(item.creatorName).toBe("Ada Lovelace");
+    expect(item.creatorName).not.toBe(record().createdBy);
     expect(item.application).toBe("fr:Trust him");
     expect(item.exegesis.explanationText).toBe("fr:God gave his Son");
     expect(item.exegesis.applicationText).toBe("fr:Trust him");
@@ -80,6 +89,9 @@ describe("getAllVersesExplanation localization", () => {
   test("omits the source payload unless the admin opts in", async () => {
     prisma.verseExplanation.findMany.mockResolvedValue([record()]);
     prisma.verseExplanation.count.mockResolvedValue(1);
+    prisma.systemUser.findMany.mockResolvedValue([
+      { id: "user-1", firstName: "Ada", lastName: "Lovelace", username: "ada" },
+    ]);
 
     const result = await getAllVersesExplanation({
       page: 1,
@@ -89,5 +101,31 @@ describe("getAllVersesExplanation localization", () => {
 
     expect(result.data.explanations[0].source).toBeUndefined();
     expect(result.data.explanations[0].explanation).toBe("fr:God gave his Son");
+  });
+
+  test("falls back to the updater's name when the creator is null", async () => {
+    prisma.verseExplanation.findMany.mockResolvedValue([
+      { ...record(), id: 8n, createdBy: null, updatedBy: "editor-2" },
+    ]);
+    prisma.verseExplanation.count.mockResolvedValue(1);
+    prisma.systemUser.findMany.mockResolvedValue([
+      { id: "editor-2", firstName: "Grace", lastName: "Hopper", username: "grace" },
+    ]);
+
+    const result = await getAllVersesExplanation({ page: 1, pageSize: 4 });
+
+    expect(result.data.explanations[0].creatorName).toBe("Grace Hopper");
+  });
+
+  test("leaves creatorName null when no user can be resolved", async () => {
+    prisma.verseExplanation.findMany.mockResolvedValue([
+      { ...record(), createdBy: null, updatedBy: null },
+    ]);
+    prisma.verseExplanation.count.mockResolvedValue(1);
+    prisma.systemUser.findMany.mockResolvedValue([]);
+
+    const result = await getAllVersesExplanation({ page: 1, pageSize: 4 });
+
+    expect(result.data.explanations[0].creatorName).toBeNull();
   });
 });

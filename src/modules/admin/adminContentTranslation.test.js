@@ -57,6 +57,20 @@ const {
 } = require("../bible/dailyContentTranslation.js");
 
 describe("admin daily content localization", () => {
+  test('returns devotion creator metadata without exposing the user relation', async () => {
+    prisma.dailyDevotion.findMany.mockResolvedValue([{ id: 8n, title: 'Forgive', content: 'Body',
+      createdOn: '2026-11-20T08:00:00.000Z', displayDate: '2026-11-21T00:00:00.000Z',
+      user: { firstName: 'Ada', lastName: 'Lovelace', username: 'ada' } }]);
+    prisma.dailyDevotion.count.mockResolvedValue(1);
+    const response = await getAllDailyDevotions({ lang: 'en' });
+    expect(prisma.dailyDevotion.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: { user: { select: { firstName: true, lastName: true, username: true } } },
+    }));
+    expect(response.data.content[0]).toMatchObject({ creatorName: 'Ada Lovelace',
+      createdOn: '2026-11-20T08:00:00.000Z', displayDate: '2026-11-21T00:00:00.000Z' });
+    expect(response.data.content[0].user).toBeUndefined();
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
   });

@@ -1310,6 +1310,36 @@ export const addVerseExplanation = async (data, userId) => {
   }
 };
 
+// The admin verse explanation card shows who created each record. `createdBy`
+// is the editor's user id, but older shared-study records have no creator, so
+// fall back to the last updater's name. Resolves names in one batched lookup.
+const resolveVerseExplanationCreatorNames = async (explanations) => {
+  const ids = new Set(
+    (explanations || []).flatMap((item) =>
+      [item?.createdBy, item?.updatedBy].filter(Boolean),
+    ),
+  );
+  const users = ids.size
+    ? await prisma.systemUser.findMany({
+        where: { id: { in: [...ids] } },
+        select: { id: true, firstName: true, lastName: true, username: true },
+      })
+    : [];
+  const byId = new Map(users.map((user) => [user.id, user]));
+  const nameOf = (id) => {
+    const user = id ? byId.get(id) : undefined;
+    if (!user) return null;
+    return (
+      `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
+      user.username ||
+      null
+    );
+  };
+  for (const item of explanations || []) {
+    item.creatorName = nameOf(item?.createdBy) || nameOf(item?.updatedBy) || null;
+  }
+};
+
 export const getAllVersesExplanation = async (data) => {
   const {
     page = 1,
@@ -1367,6 +1397,7 @@ export const getAllVersesExplanation = async (data) => {
   serialized.explanations = (serialized.explanations || []).map((item) =>
     withLegacyVerseExplanationFields(item),
   );
+  await resolveVerseExplanationCreatorNames(serialized.explanations);
 
   if (data.listPreview === true) {
     serialized.explanations = await localizeListPreviews(serialized.explanations, lang, 'explanation');

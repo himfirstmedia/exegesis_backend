@@ -1135,9 +1135,15 @@ export const getAllDailyDevotions = async (data) => {
     orderBy: { displayDate: "desc" },
     skip: pageNum * pageSize,
     take: pageSize,
+    include: { user: { select: { firstName: true, lastName: true, username: true } } },
   });
 
-  const shapedContent = rawContent.map(shapeDailyDevotion);
+  const shapedContent = rawContent.map(({ user, ...record }) => ({
+    ...shapeDailyDevotion(record),
+    creatorName: user
+      ? `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username
+      : "System",
+  }));
   const content = serializeBigInt(
     data?.listPreview === true
       ? await localizeListPreviews(shapedContent, lang, 'devotion')
