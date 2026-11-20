@@ -25,6 +25,7 @@ import { sharedStudyReaders } from "../shared-study/client.js";
 import { SharedStudyError, writeStudy } from "../shared-study/repository.js";
 import { invalidateVerseExplanationCache } from "../ai/service.js";
 import { cachedVerseExplanationList, invalidateVerseExplanationLists } from "./verseExplanationListCache.js";
+import { browseVerseExplanationPage } from "./verseExplanationBrowse.js";
 
 const sharedStudy = () => sharedStudyReaders(prisma);
 
@@ -890,6 +891,32 @@ const getCachedDailyTranslationOrWarm = async ({
   };
 };
 
+export const getVerseExplanationForEdit = async (data = {}) => {
+  const id = String(data.id ?? "");
+  if (!/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n) {
+    return { status: 400, message: "A valid explanation ID is required" };
+  }
+
+  // Read the canonical record directly by its primary key. Editor reads
+  // do not need translation or additional scripture/dictionary requests.
+  const record = await sharedStudy().verseExplanation.findUnique({
+    where: { id: BigInt(id) },
+    include: {
+      exegesis: true,
+      studyMetadata: true,
+      wordStudies: { orderBy: { sortOrder: "asc" } },
+      practicalApps: { orderBy: { sortOrder: "asc" } },
+      crossReferences: { orderBy: { sortOrder: "asc" } },
+      themes: { orderBy: { sortOrder: "asc" } },
+    },
+  });
+  if (!record) return { status: 404, message: "Verse explanation not found" };
+  return {
+    status: 200, message: "Verse explanation fetched successfully",
+    data: withLegacyVerseExplanationFields(serializeBigInt(record)),
+  };
+};
+
 export const getVerseExplanation = async (data) => {
   const { bookName, chapter, verseNumber, lang = "en" } = data;
   const target = normalizeLanguage(lang);
@@ -1416,8 +1443,9 @@ const latestActivityTime = (item) => {
 export const getAllVersesExplanation = (data = {}) => {
   const text = (value) => String(value ?? "").trim();
   const chapter = Number(data.chapter);
+  const page = parseInt(data.page, 10);
   return cachedVerseExplanationList({
-    pageNum: Math.max(1, parseInt(data.page, 10) || 1),
+    pageNum: Number.isSafeInteger(page) ? Math.max(1, Math.min(page, 2147483647)) : 1,
     pageSizeNum: Math.max(1, Math.min(parseInt(data.pageSize, 10) || 20, 50)),
     bookName: text(data.bookName),
     chapter: Number.isInteger(chapter) && chapter > 0 ? chapter : null,
@@ -1469,6 +1497,51 @@ async function loadVerseExplanationPage(options) {
     }
   }
 
+  const useIndexedBrowse = listPreview && Object.keys(whereClause).length === 0;
+  const [explanations, totalCount] = useIndexedBrowse
+    ? await browseVerseExplanationPage(offset, pageSizeNum)
+    : await rankFilteredExplanations(whereClause, offset, pageSizeNum);
+
+  const pageContent = explanations.length ? await prisma.verseExplanation.findMany({
+    where: { id: { in: explanations.map(row => row.id) } },
+    select: {
+      id: true, bookName: true, chapter: true, verseNumber: true, verseEnd: true,
+      bibleVersion: true, sortOrder: true, createdBy: true, createdOn: true, updatedBy: true, updatedOn: true,
+      exegesis: { select: { explanationText: true, applicationText: true } },
+      studyMetadata: { select: { introduction: true, finalThoughts: true, takeaways: true } },
+      sharedStudy: { select: {
+        explanation: true, application: true, introduction: true, finalThoughts: true,
+        takeaways: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }], select: { text: true } },
+      } },
+    },
+  }) : [];
+  const contentById = new Map(pageContent.map(row => [row.id, row]));
+  const items = explanations.flatMap(row => {
+    const content = contentById.get(row.id);
+    if (!content) return []; // Deleted while this page was loading.
+    const { exegesis, studyMetadata, sharedStudy, ...root } = content;
+    return [{
+      ...root,
+      ...(row.studyCreatedOn ? { studyCreatedOn: row.studyCreatedOn } : {}),
+      exegesis: sharedStudy ? { explanationText: sharedStudy.explanation, applicationText: sharedStudy.application } : exegesis,
+      studyMetadata: sharedStudy ? {
+        introduction: sharedStudy.introduction, finalThoughts: sharedStudy.finalThoughts,
+        takeaways: sharedStudy.takeaways?.map(item => item.text) ?? [],
+      } : studyMetadata,
+    }];
+  });
+
+  const serialized = serializeBigInt({
+    explanations: items,
+    totalCount,
+    page: pageNum,
+    pageSize: pageSizeNum,
+    totalPages: Math.ceil(totalCount / pageSizeNum),
+  });
+  return localizeVerseExplanationPage(serialized, { lang, includeSource, listPreview });
+}
+
+async function rankFilteredExplanations(whereClause, offset, pageSizeNum) {
   // Rank inexpensive metadata before reading any editorial text or resolving users.
   const matchedRows = await prisma.verseExplanation.findMany({
     where: whereClause,
@@ -1477,12 +1550,7 @@ async function loadVerseExplanationPage(options) {
       bookName: true,
       chapter: true,
       verseNumber: true,
-      verseEnd: true,
-      bibleVersion: true,
-      sortOrder: true,
-      createdBy: true,
       createdOn: true,
-      updatedBy: true,
       updatedOn: true,
       sharedStudy: { select: { createdOn: true } },
     },
@@ -1509,41 +1577,10 @@ async function loadVerseExplanationPage(options) {
     })
     .slice(offset, offset + pageSizeNum);
 
-  const pageContent = explanations.length ? await prisma.verseExplanation.findMany({
-    where: { id: { in: explanations.map(row => row.id) } },
-    select: {
-      id: true,
-      exegesis: { select: { explanationText: true, applicationText: true } },
-      studyMetadata: { select: { introduction: true, finalThoughts: true, takeaways: true } },
-      sharedStudy: { select: {
-        explanation: true, application: true, introduction: true, finalThoughts: true,
-        takeaways: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }], select: { text: true } },
-      } },
-    },
-  }) : [];
-  const contentById = new Map(pageContent.map(row => [row.id, row]));
-  const items = explanations.flatMap(row => {
-    const content = contentById.get(row.id);
-    if (!content) return []; // Deleted while this page was loading.
-    const { exegesis, studyMetadata, sharedStudy } = content;
-    return [{
-      ...row,
-      exegesis: sharedStudy ? { explanationText: sharedStudy.explanation, applicationText: sharedStudy.application } : exegesis,
-      studyMetadata: sharedStudy ? {
-        introduction: sharedStudy.introduction, finalThoughts: sharedStudy.finalThoughts,
-        takeaways: sharedStudy.takeaways?.map(item => item.text) ?? [],
-      } : studyMetadata,
-    }];
-  });
+  return [explanations, totalCount];
+}
 
-  const serialized = serializeBigInt({
-    explanations: items,
-    totalCount,
-    page: pageNum,
-    pageSize: pageSizeNum,
-    totalPages: Math.ceil(totalCount / pageSizeNum),
-  });
-
+async function localizeVerseExplanationPage(serialized, { lang, includeSource, listPreview }) {
   serialized.explanations = (serialized.explanations || []).map((item) =>
     withLegacyVerseExplanationFields(item),
   );

@@ -186,6 +186,16 @@ export const getVerseExplanation = async (req, res) => {
   }
 };
 
+export const getVerseExplanationForEdit = async (req, res) => {
+  try {
+    const result = await bibleService.getVerseExplanationForEdit(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Get verse explanation for edit error:", error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Error loading verse explanation for editing" }));
+  }
+};
+
 export const addVerseExplanation = async (req, res) => {
   try {
     const result = await bibleService.addVerseExplanation(

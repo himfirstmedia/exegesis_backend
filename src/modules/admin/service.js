@@ -906,7 +906,7 @@ export const getAllDailyVerses = async (data) => {
   const [dailyVerses, totalElements] = await Promise.all([
     prisma.dailyVerse.findMany({
       where: whereClause,
-      orderBy: [{ updatedOn: "desc" }, { createdOn: "desc" }],
+      orderBy: [{ updatedOn: "desc" }, { createdOn: "desc" }, { id: "desc" }],
       skip: offset,
       take: pageSize,
       ...(data?.listPreview === true && !includeSource ? { select: dailyVerseCardSelect } : { include: {

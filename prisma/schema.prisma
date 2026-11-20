@@ -207,6 +207,9 @@ model DailyVerse {
   @@index([displayDate])
   @@index([bookName, chapter, verseNumber])
   @@index([isPublished, displayDate])
+  @@index([updatedOn(sort: Desc), createdOn(sort: Desc), id(sort: Desc)], map: "daily_verse_activity_idx")
+  @@index([createdBy], map: "daily_verse_created_by_idx")
+  @@index([updatedBy], map: "daily_verse_updated_by_idx")
   @@map("daily_verse")
 }
 
@@ -362,6 +365,8 @@ model VerseExplanation {
   themes             VerseTheme[]
 
   @@unique([bookName, chapter, verseNumber])
+  @@index([createdBy], map: "verse_explanations_created_by_idx")
+  @@index([updatedBy], map: "verse_explanations_updated_by_idx")
   @@map("verse_explanations")
 }
 

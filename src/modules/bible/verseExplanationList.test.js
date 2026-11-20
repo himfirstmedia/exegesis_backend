@@ -1,6 +1,7 @@
 jest.mock("../../config/db.js", () => ({
   prisma: {
-    verseExplanation: { findMany: jest.fn(), count: jest.fn() },
+    $queryRaw: jest.fn(),
+    verseExplanation: { findMany: jest.fn(), count: jest.fn(), findUnique: jest.fn() },
     systemUser: { findMany: jest.fn() },
   },
 }));
@@ -25,7 +26,7 @@ jest.mock("./dailyContentTranslation.js", () => ({
   translateDailyVerseContent: jest.fn(),
 }));
 
-import { getAllVersesExplanation } from "./service.js";
+import { getAllVersesExplanation, getVerseExplanationForEdit } from "./service.js";
 import { prisma } from "../../config/db.js";
 import { translateMany } from "../../utils/translator.js";
 import { invalidateVerseExplanationLists } from "./verseExplanationListCache.js";
@@ -64,6 +65,7 @@ describe("getAllVersesExplanation localization", () => {
     ]);
     prisma.verseExplanation.count.mockResolvedValue(3);
     prisma.systemUser.findMany.mockResolvedValue([]);
+    prisma.$queryRaw.mockResolvedValue([{ id: 7n }, { id: 1n, studyCreatedOn: studyDate }, { id: 2n }]);
     const { data } = await getAllVersesExplanation({ pageSize: 9, listPreview: true });
     expect(data.explanations.map(item => item.id)).toEqual([7, 1, 2]);
     expect(data.explanations[1]).toMatchObject({
@@ -71,6 +73,10 @@ describe("getAllVersesExplanation localization", () => {
     });
     expect(data.explanations[1]).not.toHaveProperty("sharedStudy");
     expect(data.explanations[2]).not.toHaveProperty("studyCreatedOn");
+    expect(prisma.verseExplanation.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.verseExplanation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: [7n, 1n, 2n] } },
+    }));
   });
 
   test("translates the legacy fields the admin cards render and keeps canonical source", async () => {
@@ -245,7 +251,7 @@ describe("getAllVersesExplanation localization", () => {
   test("reuses identical page requests, separates language and preview settings, and invalidates stale pages", async () => {
     prisma.verseExplanation.findMany.mockResolvedValue([record()]);
     prisma.systemUser.findMany.mockResolvedValue([]);
-    const query = { pageSize: 9, listPreview: true };
+    const query = { pageSize: 9, listPreview: true, bookName: "John" };
     await Promise.all([
       getAllVersesExplanation(query),
       getAllVersesExplanation({ ...query, page: "1", search: "  " }),
@@ -264,11 +270,11 @@ describe("getAllVersesExplanation localization", () => {
     const sharedText = "Shared explanation. ".repeat(30).trim();
     prisma.verseExplanation.findMany
       .mockResolvedValueOnce([record()])
-      .mockResolvedValueOnce([{ id: 7n, sharedStudy: {
+      .mockResolvedValueOnce([{ ...record(), sharedStudy: {
         explanation: sharedText, introduction: "Shared introduction", takeaways: [],
       } }]);
     prisma.systemUser.findMany.mockResolvedValue([]);
-    const result = await getAllVersesExplanation({ pageSize: 9, listPreview: true, includeSource: true, lang: "fr" });
+    const result = await getAllVersesExplanation({ pageSize: 9, bookName: "John", listPreview: true, includeSource: true, lang: "fr" });
     const [item] = result.data.explanations;
     expect(item.explanation).toBe(item.preview.explanation);
     expect(item.explanation).toMatch(/^fr:Shared explanation/);
@@ -276,4 +282,12 @@ describe("getAllVersesExplanation localization", () => {
     expect(item.source.explanation).toBe(sharedText);
     expect(item.source).not.toHaveProperty("sharedStudy");
   });
+});
+
+test("gets canonical editor content by its primary key without requiring a passage or translating it", async () => {
+  prisma.verseExplanation.findUnique.mockResolvedValue(record());
+  const result = await getVerseExplanationForEdit({ id: "7", lang: "fr" });
+  expect(result.status).toBe(200);
+  expect(result.data).toMatchObject({ id: 7, bookName: "John", explanation: "God gave his Son" });
+  expect(prisma.verseExplanation.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 7n } }));
 });

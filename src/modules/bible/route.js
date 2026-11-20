@@ -23,6 +23,7 @@ router.post("/add-favorite", authenticate, bibleController.addFavorite);
 router.post("/get-favorites", authenticate, bibleController.getFavorites);
 router.post("/delete-favorite", authenticate, bibleController.deleteFavorite);
 router.post("/get-verse-explanation", bibleController.getVerseExplanation);
+router.post("/get-verse-explanation-for-edit", authenticate, requireAdmin, bibleController.getVerseExplanationForEdit);
 router.post(
   "/add-verse-explanation",
   authenticate,
