@@ -4,7 +4,7 @@ jest.mock('../../config/db.js', () => ({ prisma: {
   dailyDevotion: { findFirst: jest.fn() },
   $transaction: jest.fn(),
 } }));
-jest.mock('../../services/cacheService.js', () => ({ cache: { del: jest.fn().mockResolvedValue(undefined) } }));
+jest.mock('../../services/cacheService.js', () => ({ cache: { del: jest.fn().mockResolvedValue(undefined), set: jest.fn().mockResolvedValue(undefined) } }));
 jest.mock('../../utils/emailTemplates.js', () => ({ __esModule: true, default: {} }));
 jest.mock('../bible-translations/service.js', () => ({ getVerse: jest.fn() }));
 jest.mock('../shared-study/client.js', () => ({
@@ -203,7 +203,11 @@ test('explanations store the main range and cross-reference ranges', async () =>
   prisma.$transaction.mockImplementation(fn => fn(tx));
   const result = await addVerseExplanation({ ...verse, crossReferences: [{ bookName: 'Romans', chapter: 5, verseNumber: 1, verseEnd: 3, referenceText: 'Quote' }] }, 'admin-1');
   expect(result.status).toBe(200);
-  expect(tx.verseExplanation.upsert.mock.calls[0][0].create.verseEnd).toBe(10n);
+  const { create, update } = tx.verseExplanation.upsert.mock.calls[0][0];
+  expect(create).toMatchObject({ verseEnd: 10n, createdBy: 'admin-1', createdOn: expect.any(Date) });
+  expect(create.updatedOn).toEqual(create.createdOn);
+  expect(update).toMatchObject({ updatedBy: 'admin-1', updatedOn: expect.any(Date) });
+  expect(update).not.toHaveProperty('createdOn');
   expect(tx.verseCrossReference.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ verseNumber: 1n, verseEnd: 3n })] });
 });
 
@@ -220,6 +224,11 @@ test('explanation saves pass the expected shared version into the transaction', 
   };
   prisma.$transaction.mockImplementation(fn => fn(tx));
   await addVerseExplanation({ ...verse, id: 1, sharedStudyVersion: 5 }, 'admin-1');
+  expect(tx.verseExplanation.update).toHaveBeenCalledWith(expect.objectContaining({
+    where: { id: 1n },
+    data: expect.objectContaining({ updatedBy: 'admin-1', updatedOn: expect.any(Date) }),
+  }));
+  expect(tx.verseExplanation.update.mock.calls[0][0].data).not.toHaveProperty('createdOn');
   const { writeStudy } = require('../shared-study/repository.js');
   expect(writeStudy).toHaveBeenCalledWith(tx, 'explanation', expect.objectContaining({ id: 1n }), {
     allowSharedEdit: true,

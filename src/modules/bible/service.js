@@ -24,6 +24,7 @@ import {
 import { sharedStudyReaders } from "../shared-study/client.js";
 import { SharedStudyError, writeStudy } from "../shared-study/repository.js";
 import { invalidateVerseExplanationCache } from "../ai/service.js";
+import { cachedVerseExplanationList, invalidateVerseExplanationLists } from "./verseExplanationListCache.js";
 
 const sharedStudy = () => sharedStudyReaders(prisma);
 
@@ -1085,6 +1086,7 @@ export const addVerseExplanation = async (data, userId) => {
   try {
     const result = await prisma.$transaction(async (tx) => {
       // 1. Handle Root
+      const savedAt = new Date();
       let root;
       if (id) {
         root = await tx.verseExplanation.update({
@@ -1097,6 +1099,7 @@ export const addVerseExplanation = async (data, userId) => {
             ...verseEndData(data.verseEnd),
             sortOrder,
             updatedBy: userId,
+            updatedOn: savedAt,
           },
         });
       } else {
@@ -1108,7 +1111,7 @@ export const addVerseExplanation = async (data, userId) => {
               verseNumber: BigInt(verseNumber),
             },
           },
-          update: { bibleVersion, ...verseEndData(data.verseEnd), sortOrder, updatedBy: userId },
+          update: { bibleVersion, ...verseEndData(data.verseEnd), sortOrder, updatedBy: userId, updatedOn: savedAt },
           create: {
             bookName,
             chapter: BigInt(chapter),
@@ -1117,6 +1120,8 @@ export const addVerseExplanation = async (data, userId) => {
             ...verseEndData(data.verseEnd),
             sortOrder,
             createdBy: userId,
+            createdOn: savedAt,
+            updatedOn: savedAt,
           },
         });
       }
@@ -1268,6 +1273,7 @@ export const addVerseExplanation = async (data, userId) => {
     });
 
     await Promise.all([
+      invalidateVerseExplanationLists(),
       cache.del(
         "bible",
         verseExplanationCacheKey(bookName, chapter, verseNumber),
@@ -1354,6 +1360,7 @@ const VERSE_EXPLANATION_LIST_FIELDS = [
   "promptIds",
   "createdOn",
   "updatedOn",
+  "studyCreatedOn",
   "creatorName",
   "explanation",
   "learnMore",
@@ -1403,30 +1410,34 @@ const latestActivityTime = (item) => {
     const parsed = new Date(value).getTime();
     return Number.isNaN(parsed) ? 0 : parsed;
   };
-  return Math.max(time(item?.createdOn), time(item?.updatedOn));
+  return Math.max(time(item?.createdOn), time(item?.updatedOn)) || time(item?.studyCreatedOn);
 };
 
-export const getAllVersesExplanation = async (data) => {
+export const getAllVersesExplanation = (data = {}) => {
+  const text = (value) => String(value ?? "").trim();
+  const chapter = Number(data.chapter);
+  return cachedVerseExplanationList({
+    pageNum: Math.max(1, parseInt(data.page, 10) || 1),
+    pageSizeNum: Math.max(1, Math.min(parseInt(data.pageSize, 10) || 20, 50)),
+    bookName: text(data.bookName),
+    chapter: Number.isInteger(chapter) && chapter > 0 ? chapter : null,
+    search: text(data.search),
+    creatorName: text(data.creatorName),
+    lang: normalizeLanguage(data.lang || "en"),
+    includeSource: Boolean(data.includeSource),
+    listPreview: data.listPreview === true,
+  }, loadVerseExplanationPage);
+};
+
+async function loadVerseExplanationPage(options) {
   const {
-    page = 1,
-    pageSize = 20,
-    bookName,
-    chapter,
-    search,
-    creatorName,
-    lang = "en",
-    includeSource = false,
-  } = data;
-  const pageNum = parseInt(page) || 1;
-  const pageSizeNum = Math.min(parseInt(pageSize) || 20, 50);
+    pageNum, pageSizeNum, bookName, chapter, search, creatorName, lang, includeSource, listPreview,
+  } = options;
   const offset = (pageNum - 1) * pageSizeNum;
 
   const whereClause = {};
   if (bookName) whereClause.bookName = bookName;
-  if (chapter !== undefined && chapter !== null && chapter !== "") {
-    const chapterNum = Number(chapter);
-    if (!Number.isNaN(chapterNum)) whereClause.chapter = chapterNum;
-  }
+  if (chapter !== null) whereClause.chapter = chapter;
 
   const q = search && String(search).trim();
   if (q || (creatorName && String(creatorName).trim())) {
@@ -1458,49 +1469,35 @@ export const getAllVersesExplanation = async (data) => {
     }
   }
 
-  const [matchedRows, totalCount] = await Promise.all([
-    // Select only the fields list cards need. Hydration still resolves the
-    // shared study internally, but selectFields drops the heavy related payloads.
-    // Sorting by the latest of createdOn/updatedOn needs both dates, so the
-    // ordered page is sliced after the (narrow) rows are fetched.
-    sharedStudy().verseExplanation.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        bookName: true,
-        chapter: true,
-        verseNumber: true,
-        verseEnd: true,
-        bibleVersion: true,
-        sortOrder: true,
-        createdBy: true,
-        createdOn: true,
-        updatedBy: true,
-        updatedOn: true,
-        exegesis: {
-          select: { explanationText: true, applicationText: true },
-        },
-        studyMetadata: {
-          select: {
-            introduction: true,
-            finalThoughts: true,
-            takeaways: true,
-          },
-        },
-      },
-      // Canonical Bible order (Genesis first), with book/chapter/verse as a
-      // stable fallback inside each book.
-      orderBy: [
-        { sortOrder: "asc" },
-        { bookName: "asc" },
-        { chapter: "asc" },
-        { verseNumber: "asc" },
-      ],
-    }),
-    prisma.verseExplanation.count({ where: whereClause }),
-  ]);
+  // Rank inexpensive metadata before reading any editorial text or resolving users.
+  const matchedRows = await prisma.verseExplanation.findMany({
+    where: whereClause,
+    select: {
+      id: true,
+      bookName: true,
+      chapter: true,
+      verseNumber: true,
+      verseEnd: true,
+      bibleVersion: true,
+      sortOrder: true,
+      createdBy: true,
+      createdOn: true,
+      updatedBy: true,
+      updatedOn: true,
+      sharedStudy: { select: { createdOn: true } },
+    },
+  });
+  const totalCount = matchedRows.length;
 
-  const explanations = [...matchedRows]
+  const explanations = matchedRows
+    .map(({ sharedStudy, ...row }) => {
+      // Older rows omitted both root timestamps. The linked study's creation
+      // time is useful, but is not necessarily the explanation's original date.
+      if (!row.createdOn && !row.updatedOn && sharedStudy?.createdOn) {
+        row.studyCreatedOn = sharedStudy.createdOn;
+      }
+      return row;
+    })
     .sort((a, b) => {
       const byActivity = latestActivityTime(b) - latestActivityTime(a);
       if (byActivity) return byActivity;
@@ -1512,8 +1509,35 @@ export const getAllVersesExplanation = async (data) => {
     })
     .slice(offset, offset + pageSizeNum);
 
+  const pageContent = explanations.length ? await prisma.verseExplanation.findMany({
+    where: { id: { in: explanations.map(row => row.id) } },
+    select: {
+      id: true,
+      exegesis: { select: { explanationText: true, applicationText: true } },
+      studyMetadata: { select: { introduction: true, finalThoughts: true, takeaways: true } },
+      sharedStudy: { select: {
+        explanation: true, application: true, introduction: true, finalThoughts: true,
+        takeaways: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }], select: { text: true } },
+      } },
+    },
+  }) : [];
+  const contentById = new Map(pageContent.map(row => [row.id, row]));
+  const items = explanations.flatMap(row => {
+    const content = contentById.get(row.id);
+    if (!content) return []; // Deleted while this page was loading.
+    const { exegesis, studyMetadata, sharedStudy } = content;
+    return [{
+      ...row,
+      exegesis: sharedStudy ? { explanationText: sharedStudy.explanation, applicationText: sharedStudy.application } : exegesis,
+      studyMetadata: sharedStudy ? {
+        introduction: sharedStudy.introduction, finalThoughts: sharedStudy.finalThoughts,
+        takeaways: sharedStudy.takeaways?.map(item => item.text) ?? [],
+      } : studyMetadata,
+    }];
+  });
+
   const serialized = serializeBigInt({
-    explanations,
+    explanations: items,
     totalCount,
     page: pageNum,
     pageSize: pageSizeNum,
@@ -1525,9 +1549,15 @@ export const getAllVersesExplanation = async (data) => {
   );
   await resolveVerseExplanationCreatorNames(serialized.explanations);
 
-  if (data.listPreview === true) {
+  if (listPreview) {
     const previews = await localizeListPreviews(serialized.explanations, lang, 'explanation');
-    serialized.explanations = previews.map(toVerseExplanationListItem);
+    serialized.explanations = previews.map(({ preview, ...row }) => toVerseExplanationListItem({
+      ...row,
+      explanation: preview.explanation,
+      learnMore: preview.learnMore,
+      preview,
+      ...(includeSource ? { source: row } : {}),
+    }));
     return { status: 200, message: 'Verse explanations fetched successfully', data: serialized };
   }
 
@@ -1578,7 +1608,7 @@ export const getAllVersesExplanation = async (data) => {
     },
   };
   return result;
-};
+}
 
 export const addVerseNote = async (data, userId) => {
   const { bookName, chapter, verseNumber, verseNumbers, note } = data;
@@ -2528,6 +2558,7 @@ export const deleteVerseExplanation = async (data, userId) => {
     where: { id: BigInt(id) },
   });
   await prisma.verseExplanation.delete({ where: { id: BigInt(id) } });
+  await invalidateVerseExplanationLists();
   if (existing) {
     const chapterNumber = Number(existing.chapter);
     const verseNumber = Number(existing.verseNumber);
