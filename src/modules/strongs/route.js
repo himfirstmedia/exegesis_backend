@@ -9,6 +9,7 @@ import {
   getRelatedWordsSchema,
   getVersesByStrongsSchema,
   getBookWordsSchema,
+  getRandomWordsSchema,
   getVerseWordsSchema,
   getVerseUniqueWordsSchema,
   searchTopicsSchema,
@@ -29,6 +30,7 @@ router.get('/search-related/:strongsId', ...authAndTier, validate(getRelatedWord
 router.get('/topics/search', ...authAndTier, validate(searchTopicsSchema, 'query'), strongsController.searchTopics);
 router.get('/topics/:topicName/verses', ...authAndTier, validate(getTopicVersesSchema, 'query'), strongsController.getTopicVerses);
 router.get('/book-words/:bookName', validate(getBookWordsSchema, 'query'), strongsController.getBookWords);
+router.get('/random-words', validate(getRandomWordsSchema, 'query'), strongsController.getRandomWords);
 router.get('/:strongsId', validate(getStrongsEntrySchema, 'query'), strongsController.getStrongsEntry);
 router.get('/:strongsId/verses', validate(getVersesByStrongsSchema, 'query'), strongsController.getVersesByStrongs);
 router.post('/verse-words', validate(getVerseWordsSchema, 'body'), strongsController.getVerseWords);

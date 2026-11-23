@@ -518,6 +518,66 @@ export const getBookWords = async (bookName, limit = 4, offset = 0, lang = 'en',
   };
 };
 
+// Random browse draws a wider alphabetically-ordered window and shuffles it,
+// which avoids the clustered result of `ORDER BY random()` while still needing
+// a single database round trip.
+const RANDOM_BROWSE_WINDOW = 36;
+const shuffle = values => {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(Math.random() * (index + 1));
+    [result[index], result[swap]] = [result[swap], result[index]];
+  }
+  return result;
+};
+
+export const getRandomWords = async (limit = 6, lang = 'en', language = 'all', view) => {
+  const preview = view === 'preview';
+  const take = Math.min(preview ? BROWSE_PREVIEW_LIMIT : 4, Math.max(1, limit));
+  const languageFilter = language && language.toLowerCase() !== 'all'
+    ? language.toLowerCase()
+    : null;
+  const where = languageFilter
+    ? { language: { equals: languageFilter, mode: 'insensitive' } }
+    : {};
+  const total = await prisma.strongsDictionary.count({ where });
+  if (!total) {
+    return {
+      status: 200,
+      message: 'Random words fetched successfully',
+      data: { data: [], total: 0, hasNext: false, contentLanguage: lang, nextOffset: null },
+    };
+  }
+  const windowSize = Math.min(RANDOM_BROWSE_WINDOW, total);
+  const skip = Math.floor(Math.random() * Math.max(1, total - windowSize + 1));
+  const pool = await prisma.strongsDictionary.findMany({
+    where,
+    skip,
+    take: windowSize,
+    select: {
+      strongsId: true, originalWord: true, transliteration: true, pronunciation: true,
+      shortDefinition: true, fullDefinition: true, language: true, partOfSpeech: true,
+      grammaticalCase: true, gender: true, number: true, usageCount: true,
+      crossReferences: true, adminExplanation: true,
+    },
+    orderBy: { strongsId: 'asc' },
+  });
+  const picked = shuffle(pool).slice(0, take).map(entry => ({ ...entry, hasDictionaryEntry: true }));
+  const enriched = withEditorialReferences(picked, []);
+  const translated = await translateSearchPage(preview ? enriched.map(toBrowsePreview) : enriched, lang);
+  return {
+    status: 200,
+    message: 'Random words fetched successfully',
+    data: {
+      data: translated,
+      total,
+      hasNext: total > picked.length,
+      contentLanguage: lang,
+      nextOffset: null,
+    },
+  };
+};
+
 export const getVerseWords = async (bookName, chapter, verseNumber, translation = 'Berean', lang) => {
 
   const where = {

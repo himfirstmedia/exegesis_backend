@@ -39,6 +39,12 @@ export const getBookWords = asyncHandler(async (req, res) => {
   res.json(formatApiResponse(result));
 });
 
+export const getRandomWords = asyncHandler(async (req, res) => {
+  const { limit, lang, language, view } = req.query;
+  const result = await strongsService.getRandomWords(parseInt(limit) || (view === 'preview' ? 6 : 4), lang, language, view);
+  res.json(formatApiResponse(result));
+});
+
 export const getVerseUniqueWords = asyncHandler(async (req, res) => {
   const { bookName, chapter, verse, translation, page, pageSize, lang } = req.body;
   if (!bookName) {

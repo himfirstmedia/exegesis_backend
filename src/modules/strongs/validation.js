@@ -22,6 +22,13 @@ export const getBookWordsSchema = z.object({
   lang,
 });
 
+export const getRandomWordsSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+  language: z.string().optional(),
+  view: z.enum(['preview']).optional(),
+  lang,
+});
+
 export const getStrongsEntrySchema = z.object({
   lang,
   bookName: z.enum(CANONICAL_BOOK_ORDER).optional(),

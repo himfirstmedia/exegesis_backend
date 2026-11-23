@@ -11,7 +11,7 @@ jest.mock('./translation.js', () => ({ translateStrongsData: jest.fn(), translat
 jest.mock('./searchTranslation.js', () => ({ translateSearchPage: jest.fn() }));
 import { prisma } from '../../config/db.js';
 import { translateSearchPage } from './searchTranslation.js';
-import { searchStrongs, getBookWords } from './service.js';
+import { searchStrongs, getBookWords, getRandomWords } from './service.js';
 
 beforeEach(() => {
   jest.resetAllMocks();
@@ -56,4 +56,29 @@ it('keeps Browse totals and the language marker on an empty last page', async ()
   prisma.strongsDictionary.count.mockResolvedValue(1);
   const result = await getBookWords('Psalms', 4, 4, 'hi');
   expect(result.data).toEqual({ data: [], total: 1, hasNext: false, contentLanguage: 'hi' });
+});
+
+it('returns a shuffled random window without requiring a book filter', async () => {
+  const ids = Array.from({ length: 12 }, (_, index) => `H${index + 1}`);
+  prisma.strongsDictionary.count.mockResolvedValue(100);
+  prisma.strongsDictionary.findMany.mockResolvedValue(ids.map(strongsId => ({ strongsId })));
+  translateSearchPage.mockImplementation(async entries => entries.map(entry => ({ ...entry, contentLanguage: 'fr' })));
+  const random = jest.spyOn(Math, 'random').mockReturnValue(0.5);
+  const result = await getRandomWords(6, 'fr', 'Hebrew', 'preview');
+  expect(prisma.strongsDictionary.findMany).toHaveBeenCalledWith(expect.objectContaining({
+    skip: 32,
+    take: 36,
+    where: { language: { equals: 'hebrew', mode: 'insensitive' } },
+  }));
+  expect(result.data).toMatchObject({ total: 100, hasNext: true, contentLanguage: 'fr', nextOffset: null });
+  expect(result.data.data).toHaveLength(6);
+  expect(translateSearchPage).toHaveBeenCalledWith(expect.any(Array), 'fr');
+  random.mockRestore();
+});
+
+it('returns an empty random page without querying rows when the dictionary is empty', async () => {
+  prisma.strongsDictionary.count.mockResolvedValue(0);
+  const result = await getRandomWords(6, 'hi', 'all', 'preview');
+  expect(prisma.strongsDictionary.findMany).not.toHaveBeenCalled();
+  expect(result.data).toEqual({ data: [], total: 0, hasNext: false, contentLanguage: 'hi', nextOffset: null });
 });
