@@ -522,6 +522,13 @@ export const getBookWords = async (bookName, limit = 4, offset = 0, lang = 'en',
 // which avoids the clustered result of `ORDER BY random()` while still needing
 // a single database round trip.
 const RANDOM_BROWSE_WINDOW = 36;
+/** Canonical Strong's number ranges (Greek G1–G5624, Hebrew H1–H8674). */
+const isValidStrongsId = value => {
+  const match = String(value || '').trim().toUpperCase().match(/^([GH])(\d{1,5})$/);
+  if (!match) return false;
+  const number = Number(match[2]);
+  return number > 0 && number <= (match[1] === 'G' ? 5624 : 8674);
+};
 const shuffle = values => {
   const result = [...values];
   for (let index = result.length - 1; index > 0; index -= 1) {
@@ -562,8 +569,16 @@ export const getRandomWords = async (limit = 6, lang = 'en', language = 'all', v
     },
     orderBy: { strongsId: 'asc' },
   });
-  const picked = shuffle(pool).slice(0, take).map(entry => ({ ...entry, hasDictionaryEntry: true }));
-  const enriched = withEditorialReferences(picked, []);
+  // The dictionary table also holds manually entered records; keep ids outside
+  // the canonical Strong's number ranges out of the random feed.
+  const valid = pool.filter(entry => isValidStrongsId(entry.strongsId));
+  const picked = shuffle(valid).slice(0, take).map(entry => ({ ...entry, hasDictionaryEntry: true }));
+  // Enrich the page with the editorial word studies saved in the web editors,
+  // so Browse cards carry their "Definition and contextual meaning" text.
+  const references = picked.length
+    ? await getEditorialReferences({ strongsIds: picked.map(entry => entry.strongsId) })
+    : [];
+  const enriched = withEditorialReferences(picked, references);
   const translated = await translateSearchPage(preview ? enriched.map(toBrowsePreview) : enriched, lang);
   return {
     status: 200,

@@ -72,8 +72,52 @@ it('returns a shuffled random window without requiring a book filter', async () 
   }));
   expect(result.data).toMatchObject({ total: 100, hasNext: true, contentLanguage: 'fr', nextOffset: null });
   expect(result.data.data).toHaveLength(6);
+  expect(prisma.studyWord.findMany).toHaveBeenCalledWith(expect.objectContaining({
+    where: expect.objectContaining({
+      strongLinks: { some: { strongsId: { in: expect.arrayContaining(['H0001']) } } },
+    }),
+  }));
   expect(translateSearchPage).toHaveBeenCalledWith(expect.any(Array), 'fr');
   random.mockRestore();
+});
+
+it('keeps the web-authored word studies on the random Browse page', async () => {
+  prisma.strongsDictionary.count.mockResolvedValue(1);
+  prisma.strongsDictionary.findMany.mockResolvedValue([{ strongsId: 'H0935' }]);
+  prisma.studyWord.findMany.mockResolvedValue([{
+    surfaceText: 'Returned / Came',
+    contextualMeaning: 'Coming or returning into a place',
+    sortOrder: 0,
+    strongLinks: [{ strongsId: 'H0935' }],
+    study: {
+      bibleEditionId: 'BSB',
+      passage: { startChapter: 6, startVerse: 4, endChapter: 6, endVerse: 4, book: { name: 'Genesis' } },
+      themes: [{ text: 'Return' }],
+    },
+  }]);
+  translateSearchPage.mockImplementation(async entries => entries.map(entry => ({ ...entry, contentLanguage: 'en' })));
+  const result = await getRandomWords(6, 'en', 'all', 'preview');
+  expect(result.data.data[0]).toMatchObject({
+    strongsId: 'H0935',
+    hasDictionaryEntry: true,
+    contextualStudyCount: 1,
+    contextualStudies: [expect.objectContaining({
+      surfaceText: 'Returned / Came',
+      customDefinition: 'Coming or returning into a place',
+    })],
+  });
+});
+
+it('skips dictionary rows whose ids are outside the canonical Strong ranges', async () => {
+  prisma.strongsDictionary.count.mockResolvedValue(3);
+  prisma.strongsDictionary.findMany.mockResolvedValue([
+    { strongsId: 'G24423' },
+    { strongsId: 'H7225' },
+    { strongsId: 'junk' },
+  ]);
+  translateSearchPage.mockImplementation(async entries => entries.map(entry => ({ ...entry, contentLanguage: 'en' })));
+  const result = await getRandomWords(6, 'en', 'all', 'preview');
+  expect(result.data.data.map(entry => entry.strongsId)).toEqual(['H7225']);
 });
 
 it('returns an empty random page without querying rows when the dictionary is empty', async () => {

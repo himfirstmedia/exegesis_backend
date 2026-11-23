@@ -23,10 +23,24 @@ const parseWords = value => {
 
 /** Read current editorial links, not the legacy denormalized JSON snapshot.
  * Imported occurrences stay in VerseWord; editorial links must never fabricate
- * imported word positions or overwrite the dictionary's general definition. */
-export async function getEditorialReferences({ bookName, chapter, verse, strongsId } = {}) {
-  const aliases = strongsId ? strongsAliases(strongsId) : null;
-  const idFilter = aliases?.length === 1 ? aliases[0] : { in: aliases };
+ * imported word positions or overwrite the dictionary's general definition.
+ *
+ * Pass `strongsIds` to enrich a whole Browse page in one round trip. Legacy
+ * Resources rows are only scanned for a single word: their JSON text match is
+ * a table scan, which a page of random words must not pay for. */
+export async function getEditorialReferences({ bookName, chapter, verse, strongsId, strongsIds } = {}) {
+  const bulk = Array.isArray(strongsIds) && strongsIds.length > 0;
+  const singleAliases = strongsId ? strongsAliases(strongsId) : null;
+  const wantedKeys = bulk ? new Set(strongsIds.map(strongsKey)) : null;
+  const allAliases = bulk
+    ? [...new Set(strongsIds.flatMap(id => strongsAliases(id)))]
+    : singleAliases;
+  const idFilter = allAliases?.length === 1 ? allAliases[0] : allAliases ? { in: allAliases } : undefined;
+  const matchesWanted = value => {
+    if (wantedKeys) return wantedKeys.has(strongsKey(value));
+    if (strongsId) return strongsKey(value) === strongsKey(strongsId);
+    return true;
+  };
   const passage = {
     ...(bookName ? { bookName } : {}),
     ...(chapter > 0 ? { chapter } : {}),
@@ -46,7 +60,7 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
   const [sharedWords, studies, detailed, resources] = await Promise.all([
     prisma.studyWord.findMany({
       where: {
-        strongLinks: aliases ? { some: { strongsId: idFilter } } : { some: {} },
+        strongLinks: idFilter ? { some: { strongsId: idFilter } } : { some: {} },
         study: {
           languageCode: 'en',
           OR: [
@@ -81,12 +95,12 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
       orderBy: [{ studyId: 'asc' }, { sortOrder: 'asc' }],
     }),
     prisma.verseWordStudy.findMany({
-      where: { ...passage, ...(verse > 0 ? { verse } : {}), ...(aliases ? { strongsId: idFilter } : {}) },
+      where: { ...passage, ...(verse > 0 ? { verse } : {}), ...(idFilter ? { strongsId: idFilter } : {}) },
       orderBy: [{ bookName: 'asc' }, { chapter: 'asc' }, { verse: 'asc' }],
     }),
     prisma.verseWordStudyEntry.findMany({
       where: {
-        strongsId: aliases ? idFilter : { not: null },
+        strongsId: idFilter ?? { not: null },
         explanation: { ...passage, sharedStudyId: null, ...(verse > 0 ? { verseNumber: verse } : {}) },
       },
       include: { explanation: { include: { themes: { orderBy: { sortOrder: 'asc' } } } } },
@@ -94,11 +108,11 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
     }),
     // Older Resources editors store word studies as JSON text, not relations.
     // Retain that content until an explicit, reviewed migration is undertaken.
-    prisma.verseResource.findMany({
+    bulk ? [] : prisma.verseResource.findMany({
       where: {
         ...passage,
         ...(verse > 0 ? { verseStart: { lte: verse }, OR: [{ verseEnd: null }, { verseEnd: { gte: verse } }] } : {}),
-        ...(aliases ? { AND: [{ OR: aliases.map(id => ({ wordStudies: { contains: id, mode: 'insensitive' } })) }] } : {}),
+        ...(idFilter ? { AND: [{ OR: allAliases.map(id => ({ wordStudies: { contains: id, mode: 'insensitive' } })) }] } : {}),
       },
       orderBy: { id: 'asc' },
     }),
@@ -109,7 +123,7 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
   for (const word of sharedWords) {
     const { passage: ref, bibleEditionId } = word.study;
     for (const link of word.strongLinks) {
-      if (strongsId && strongsKey(link.strongsId) !== strongsKey(strongsId)) continue;
+      if (!matchesWanted(link.strongsId)) continue;
       refs.push({ strongsId: link.strongsId, bookName: ref.book.name,
         chapter: ref.startChapter, verse: ref.startVerse, translation: bibleEditionId,
         ...(ref.startChapter === ref.endChapter && ref.endVerse > ref.startVerse ? { verseEnd: ref.endVerse } : {}),
@@ -133,7 +147,7 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
     for (const word of parseWords(row.wordStudies)) {
       if (!word || typeof word !== 'object') continue;
       for (const id of parseStrongsIds(strongsText(word))) {
-        if (strongsId && strongsKey(id) !== strongsKey(strongsId)) continue;
+        if (!matchesWanted(id)) continue;
         refs.push({ strongsId: id, bookName: row.bookName, chapter: Number(row.chapter),
           verse: Number(row.verseStart), translation: 'BSB', surfaceText: word.word || word.surfaceText,
           ...(row.verseEnd ? { verseEnd: Number(row.verseEnd) } : {}),
