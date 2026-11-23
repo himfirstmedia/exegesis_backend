@@ -6,30 +6,9 @@ import { getBookHeadings as getTranslationBookHeadings } from '../bible-translat
 import { prisma } from '../../config/db.js';
 import { serializeBigInt } from '../../utils/helpers.js';
 import { BIBLE_BOOK_NAMES } from '../bible/bookNames.js';
+import { splitSurfaceText, withSurfaceGloss, withStrongsGloss } from '../strongs/surfaceText.js';
 
-const LATIN_TEXT = /^[\p{Script=Latin}\p{Script=Common}\p{M}\p{N}\p{P}\p{S}\s]+$/u;
-
-/**
- * Admin word-study labels often combine an English gloss with the original
- * word ("Give Thanks — יָדָה (yadah)"). Keep the canonical original text and
- * expose the gloss as a separate prose field so the reader stream can
- * translate it without touching the original language.
- */
-export function splitSurfaceText(value) {
-  const text = String(value || '').trim();
-  if (!text) return { gloss: '', original: '' };
-  const split = text.match(/^(.+?)\s+[—–-]\s+(.+)$/u);
-  if (split) return { gloss: split[1].trim(), original: split[2].trim() };
-  return LATIN_TEXT.test(text)
-    ? { gloss: text, original: '' }
-    : { gloss: '', original: text };
-}
-
-const withSurfaceGloss = item => {
-  if (!item || typeof item !== 'object' || typeof item.surfaceText !== 'string') return item;
-  const { gloss, original } = splitSurfaceText(item.surfaceText);
-  return { ...item, surfaceTextGloss: gloss, surfaceTextOriginal: original };
-};
+export { splitSurfaceText };
 
 const withWordStudyGloss = data => Array.isArray(data?.wordStudies)
   ? { ...data, wordStudies: data.wordStudies.map(item => {
@@ -37,23 +16,6 @@ const withWordStudyGloss = data => Array.isArray(data?.wordStudies)
     return word?.strongs ? { ...word, strongs: withStrongsGloss(word.strongs) } : word;
   }) }
   : data;
-
-const withStrongsGloss = data => {
-  if (!data || typeof data !== 'object') return data;
-  const next = { ...data };
-  if (Array.isArray(next.contextualStudies)) {
-    next.contextualStudies = next.contextualStudies.map(withSurfaceGloss);
-  }
-  if (Array.isArray(next.verseReferences)) {
-    next.verseReferences = next.verseReferences.map(withSurfaceGloss);
-  } else if (typeof next.verseReferences === 'string' && next.verseReferences.trim().startsWith('[')) {
-    try {
-      const parsed = JSON.parse(next.verseReferences);
-      if (Array.isArray(parsed)) next.verseReferences = JSON.stringify(parsed.map(withSurfaceGloss));
-    } catch { /* Keep malformed legacy JSON canonical. */ }
-  }
-  return next;
-};
 
 function bookDesignation(bookName) {
   const index = Object.keys(BIBLE_BOOK_NAMES.en).indexOf(bookName === 'Psalm' ? 'Psalms' : bookName) + 1;

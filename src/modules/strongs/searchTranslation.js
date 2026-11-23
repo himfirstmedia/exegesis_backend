@@ -1,6 +1,7 @@
 import { streamReaderTranslation } from '../reader-stream/service.js';
 import { serializeBigInt } from '../../utils/helpers.js';
 import { AppError } from '../../utils/AppError.js';
+import { splitSurfaceText } from './surfaceText.js';
 
 // Reuse the reader's complete prose traversal, canonical-value protection,
 // provider validation and cache. A search page is published atomically rather
@@ -11,10 +12,9 @@ export async function translateSearchPage(entries, language = 'en') {
     if (!value || typeof value !== 'object') return value;
     const result = Object.fromEntries(Object.entries(value).map(([key, child]) => [key, prepare(child)]));
     if (typeof result.surfaceText === 'string') {
-      const split = result.surfaceText.match(/^(.+?)\s+[—–-]\s+(.+)$/u);
-      const latin = /^[\p{Script=Latin}\p{Script=Common}\p{M}\s]+$/u.test(result.surfaceText);
-      result.surfaceTextGloss = split ? split[1] : latin ? result.surfaceText : '';
-      result.surfaceTextOriginal = split ? split[2] : latin ? '' : result.surfaceText;
+      const { gloss, original } = splitSurfaceText(result.surfaceText);
+      result.surfaceTextGloss = gloss;
+      result.surfaceTextOriginal = original;
     }
     return result;
   };

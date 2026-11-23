@@ -2,6 +2,7 @@ import { prisma } from '../../config/db.js';
 import { translateBibleTopics, translateStrongsData } from './translation.js';
 import { translateSearchPage } from './searchTranslation.js';
 import { editionKey, getEditorialReferences, strongsAliases, strongsKey, withEditorialReferences } from './editorialWords.js';
+import { withStrongsGloss } from './surfaceText.js';
 
 // URL callers often pass "g25" or "G25" while the dictionary stores zero-padded
 // ids such as "G0025". Normalizing here keeps both forms resolvable.
@@ -214,7 +215,10 @@ export const getStrongsEntry = async (strongsId, lang = 'en', { bookName, studyO
 
   delete enrichedEntry.verseExplanationWordStudies;
   const [currentEntry] = withEditorialReferences([enrichedEntry], refs);
-  return translateResponse({ status: 200, message: 'Strongs entry fetched successfully', data: currentEntry }, lang);
+  // Attach the reader-language gloss split from every saved surface text, so
+  // full entries (random Browse details) carry the same localized word labels
+  // as the paged list rows.
+  return translateResponse({ status: 200, message: 'Strongs entry fetched successfully', data: withStrongsGloss(currentEntry) }, lang);
 };
 
 export const searchStrongs = async (query, limit = 2, offset = 0, lang = 'en', language) => {

@@ -52,6 +52,12 @@ it('splits an admin word gloss from its canonical original-language text', () =>
   expect(splitSurfaceText('Give Thanks — יָדָה (yadah)')).toEqual({
     gloss: 'Give Thanks', original: 'יָדָה (yadah)',
   });
+  expect(splitSurfaceText('Returned / Came בּוֹא – bo')).toEqual({
+    gloss: 'Returned / Came', original: 'bo',
+  });
+  expect(splitSurfaceText('Commanded צָוָה — tsavah')).toEqual({
+    gloss: 'Commanded', original: 'tsavah',
+  });
   expect(splitSurfaceText('LORD')).toEqual({ gloss: 'LORD', original: '' });
   expect(splitSurfaceText('λόγος')).toEqual({ gloss: '', original: 'λόγος' });
 });
