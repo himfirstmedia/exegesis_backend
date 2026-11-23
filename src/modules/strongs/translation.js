@@ -10,6 +10,10 @@ const STRONGS_FIELDS = new Set([
   'adminExplanation',
   'verseStudyNote',
   'customDefinition',
+  // Reader-facing word label split out of the saved surface text ("Returned /
+  // Came" beside "בּוֹא – bo"). It must follow the reader language; the
+  // original-language text and transliteration stay canonical.
+  'surfaceTextGloss',
   'themeName',
   // Grammar values are displayed beside the lexeme, so they follow the same
   // reader language as the definitions instead of leaking English.
