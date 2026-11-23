@@ -62,6 +62,16 @@ function referenceFrom(entry, issues) {
   return passage ? { passage, quotationOverride: entry.referenceText || entry.text || null, commentary: entry.commentary || null } : null;
 }
 
+export const strongsText = item => {
+  const ids = Array.isArray(item.strongsIds) ? item.strongsIds.filter(id => typeof id === 'string').join('/') : '';
+  const legacy = typeof item.strongs === 'string' ? item.strongs : item.strongs?.strongsId;
+  return String(ids || item.strongsId || legacy || item.Strongs || '').trim();
+};
+
+// Keep case, leading-zero and suffix handling consistent for both storage paths.
+export const parseStrongsIds = value =>
+  [...new Set(value.match(/\b[HG]\d+[a-z]?\b/gi)?.map(id => id.toUpperCase()) || [])];
+
 /** Lossless source archival is separate from normalized live fields. */
 export function normalizeSource(type, row) {
   const issues = [];
@@ -92,11 +102,9 @@ export function normalizeSource(type, row) {
       item = { word: parts[0].trim(), strongs: parts[1].trim(), definition: parts.slice(2).join('|').trim() };
     }
     if (!item || typeof item !== 'object') { issues.push('words: invalid item'); return null; }
-    const strongs = String(item.strongsIds?.join('/') || item.strongsId || item.strongs || item.Strongs || '');
-    // Permissive by design so real-world variants pass: leading zeros, suffix
-    // letters and case differences are preserved rather than rejected.
-    const ids = [...new Set(strongs.match(/\b[HG]0*[0-9]+[a-z]?\b/gi)?.map(id => id.toUpperCase()) || [])];
-    if (strongs && (!ids.length || ids.some(id => !/^[HG]0*[0-9]+[A-Z]?$/.test(id)))) issues.push('words: invalid Strong\'s identifier');
+    const strongs = strongsText(item);
+    const ids = parseStrongsIds(strongs);
+    if (strongs && !ids.length) issues.push('words: invalid Strong\'s identifier');
     const transliteration = strongs.match(/^(.*?)\s*[-–—]\s*Strong['’]?s\s+/i)?.[1];
     const word = { surfaceText: String(item.surfaceText || item.word || ''), contextualMeaning: String(item.customDefinition || item.definition || ''), strongsIds: ids };
     if (transliteration) word.surfaceText += ` · ${transliteration}`;

@@ -20,13 +20,14 @@ jest.mock('../shared-study/repository.js', () => ({
     }
   },
   writeStudy: jest.fn().mockResolvedValue(null),
+  hydrateStudies: jest.requireActual('../shared-study/repository.js').hydrateStudies,
 }));
 
 const { prisma } = require('../../config/db.js');
 const { cache } = require('../../services/cacheService.js');
 const { getVerse } = require('../bible-translations/service.js');
 const { addDailyVerse, addDailyDevotion, checkDailyVerseDate } = require('./service.js');
-const { addVerseExplanation, fetchVerseTextWithFallback } = require('../bible/service.js');
+const { addVerseExplanation, fetchVerseTextWithFallback, getVerseExplanationForEdit } = require('../bible/service.js');
 const { validVerseRange, verseEndData } = require('../../utils/verseRange.js');
 
 beforeEach(() => {
@@ -234,6 +235,71 @@ test('explanation saves pass the expected shared version into the transaction', 
     allowSharedEdit: true,
     expectedVersion: 5,
   });
+});
+
+test('saves and reopens Strong’s IDs when the dictionary has no matching entries', async () => {
+  const { writeStudy } = require('../shared-study/repository.js');
+  const { sharedStudyReaders } = require('../shared-study/client.js');
+  writeStudy.mockImplementationOnce(jest.requireActual('../shared-study/repository.js').writeStudy);
+  sharedStudyReaders.mockImplementationOnce(() => jest.requireActual('../shared-study/client.js').sharedStudyReaders(tx));
+  const rows = () => ({ deleteMany: jest.fn(), createMany: jest.fn() });
+  const tx = {
+    bibleBook: { upsert: jest.fn() },
+    bibleEdition: { upsert: jest.fn() },
+    scripturePassage: { upsert: jest.fn().mockResolvedValue({ id: 10n }) },
+    strongsDictionary: { findMany: jest.fn().mockResolvedValue([]) },
+    strongsIdentifier: { upsert: jest.fn() },
+    studyWord: { create: jest.fn() },
+    passageStudy: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: 12n, version: 1 }),
+      // Hydrate from the links actually written by the repository.
+      findMany: jest.fn(async () => [{
+        id: 12n, version: 1, explanation: verse.explanation,
+        takeaways: [], practicalApplications: [], themes: [], crossReferences: [],
+        words: tx.studyWord.create.mock.calls.map(([{ data }]) => ({
+          ...data, strongLinks: data.strongLinks.create.map(link => ({ ...link, strongs: { dictionary: null } })),
+        })),
+      }]),
+    },
+    verseExplanation: {
+      upsert: jest.fn().mockResolvedValue({ id: 1n }),
+      update: jest.fn(),
+      findUnique: jest.fn(async () => ({
+        ...verse, id: 1n, exegesis: { explanationText: verse.explanation },
+        sharedStudyId: tx.verseExplanation.update.mock.calls[0]?.[0].data.sharedStudyId ?? null,
+        wordStudies: tx.verseWordStudyEntry.createMany.mock.calls[0][0].data,
+      })),
+    },
+    verseExegesis: { upsert: jest.fn() },
+    verseWordStudyEntry: rows(), versePracticalApplication: rows(), verseCrossReference: rows(), verseTheme: rows(),
+  };
+  prisma.$transaction.mockImplementation(fn => fn(tx));
+  const result = await addVerseExplanation({ ...verse, wordStudies: [
+    { surfaceText: 'Word', strongsId: ' h03045a ', customDefinition: 'Editorial meaning' },
+    { surfaceText: 'Phrase', strongsId: 'H589/H0430', customDefinition: 'Editorial phrase' },
+  ] }, 'admin-1');
+  expect(result.status).toBe(200);
+  expect(tx.verseWordStudyEntry.createMany.mock.calls[0][0].data.map(row => row.strongsId)).toEqual([null, null]);
+  expect(tx.strongsIdentifier.upsert.mock.calls.map(([{ create }]) => create)).toEqual([
+    { id: 'H03045A', dictionaryId: null }, { id: 'H0430', dictionaryId: null }, { id: 'H589', dictionaryId: null },
+  ]);
+  const expected = [
+    expect.objectContaining({ strongsId: 'H03045A', strongsIds: ['H03045A'], strongs: null, customDefinition: 'Editorial meaning' }),
+    expect.objectContaining({ strongsId: 'H0430/H589', strongsIds: ['H0430', 'H589'], strongs: null, customDefinition: 'Editorial phrase' }),
+  ];
+  expect(result.data.wordStudies).toEqual(expected);
+  const reopened = await getVerseExplanationForEdit({ id: 1 });
+  expect(reopened.status).toBe(200);
+  expect(reopened.data.wordStudies).toEqual(expected);
+});
+
+test('rejects invalid Strong’s IDs instead of silently dropping them', async () => {
+  const result = await addVerseExplanation({ ...verse, wordStudies: [
+    { surfaceText: 'Word', strongsId: 'CH3045', customDefinition: 'Editorial meaning' },
+  ] }, 'admin-1');
+  expect(result).toMatchObject({ status: 400, message: "Word study 1: invalid Strong's ID" });
+  expect(prisma.$transaction).not.toHaveBeenCalled();
 });
 
 test('daily verse saves invalidate every dependent view and the landing cache', async () => {

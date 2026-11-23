@@ -4,6 +4,7 @@ import { cache } from '../../services/cacheService.js';
 import { getVerse, getCatalog } from '../bible-translations/service.js';
 import { normalizeLanguage, translateMany, translateResult } from '../../utils/translator.js';
 import { sharedStudyReaders } from '../shared-study/client.js';
+import { strongsText } from '../shared-study/normalization.js';
 
 const CACHE_TTL = 86400;
 
@@ -415,13 +416,14 @@ async function buildCrossReferencesSection(explanation, resource, radius) {
 function buildWordStudiesSection(explanation, resource) {
   const normalized = (explanation?.wordStudies || []).map((entry) => {
     const strongs = entry.strongs || {};
+    const ids = strongsText(entry);
     return {
-      word: entry.surfaceText || strongs.originalWord || entry.strongsId || '',
+      word: entry.surfaceText || strongs.originalWord || ids,
       surfaceText: entry.surfaceText || '',
       originalWord: strongs.originalWord || '',
       transliteration: strongs.transliteration || '',
       pronunciation: strongs.pronunciation || '',
-      strongs: entry.strongsId || strongs.strongsId || '',
+      strongs: ids,
       partOfSpeech: strongs.partOfSpeech || '',
       language: strongs.language || '',
       definition: strongs.shortDefinition || '',

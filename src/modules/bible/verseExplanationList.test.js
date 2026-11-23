@@ -285,9 +285,19 @@ describe("getAllVersesExplanation localization", () => {
 });
 
 test("gets canonical editor content by its primary key without requiring a passage or translating it", async () => {
-  prisma.verseExplanation.findUnique.mockResolvedValue(record());
+  prisma.verseExplanation.findUnique.mockResolvedValue({
+    ...record(),
+    wordStudies: [
+      { surfaceText: "Fruit trees", strongsId: null, strongsIds: ["H6086", "H6529"] },
+      { surfaceText: "Biblical insight", strongsId: null },
+    ],
+  });
   const result = await getVerseExplanationForEdit({ id: "7", lang: "fr" });
   expect(result.status).toBe(200);
   expect(result.data).toMatchObject({ id: 7, bookName: "John", explanation: "God gave his Son" });
+  expect(result.data.wordStudies).toEqual([
+    { surfaceText: "Fruit trees", strongsId: "H6086/H6529", strongsIds: ["H6086", "H6529"] },
+    { surfaceText: "Biblical insight", strongsId: "", strongsIds: [] },
+  ]);
   expect(prisma.verseExplanation.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 7n } }));
 });

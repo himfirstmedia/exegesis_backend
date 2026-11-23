@@ -22,7 +22,8 @@ import {
   withContentLanguage,
 } from "../../utils/contentLanguage.js";
 import { sharedStudyReaders } from "../shared-study/client.js";
-import { SharedStudyError, writeStudy } from "../shared-study/repository.js";
+import { hydrateStudies, SharedStudyError, writeStudy } from "../shared-study/repository.js";
+import { parseStrongsIds, strongsText } from "../shared-study/normalization.js";
 import { invalidateVerseExplanationCache } from "../ai/service.js";
 import { cachedVerseExplanationList, invalidateVerseExplanationLists } from "./verseExplanationListCache.js";
 import { browseVerseExplanationPage } from "./verseExplanationBrowse.js";
@@ -603,6 +604,14 @@ const withLegacyVerseExplanationFields = (resource) => {
   next.finalThoughts = metadata?.finalThoughts || next.finalThoughts || "";
   next.takeaways = takeaways;
   next.studyMetadata = metadata;
+  if (Array.isArray(next.wordStudies)) {
+    next.wordStudies = next.wordStudies.map(word => {
+      const strongsIds = parseStrongsIds(strongsText(word));
+      // Keep the original field usable as display text, including for a phrase
+      // with multiple IDs. Editorial notes are blank, not dictionary entries.
+      return { ...word, strongsIds, strongsId: strongsIds.join("/") };
+    });
+  }
 
   return next;
 };
@@ -1109,6 +1118,20 @@ export const addVerseExplanation = async (data, userId) => {
     };
 
   const sortOrder = canonicalBookIndex(bookName);
+  if (wordStudies != null && (!Array.isArray(wordStudies) || wordStudies.some(row => !row || typeof row !== "object" || Array.isArray(row)))) {
+    return { status: 400, message: "Word studies must be an array of study rows" };
+  }
+  const submittedWordStudies = (wordStudies || []).map((row, index) => ({
+    ...row, sortOrder: row.sortOrder ?? index,
+  }));
+  const wordStudyIds = submittedWordStudies.map(row => {
+    const text = strongsText(row);
+    return { text, ids: parseStrongsIds(text) };
+  });
+  const invalidWordIndex = wordStudyIds.findIndex(({ text, ids }) => text && !ids.length);
+  if (invalidWordIndex !== -1) {
+    return { status: 400, message: `Word study ${invalidWordIndex + 1}: invalid Strong's ID` };
+  }
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -1170,9 +1193,8 @@ export const addVerseExplanation = async (data, userId) => {
       }
 
       // 3. Handle Metadata (1:1)
-      let pendingStudyMetadata = null;
       if (studyMetadata) {
-        pendingStudyMetadata = normalizeStudyMetadata(studyMetadata);
+        const pendingStudyMetadata = normalizeStudyMetadata(studyMetadata);
         await tx.verseStudyMetadata.upsert({
           where: { explanationId: root.id },
           update: { ...pendingStudyMetadata },
@@ -1181,13 +1203,14 @@ export const addVerseExplanation = async (data, userId) => {
       }
 
       // 4. Handle Collections (1:N) - Delete and Re-insert for simplicity in Admin
-      let preparedWordStudies = [];
       await tx.verseWordStudyEntry.deleteMany({
         where: { explanationId: root.id },
       });
-      if (wordStudies) {
+      if (submittedWordStudies.length) {
+        // The legacy column holds only one dictionary foreign key. The shared
+        // study below keeps every submitted ID, even if the dictionary lacks it.
         const inputStrongIds = Array.from(
-          new Set(wordStudies.map((ws) => ws.strongsId).filter(Boolean)),
+          new Set(wordStudyIds.flatMap(({ ids }) => ids.length === 1 ? ids : [])),
         );
 
         let existingStrongIds = new Set();
@@ -1199,30 +1222,25 @@ export const addVerseExplanation = async (data, userId) => {
           existingStrongIds = new Set(existing.map((e) => e.strongsId));
         }
 
-        // Unknown identifiers stay unresolved in legacy rows; the shared write
-        // records them as StrongsIdentifier entries instead of inventing
-        // dictionary definitions.
-
-        preparedWordStudies = wordStudies.map((ws, i) => ({
-          explanationId: root.id,
-          strongsId:
-            ws.strongsId && existingStrongIds.has(ws.strongsId)
-              ? ws.strongsId
-              : null,
-          surfaceText: ws.surfaceText,
-          customDefinition: ws.customDefinition,
-          sortOrder: ws.sortOrder ?? i,
-        }));
+        const preparedWordStudies = submittedWordStudies.map((ws, i) => {
+          const { ids } = wordStudyIds[i];
+          return {
+            explanationId: root.id,
+            strongsId: ids.length === 1 && existingStrongIds.has(ids[0]) ? ids[0] : null,
+            surfaceText: ws.surfaceText,
+            customDefinition: ws.customDefinition,
+            sortOrder: ws.sortOrder,
+          };
+        });
 
         await tx.verseWordStudyEntry.createMany({ data: preparedWordStudies });
       }
 
-      let preparedPracticalApps = [];
       await tx.versePracticalApplication.deleteMany({
         where: { explanationId: root.id },
       });
       if (practicalApps) {
-        preparedPracticalApps = practicalApps.map((pa, i) => ({
+        const preparedPracticalApps = practicalApps.map((pa, i) => ({
           explanationId: root.id,
           applicationText: pa.applicationText,
           sortOrder: pa.sortOrder ?? i,
@@ -1232,12 +1250,11 @@ export const addVerseExplanation = async (data, userId) => {
         });
       }
 
-      let preparedCrossReferences = [];
       await tx.verseCrossReference.deleteMany({
         where: { explanationId: root.id },
       });
       if (crossReferences) {
-        preparedCrossReferences = crossReferences.map((cr, i) => ({
+        const preparedCrossReferences = crossReferences.map((cr, i) => ({
           explanationId: root.id,
           bookName: cr.bookName,
           chapter: BigInt(cr.chapter),
@@ -1252,10 +1269,9 @@ export const addVerseExplanation = async (data, userId) => {
         });
       }
 
-      let preparedThemes = [];
       await tx.verseTheme.deleteMany({ where: { explanationId: root.id } });
       if (themes) {
-        preparedThemes = themes.map((t, i) => ({
+        const preparedThemes = themes.map((t, i) => ({
           explanationId: root.id,
           themeName: t.themeName,
           sortOrder: t.sortOrder ?? i,
@@ -1279,7 +1295,10 @@ export const addVerseExplanation = async (data, userId) => {
         },
       });
       const expectedSharedVersion = sharedStudyVersion ?? expectedVersion;
-      const savedStudy = await writeStudy(tx, "explanation", complete, {
+      const savedStudy = await writeStudy(tx, "explanation", {
+        ...complete,
+        wordStudies: submittedWordStudies.sort((a, b) => a.sortOrder - b.sortOrder),
+      }, {
         allowSharedEdit: root.sharedStudyId != null,
         expectedVersion:
           expectedSharedVersion == null
@@ -1287,16 +1306,9 @@ export const addVerseExplanation = async (data, userId) => {
             : Number(expectedSharedVersion),
       });
 
-      return {
-        ...root,
-        sharedStudyVersion: savedStudy?.version ?? null,
-        exegesis: exegesis ? { ...exegesis, explanationId: root.id } : null,
-        studyMetadata: pendingStudyMetadata,
-        wordStudies: preparedWordStudies,
-        practicalApps: preparedPracticalApps,
-        crossReferences: preparedCrossReferences,
-        themes: preparedThemes,
-      };
+      return savedStudy
+        ? hydrateStudies(tx, "explanation", { ...complete, sharedStudyId: savedStudy.id })
+        : complete;
     });
 
     await Promise.all([
