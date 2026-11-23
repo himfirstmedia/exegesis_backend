@@ -23,6 +23,20 @@ const stripOriginalScript = value => value
   .replace(/^[\s,;:/|·-]+|[\s,;:/|·-]+$/g, '')
   .trim();
 
+/**
+ * Some editors save "Created  בָּרָא bara" with no dash separator. Keep the
+ * leading Latin meaning as the gloss and leave the original script plus its
+ * transliteration canonical.
+ */
+const leadingLatinGloss = text => {
+  const match = text.match(/^([\p{Script=Latin}\p{Script=Common}\p{M}\p{N}\p{P}\p{S}\s]+?)(?=[\u0370-\u03FF\u1F00-\u1FFF\u0590-\u05FF])/u);
+  if (!match) return null;
+  const gloss = stripOriginalScript(match[1]);
+  if (!gloss || !/[A-Za-z]/.test(gloss)) return null;
+  const original = text.slice(match[1].length).trim();
+  return original ? { gloss, original } : null;
+};
+
 export function splitSurfaceText(value) {
   const text = String(value || '').trim();
   if (!text) return { gloss: '', original: '' };
@@ -37,7 +51,7 @@ export function splitSurfaceText(value) {
   }
   return LATIN_TEXT.test(text)
     ? { gloss: text, original: '' }
-    : { gloss: '', original: text };
+    : leadingLatinGloss(text) || { gloss: '', original: text };
 }
 
 export const withSurfaceGloss = item => {

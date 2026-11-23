@@ -60,6 +60,12 @@ it('splits an admin word gloss from its canonical original-language text', () =>
   });
   expect(splitSurfaceText('LORD')).toEqual({ gloss: 'LORD', original: '' });
   expect(splitSurfaceText('λόγος')).toEqual({ gloss: '', original: 'λόγος' });
+  expect(splitSurfaceText('Created  בָּרָא bara')).toEqual({
+    gloss: 'Created', original: 'בָּרָא bara',
+  });
+  expect(splitSurfaceText('Earth  אֶרֶץ eretz')).toEqual({
+    gloss: 'Earth', original: 'אֶרֶץ eretz',
+  });
 });
 
 it('streams an English gloss beside the canonical word-study text', async () => {
