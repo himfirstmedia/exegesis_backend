@@ -8,7 +8,7 @@ jest.mock('../../config/db.js', () => ({ prisma: {
 jest.mock('./translation.js', () => ({ translateStrongsData: jest.fn(async data => data), translateBibleTopics: jest.fn(async data => data) }));
 jest.mock('./searchTranslation.js', () => ({ translateSearchPage: jest.fn(async data => data) }));
 import { prisma } from '../../config/db.js';
-import { adminUpdateEntry, adminDeleteEntry, upsertVerseWordStudy, deleteVerseWordStudy, getBookWords, getStrongsEntry, getVerseUniqueWords } from './service.js';
+import { adminUpdateEntry, adminDeleteEntry, upsertVerseWordStudy, deleteVerseWordStudy, getBookWords, getStrongsEntry, getVerseUniqueWords, searchStrongs } from './service.js';
 import { adminUpdateEntrySchema, adminUpsertVerseWordStudySchema } from './validation.js';
 import router from './route.js';
 import { authenticate, requireAdmin } from '../../middlewares/auth.middleware.js';
@@ -74,16 +74,40 @@ it('does not delete a missing attachment or its dictionary entry', async () => {
   expect(prisma.strongsDictionary.delete).not.toHaveBeenCalled();
 });
 
-it('includes an editorial-only word in the Browse query and filters the same counted set', async () => {
+it('joins a padded dictionary word to its study and paginates study-only words with it', async () => {
   prisma.verseWordStudy.findMany.mockResolvedValue([{ strongsId: 'G0026', bookName: 'John', chapter: 3, verse: 16, translation: 'BSB', adminExplanation: 'love here' }]);
-  prisma.strongsDictionary.findMany.mockResolvedValue([{ strongsId: 'G0026', shortDefinition: 'love', verseExplanationWordStudies: [] }]);
-  prisma.strongsDictionary.count.mockResolvedValue(1);
-  const result = await getBookWords('John', 4, 0, 'en', 'Greek');
+  prisma.studyWord.findMany.mockResolvedValue([{
+    surfaceText: 'love', contextualMeaning: 'another love', strongLinks: [{ strongsId: 'G25' }],
+    study: { bibleEditionId: 'BSB', passage: { startChapter: 13, startVerse: 34, book: { name: 'John' } }, themes: [] },
+  }]);
+  prisma.strongsDictionary.findMany.mockResolvedValue([{ strongsId: 'G0026', shortDefinition: 'love' }]);
+  const first = await getBookWords('John', 1, 0, 'en', 'Greek');
+  const second = await getBookWords('John', 1, 1, 'en', 'Greek');
   const args = prisma.strongsDictionary.findMany.mock.calls[0][0];
-  expect(args.where).toEqual({ language: { equals: 'greek', mode: 'insensitive' }, OR: [{ verseWords: { some: { bookName: 'John' } } }, { strongsId: { in: ['G0026'] } }] });
-  expect(prisma.strongsDictionary.count).toHaveBeenCalledWith({ where: args.where });
-  expect(result.data).toMatchObject({ total: 1, hasNext: false, contentLanguage: 'en' });
-  expect(result.data.data[0]).toMatchObject({ shortDefinition: 'love', contextualStudies: [expect.objectContaining({ customDefinition: 'love here' })] });
+  expect(args.where.language).toEqual({ equals: 'greek', mode: 'insensitive' });
+  expect(args.where.OR[1].strongsId.in).toEqual(expect.arrayContaining(['G0025', 'G25', 'G0026', 'G26']));
+  expect(first.data).toMatchObject({ total: 2, hasNext: true, contentLanguage: 'en', data: [{
+    strongsId: 'G25', hasDictionaryEntry: false, shortDefinition: '',
+    contextualStudies: [{ customDefinition: 'another love', reference: { bookName: 'John', verseNumber: 34 } }],
+  }] });
+  expect(second.data).toMatchObject({ total: 2, hasNext: false, data: [{
+    strongsId: 'G0026', hasDictionaryEntry: true, shortDefinition: 'love',
+    contextualStudies: [{ customDefinition: 'love here' }],
+  }] });
+});
+
+it('opens and finds a study-only ID without inventing a dictionary definition', async () => {
+  prisma.studyWord.findMany.mockResolvedValue([{
+    surfaceText: 'sons', contextualMeaning: 'Gad’s descendants', strongLinks: [{ strongsId: 'H1121' }],
+    study: { bibleEditionId: 'BSB', passage: { startChapter: 1, startVerse: 24, book: { name: 'Numbers' } }, themes: [] },
+  }]);
+  const detail = await getStrongsEntry('H1121', 'en');
+  expect(detail.data).toMatchObject({ strongsId: 'H1121', shortDefinition: '', hasDictionaryEntry: false,
+    contextualStudies: [{ customDefinition: 'Gad’s descendants', reference: { bookName: 'Numbers', verseNumber: 24 } }],
+  });
+  const search = await searchStrongs('h1121', 2, 0, 'en', 'Hebrew');
+  expect(search.data).toMatchObject({ total: 1, hasNext: false, data: [detail.data] });
+  expect((await searchStrongs('H1121', 2, 0, 'en', 'Greek')).data.total).toBe(0);
 });
 
 it('loads current detail attachments and includes editorial-only words in Study Verse', async () => {

@@ -31,7 +31,7 @@ it('reads standalone links, normalized explanations and legacy resource words wi
 it('filters source queries to the requested passage and rejects an unrelated legacy ID', async () => {
   prisma.verseResource.findMany.mockResolvedValue([{ bookName: 'John', chapter: 1, verseStart: 1, wordStudies: '[{"strongs":"G0026","meaning":"love"}]' }]);
   expect(await getEditorialReferences({ bookName: 'John', chapter: 1, verse: 1, strongsId: 'G3056' })).toEqual([]);
-  expect(prisma.verseWordStudyEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { strongsId: 'G3056', explanation: { bookName: 'John', chapter: 1, verseNumber: 1 } } }));
+  expect(prisma.verseWordStudyEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { strongsId: 'G3056', explanation: { bookName: 'John', chapter: 1, verseNumber: 1, sharedStudyId: null } } }));
 });
 
 it('keeps different verses/editions separate and drops removed links rather than stale JSON', () => {
@@ -61,4 +61,21 @@ it('prefers canonical shared-study words over their legacy copies', async () => 
 it('ignores malformed legacy JSON safely', async () => {
   prisma.verseResource.findMany.mockResolvedValue([{ wordStudies: '{broken' }]);
   expect(await getEditorialReferences({ bookName: 'John' })).toEqual([]);
+});
+
+it('matches padded IDs and keeps distinct notes on the same linked passage', async () => {
+  const study = { bibleEditionId: 'BSB', passage: {
+    startChapter: 1, endChapter: 1, startVerse: 2, endVerse: 3, book: { name: 'Genesis' },
+  }, themes: [] };
+  prisma.studyWord.findMany.mockResolvedValue(['first', 'second'].map(contextualMeaning => ({
+    surfaceText: 'light', contextualMeaning, strongLinks: [{ strongsId: 'H216' }, { strongsId: 'H4325' }], study,
+  })));
+  const refs = await getEditorialReferences({ strongsId: 'H0216' });
+  expect(prisma.studyWord.findMany.mock.calls[0][0].where.strongLinks).toEqual({ some: { strongsId: { in: ['H0216', 'H216'] } } });
+  expect(refs).toHaveLength(2);
+  const [entry] = withEditorialReferences([{ strongsId: 'H0216', shortDefinition: 'general' }], refs);
+  expect(entry.shortDefinition).toBe('general');
+  expect(entry.verseReferences).toHaveLength(1);
+  expect(entry.contextualStudies.map(s => s.customDefinition)).toEqual(['first', 'second']);
+  expect(entry.contextualStudies[0].reference.verseEnd).toBe(3);
 });

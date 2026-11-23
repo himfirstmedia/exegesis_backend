@@ -18,10 +18,15 @@ export const getBookWordsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
   offset: z.coerce.number().int().min(0).optional(),
   language: z.string().optional(),
+  view: z.enum(['preview']).optional(),
   lang,
 });
 
-export const getStrongsEntrySchema = z.object({ lang });
+export const getStrongsEntrySchema = z.object({
+  lang,
+  bookName: z.enum(CANONICAL_BOOK_ORDER).optional(),
+  studyOffset: z.coerce.number().int().min(0).optional(),
+});
 
 export const getRelatedWordsSchema = z.object({ lang });
 

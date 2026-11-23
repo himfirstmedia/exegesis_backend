@@ -1,7 +1,7 @@
 import { prisma } from '../../config/db.js';
 import { translateBibleTopics, translateStrongsData } from './translation.js';
 import { translateSearchPage } from './searchTranslation.js';
-import { editionKey, getEditorialReferences, withEditorialReferences } from './editorialWords.js';
+import { editionKey, getEditorialReferences, strongsAliases, strongsKey, withEditorialReferences } from './editorialWords.js';
 
 // URL callers often pass "g25" or "G25" while the dictionary stores zero-padded
 // ids such as "G0025". Normalizing here keeps both forms resolvable.
@@ -11,6 +11,37 @@ const normalizeStrongsId = (value) => {
   const match = trimmed.match(/^([GHgh])\s*0*(\d+)$/);
   if (!match) return trimmed.toUpperCase();
   return `${match[1].toUpperCase()}${match[2].padStart(4, '0')}`;
+};
+
+const studyOnlyEntry = strongsId => ({
+  strongsId, hasDictionaryEntry: false, language: strongsId.startsWith('G') ? 'greek' : 'hebrew',
+  originalWord: null, transliteration: null, shortDefinition: '', fullDefinition: null,
+  partOfSpeech: null, grammaticalCase: null, gender: null, number: null, usageCount: null, crossReferences: null,
+});
+
+const BROWSE_PREVIEW_LIMIT = 6;
+const BROWSE_STUDIES_LIMIT = 3;
+const shortPreview = (value, limit) => {
+  const text = value?.trim() || '';
+  if (text.length <= limit) return text;
+  const head = text.slice(0, limit - 1);
+  const breakAt = head.lastIndexOf(' ');
+  return `${breakAt > limit / 2 ? head.slice(0, breakAt) : head}…`;
+};
+const toBrowsePreview = entry => {
+  // Do not send the full definitions, duplicate notes in verseReferences, or
+  // dozens of studies per card to the translation pipeline for a list page.
+  const { fullDefinition, adminExplanation, crossReferences, verseReferences, contextualStudies,
+    gender, number, grammaticalCase, ...word } = entry;
+  const first = contextualStudies[0];
+  return {
+    ...word, shortDefinition: shortPreview(word.shortDefinition || fullDefinition, 180),
+    contextualStudyCount: contextualStudies.length,
+    contextualStudies: first ? [{
+      reference: first.reference, surfaceText: first.surfaceText, sortOrder: first.sortOrder,
+      customDefinition: shortPreview(first.customDefinition, 220), themes: [],
+    }] : [],
+  };
 };
 
 const translateResponse = async (response, lang, translate = translateStrongsData) => {
@@ -85,16 +116,17 @@ const addCrossReferenceTexts = async (entries, translation) => {
   }));
 };
 
-export const getStrongsEntry = async (strongsId, lang) => {
-  const normalizedId = normalizeStrongsId(strongsId);
+export const getStrongsEntry = async (strongsId, lang = 'en', { bookName, studyOffset = 0 } = {}) => {
+  const [normalizedId, ...aliases] = strongsAliases(strongsId);
 
   // Editorial records can change independently (explanation/resource editors).
   // Read them fresh; translation itself remains content-key cached.
 
-  const entry = await prisma.strongsDictionary.findUnique({
+  const query = {
     where: { strongsId: normalizedId },
-    include: {
+    ...(!bookName && { include: {
       verseExplanationWordStudies: {
+        where: { explanation: { sharedStudyId: null } },
         orderBy: { sortOrder: 'asc' },
         select: {
           surfaceText: true,
@@ -124,16 +156,43 @@ export const getStrongsEntry = async (strongsId, lang) => {
           },
         },
       },
-    },
-  });
+    } }),
+  };
+  const [primary, refs] = await Promise.all([
+    prisma.strongsDictionary.findUnique(query), getEditorialReferences({ strongsId, ...(bookName ? { bookName } : {}) }),
+  ]);
+  let entry = primary;
+  for (const id of aliases) {
+    if (entry) break;
+    entry = await prisma.strongsDictionary.findUnique({ ...query, where: { strongsId: id } });
+  }
+  if (bookName) {
+    if (!entry && !refs.length) return { status: 404, message: 'Strong’s entry not found for this book' };
+    const [word] = withEditorialReferences([
+      entry ? { ...entry, hasDictionaryEntry: true } : studyOnlyEntry(strongsKey(strongsId)),
+    ], refs);
+    const { contextualStudies: studies, verseReferences, ...fields } = word;
+    const contextualStudies = studies.slice(studyOffset, studyOffset + BROWSE_STUDIES_LIMIT);
+    const next = studyOffset + contextualStudies.length;
+    const [data] = await translateSearchPage([{
+      ...fields, contextualStudies, contextualStudyCount: studies.length,
+      nextStudyOffset: next < studies.length ? next : null,
+    }], lang);
+    return { status: 200, message: 'Strong’s word studies fetched successfully', data };
+  }
 
   if (!entry) {
+    if (refs.length) {
+      const [study] = withEditorialReferences([studyOnlyEntry(strongsKey(strongsId))], refs);
+      return translateResponse({ status: 200, message: 'Strong’s verse studies fetched successfully', data: study }, lang);
+    }
     return { status: 404, message: 'Strongs entry not found' };
   }
 
   const enrichedEntry = {
     ...entry,
-    contextualStudies: entry.verseExplanationWordStudies.map((study) => ({
+    hasDictionaryEntry: true,
+    contextualStudies: (entry.verseExplanationWordStudies || []).map((study) => ({
       surfaceText: study.surfaceText,
       customDefinition: study.customDefinition,
       sortOrder: study.sortOrder,
@@ -154,7 +213,6 @@ export const getStrongsEntry = async (strongsId, lang) => {
   };
 
   delete enrichedEntry.verseExplanationWordStudies;
-  const refs = await getEditorialReferences({ strongsId: normalizedId });
   const [currentEntry] = withEditorialReferences([enrichedEntry], refs);
   return translateResponse({ status: 200, message: 'Strongs entry fetched successfully', data: currentEntry }, lang);
 };
@@ -162,6 +220,14 @@ export const getStrongsEntry = async (strongsId, lang) => {
 export const searchStrongs = async (query, limit = 2, offset = 0, lang = 'en', language) => {
   limit = Math.min(2, Math.max(1, limit));
   const trimmedQuery = query.trim();
+  if (/^[HG]\d+[A-Z]?$/i.test(trimmedQuery)) {
+    const result = await getStrongsEntry(trimmedQuery, 'en');
+    const matches = result.status === 200 && (!language || language.toLowerCase() === 'all' ||
+      result.data.language.toLowerCase() === language.toLowerCase());
+    const data = matches && offset === 0 ? await translateSearchPage([result.data], lang) : [];
+    return { status: 200, message: 'Strongs search results',
+      data: { data, total: matches ? 1 : 0, hasNext: false, contentLanguage: lang } };
+  }
   const strongsQuery = trimmedQuery.toUpperCase();
   const where = {};
   if (trimmedQuery) where.OR = [
@@ -384,94 +450,71 @@ export const getVersesByStrongs = async (strongsId, translation = 'Berean', limi
   return translateResponse({ status: 200, message: 'Verses fetched successfully', data: result.slice(0, limit) }, lang);
 };
 
-export const getBookWords = async (bookName, limit = 4, offset = 0, lang = 'en', language = 'all') => {
-  limit = Math.min(4, Math.max(1, limit));
+export const getBookWords = async (bookName, limit = 4, offset = 0, lang = 'en', language = 'all', view) => {
+  const preview = view === 'preview';
+  limit = Math.min(preview ? BROWSE_PREVIEW_LIMIT : 4, Math.max(1, limit));
   const languageFilter = language && language.toLowerCase() !== 'all'
     ? language.toLowerCase()
     : null;
   const references = await getEditorialReferences({ bookName });
-  const editorialIds = [...new Set(references.map(ref => ref.strongsId))];
-  // Count/page dictionary rows, not occurrences: imported and editorial words
-  // form one stable, deduplicated set, including words with no imported mapping.
+  const editorialIds = [...new Set(references.map(ref => strongsKey(ref.strongsId)))].filter(id =>
+    /^[HG]\d+[A-Z]?$/.test(id) && (!languageFilter || (id.startsWith('G') ? 'greek' : 'hebrew') === languageFilter));
+  const editorialKeys = new Set(editorialIds);
   const where = {
     ...(languageFilter ? { language: { equals: languageFilter, mode: 'insensitive' } } : {}),
-    OR: [{ verseWords: { some: { bookName } } }, { strongsId: { in: editorialIds } }],
+    OR: [{ verseWords: { some: { bookName } } }, { strongsId: { in: [...new Set([
+      ...editorialIds.flatMap(strongsAliases),
+      ...references.filter(ref => editorialKeys.has(strongsKey(ref.strongsId))).map(ref => ref.strongsId),
+    ])] } }],
   };
-  const total = await prisma.strongsDictionary.count({ where });
+  const select = {
+    strongsId: true, originalWord: true, transliteration: true, pronunciation: true,
+    shortDefinition: true, fullDefinition: true, language: true, partOfSpeech: true,
+    grammaticalCase: true, gender: true, number: true, usageCount: true,
+    crossReferences: true, adminExplanation: true,
+  };
+  let entries;
+  let total;
+  if (!editorialIds.length) {
+    [entries, total] = await Promise.all([
+      prisma.strongsDictionary.findMany({ where, skip: offset, take: limit, select, orderBy: { strongsId: 'asc' } }),
+      prisma.strongsDictionary.count({ where }),
+    ]);
+    entries = entries.map(entry => ({ ...entry, hasDictionaryEntry: true }));
+  } else {
+    // Fetch only IDs for the union, then load definitions for the visible page.
+    const dictionaryIds = await prisma.strongsDictionary.findMany({
+      where, select: { strongsId: true }, orderBy: { strongsId: 'asc' },
+    });
+    const byKey = new Map();
+    for (const { strongsId } of dictionaryIds) {
+      const key = strongsKey(strongsId);
+      if (!byKey.has(key) || strongsId === strongsAliases(key)[0]) byKey.set(key, strongsId);
+    }
+    const keys = [...new Set([...byKey.keys(), ...editorialIds])].sort(
+      (a, b) => strongsAliases(a)[0].localeCompare(strongsAliases(b)[0]),
+    );
+    total = keys.length;
+    const pageKeys = keys.slice(offset, offset + limit);
+    const pageIds = pageKeys.map(key => byKey.get(key)).filter(Boolean);
+    const dictionary = pageIds.length ? await prisma.strongsDictionary.findMany({
+      where: { strongsId: { in: pageIds } }, select,
+    }) : [];
+    const byId = new Map(dictionary.map(entry => [entry.strongsId, entry]));
+    entries = pageKeys.map(key => {
+      const entry = byId.get(byKey.get(key));
+      return entry ? { ...entry, hasDictionaryEntry: true } : studyOnlyEntry(key);
+    });
+  }
 
-  // Fetch the Strong's entries with verseReferences for attachment info
-  const entries = await prisma.strongsDictionary.findMany({
-    where,
-    skip: offset,
-    take: limit,
-    select: {
-      strongsId: true,
-      originalWord: true,
-      transliteration: true,
-      shortDefinition: true,
-      fullDefinition: true,
-      language: true,
-      partOfSpeech: true,
-      grammaticalCase: true,
-      gender: true,
-      number: true,
-      usageCount: true,
-      crossReferences: true,
-      adminExplanation: true,
-      verseReferences: true,
-      verseExplanationWordStudies: {
-        orderBy: { sortOrder: 'asc' },
-        select: {
-          surfaceText: true,
-          customDefinition: true,
-          sortOrder: true,
-          explanation: {
-            select: {
-              bookName: true,
-              chapter: true,
-              verseNumber: true,
-              bibleVersion: true,
-              themes: {
-                orderBy: { sortOrder: 'asc' },
-                select: { themeName: true },
-              },
-            },
-          },
-        },
-      },
-    },
-    orderBy: { strongsId: 'asc' },
-  });
-
-  // Add computed verseCount from verseReferences
-  const enriched = entries.map((entry) => {
-    const contextualStudies = entry.verseExplanationWordStudies.map((study) => ({
-      surfaceText: study.surfaceText,
-      customDefinition: study.customDefinition,
-      sortOrder: study.sortOrder,
-      reference: study.explanation
-        ? {
-            bookName: study.explanation.bookName,
-            chapter: study.explanation.chapter,
-            verseNumber: study.explanation.verseNumber,
-            bibleVersion: study.explanation.bibleVersion,
-          }
-        : null,
-      themes: study.explanation?.themes?.map((theme) => theme.themeName) || [],
-    }));
-    const { verseExplanationWordStudies, ...entryData } = entry;
-    return {
-      ...entryData,
-      contextualStudies,
-      verseCount: Array.isArray(entry.verseReferences) ? entry.verseReferences.length : 0,
-    };
-  });
-
-  const translated = await translateSearchPage(withEditorialReferences(enriched, references), lang);
+  const enriched = withEditorialReferences(entries, references);
+  const translated = await translateSearchPage(preview ? enriched.map(toBrowsePreview) : enriched, lang);
+  const hasNext = offset + entries.length < total && entries.length > 0;
   return {
     status: 200,
     message: 'Book words fetched successfully',
-    data: { data: translated, total, hasNext: offset + entries.length < total && entries.length > 0, contentLanguage: lang },
+    data: { data: translated, total, hasNext, contentLanguage: lang,
+      ...(preview ? { nextOffset: hasNext ? offset + entries.length : null } : {}) },
   };
 };
 

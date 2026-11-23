@@ -5,7 +5,8 @@ import { NotFoundError, ValidationError } from '../../utils/AppError.js';
 
 export const getStrongsEntry = asyncHandler(async (req, res) => {
   const { strongsId } = req.params;
-  const result = await strongsService.getStrongsEntry(strongsId, req.query.lang);
+  const { lang, bookName, studyOffset } = req.query;
+  const result = await strongsService.getStrongsEntry(strongsId, lang, { bookName, studyOffset: Number(studyOffset) || 0 });
   res.json(formatApiResponse(result));
 });
 
@@ -33,8 +34,8 @@ export const getBookWords = asyncHandler(async (req, res) => {
   if (!bookName) {
     throw new ValidationError('bookName is required');
   }
-  const { limit, offset, lang, language } = req.query;
-  const result = await strongsService.getBookWords(bookName, parseInt(limit) || 4, parseInt(offset) || 0, lang, language);
+  const { limit, offset, lang, language, view } = req.query;
+  const result = await strongsService.getBookWords(bookName, parseInt(limit) || (view === 'preview' ? 6 : 4), parseInt(offset) || 0, lang, language, view);
   res.json(formatApiResponse(result));
 });
 

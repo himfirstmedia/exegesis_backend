@@ -1,10 +1,19 @@
 import { prisma } from '../../config/db.js';
+import { parseStrongsIds, strongsText } from '../shared-study/normalization.js';
 
 // BSB and Berean are aliases in existing editorial/imported records. Keep the
 // stored spelling, but use a common key when combining references.
 export const editionKey = value => ['BSB', 'BEREAN'].includes(String(value || 'BSB').toUpperCase())
   ? 'BSB' : String(value).toUpperCase();
-export const referenceKey = ref => `${ref.bookName}:${ref.chapter}:${ref.verse}:${editionKey(ref.translation)}`;
+export const referenceKey = ref => `${ref.bookName}:${ref.chapter}:${ref.verse}:${ref.verseEnd ?? ''}:${editionKey(ref.translation)}`;
+
+export const strongsKey = value => String(value || '').trim().toUpperCase()
+  .replace(/^([HG])0*(\d+)([A-Z]?)$/, '$1$2$3');
+export const strongsAliases = value => {
+  const key = strongsKey(value);
+  const match = key.match(/^([HG])(\d+)([A-Z]?)$/);
+  return match ? [...new Set([`${match[1]}${match[2].padStart(4, '0')}${match[3]}`, key, String(value).trim().toUpperCase()])] : [key];
+};
 
 const parseWords = value => {
   if (Array.isArray(value)) return value;
@@ -16,6 +25,8 @@ const parseWords = value => {
  * Imported occurrences stay in VerseWord; editorial links must never fabricate
  * imported word positions or overwrite the dictionary's general definition. */
 export async function getEditorialReferences({ bookName, chapter, verse, strongsId } = {}) {
+  const aliases = strongsId ? strongsAliases(strongsId) : null;
+  const idFilter = aliases?.length === 1 ? aliases[0] : { in: aliases };
   const passage = {
     ...(bookName ? { bookName } : {}),
     ...(chapter > 0 ? { chapter } : {}),
@@ -35,9 +46,14 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
   const [sharedWords, studies, detailed, resources] = await Promise.all([
     prisma.studyWord.findMany({
       where: {
-        ...(strongsId ? { strongLinks: { some: { strongsId } } } : {}),
+        strongLinks: aliases ? { some: { strongsId: idFilter } } : { some: {} },
         study: {
           languageCode: 'en',
+          OR: [
+            { explanations: { some: {} } },
+            { dailyVerses: { some: { isPublished: true } } },
+            { devotions: { some: { isPublished: true } } },
+          ],
           ...(bookName || chapter > 0 ? {
             passage: {
               ...(bookName ? { book: { name: bookName } } : {}),
@@ -46,25 +62,32 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
           } : {}),
         },
       },
-      include: {
-        strongLinks: true,
+      select: {
+        surfaceText: true,
+        contextualMeaning: true,
+        sortOrder: true,
+        strongLinks: { select: { strongsId: true } },
         study: {
-          include: {
-            passage: { include: { book: true } },
-            themes: { orderBy: { sortOrder: 'asc' } },
+          select: {
+            bibleEditionId: true,
+            passage: { select: {
+              startChapter: true, startVerse: true, endChapter: true, endVerse: true,
+              book: { select: { name: true } },
+            } },
+            themes: { select: { text: true }, orderBy: { sortOrder: 'asc' } },
           },
         },
       },
       orderBy: [{ studyId: 'asc' }, { sortOrder: 'asc' }],
     }),
     prisma.verseWordStudy.findMany({
-      where: { ...passage, ...(verse > 0 ? { verse } : {}), ...(strongsId ? { strongsId } : {}) },
+      where: { ...passage, ...(verse > 0 ? { verse } : {}), ...(aliases ? { strongsId: idFilter } : {}) },
       orderBy: [{ bookName: 'asc' }, { chapter: 'asc' }, { verse: 'asc' }],
     }),
     prisma.verseWordStudyEntry.findMany({
       where: {
-        ...(strongsId ? { strongsId } : { strongsId: { not: null } }),
-        explanation: { ...passage, ...(verse > 0 ? { verseNumber: verse } : {}) },
+        strongsId: aliases ? idFilter : { not: null },
+        explanation: { ...passage, sharedStudyId: null, ...(verse > 0 ? { verseNumber: verse } : {}) },
       },
       include: { explanation: { include: { themes: { orderBy: { sortOrder: 'asc' } } } } },
       orderBy: { sortOrder: 'asc' },
@@ -75,7 +98,7 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
       where: {
         ...passage,
         ...(verse > 0 ? { verseStart: { lte: verse }, OR: [{ verseEnd: null }, { verseEnd: { gte: verse } }] } : {}),
-        ...(strongsId ? { wordStudies: { contains: strongsId } } : {}),
+        ...(aliases ? { AND: [{ OR: aliases.map(id => ({ wordStudies: { contains: id, mode: 'insensitive' } })) }] } : {}),
       },
       orderBy: { id: 'asc' },
     }),
@@ -86,18 +109,21 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
   for (const word of sharedWords) {
     const { passage: ref, bibleEditionId } = word.study;
     for (const link of word.strongLinks) {
+      if (strongsId && strongsKey(link.strongsId) !== strongsKey(strongsId)) continue;
       refs.push({ strongsId: link.strongsId, bookName: ref.book.name,
         chapter: ref.startChapter, verse: ref.startVerse, translation: bibleEditionId,
+        ...(ref.startChapter === ref.endChapter && ref.endVerse > ref.startVerse ? { verseEnd: ref.endVerse } : {}),
         surfaceText: word.surfaceText, adminExplanation: word.contextualMeaning,
-        sortOrder: word.sortOrder, themes: word.study.themes.map(theme => theme.text) });
+        sortOrder: word.sortOrder, themes: word.study.themes.map(theme => theme.text), source: 'shared' });
     }
   }
   for (const row of detailed) {
     const parent = row.explanation;
     refs.push({ strongsId: row.strongsId, bookName: parent.bookName, chapter: Number(parent.chapter),
       verse: Number(parent.verseNumber), translation: parent.bibleVersion || 'BSB',
+      ...(parent.verseEnd ? { verseEnd: Number(parent.verseEnd) } : {}),
       surfaceText: row.surfaceText, adminExplanation: row.customDefinition,
-      sortOrder: row.sortOrder, themes: parent.themes.map(theme => theme.themeName) });
+      sortOrder: row.sortOrder, themes: parent.themes.map(theme => theme.themeName), source: 'explanation' });
   }
   for (const row of studies) refs.push({ strongsId: row.strongsId, bookName: row.bookName,
     chapter: Number(row.chapter), verse: row.verse == null ? null : Number(row.verse),
@@ -105,37 +131,59 @@ export async function getEditorialReferences({ bookName, chapter, verse, strongs
   for (const row of resources) {
     // Legacy resource records have no edition field and are historically BSB.
     for (const word of parseWords(row.wordStudies)) {
-      const id = word.strongsId || word.strongs;
-      if (!id || (strongsId && id !== strongsId)) continue;
-      refs.push({ strongsId: id, bookName: row.bookName, chapter: Number(row.chapter),
-        verse: Number(row.verseStart), translation: 'BSB', surfaceText: word.word || word.surfaceText,
-        adminExplanation: word.meaning || word.customDefinition });
+      if (!word || typeof word !== 'object') continue;
+      for (const id of parseStrongsIds(strongsText(word))) {
+        if (strongsId && strongsKey(id) !== strongsKey(strongsId)) continue;
+        refs.push({ strongsId: id, bookName: row.bookName, chapter: Number(row.chapter),
+          verse: Number(row.verseStart), translation: 'BSB', surfaceText: word.word || word.surfaceText,
+          ...(row.verseEnd ? { verseEnd: Number(row.verseEnd) } : {}),
+          adminExplanation: word.meaning || word.customDefinition });
+      }
     }
   }
   return refs;
 }
 
 export function withEditorialReferences(entries, references) {
+  const byId = new Map();
+  for (const ref of references) {
+    const id = strongsKey(ref.strongsId);
+    if (!byId.has(id)) byId.set(id, []);
+    byId.get(id).push(ref);
+  }
   return entries.map(entry => {
-    const refs = references.filter(ref => ref.strongsId === entry.strongsId);
+    const refs = byId.get(strongsKey(entry.strongsId)) || [];
     const merged = new Map();
     for (const ref of refs) {
       const key = referenceKey(ref);
       // Normalized explanation > standalone attachment > legacy resource.
       if (!merged.has(key)) merged.set(key, ref);
     }
-    const verseReferences = [...merged.values()].map(({ strongsId, sortOrder, themes, ...ref }) => ref);
-    const contextualStudies = [...(entry.contextualStudies || [])];
-    const existingKeys = new Set(contextualStudies.filter(s => s.reference).map(s => referenceKey({
-      bookName: s.reference.bookName, chapter: s.reference.chapter, verse: s.reference.verseNumber,
+    const verseReferences = [...merged.values()].map(({ strongsId, sortOrder, themes, source, ...ref }) => ref);
+    const contextualStudies = [];
+    const seen = new Set();
+    for (const ref of refs) {
+      const first = merged.get(referenceKey(ref));
+      if (typeof ref.adminExplanation !== 'string' || !ref.adminExplanation.trim() ||
+        (ref !== first && typeof first.adminExplanation === 'string' && first.adminExplanation.trim() &&
+          (!ref.source || ref.source !== first.source))) continue;
+      const key = JSON.stringify([referenceKey(ref), ref.surfaceText?.trim(), ref.adminExplanation.trim()]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      contextualStudies.push({ surfaceText: ref.surfaceText || null, customDefinition: ref.adminExplanation,
+        sortOrder: ref.sortOrder || 0, themes: ref.themes || [], reference: {
+          bookName: ref.bookName, chapter: ref.chapter, verseNumber: ref.verse, verseEnd: ref.verseEnd, bibleVersion: ref.translation,
+        } });
+    }
+    const existingKeys = new Set(contextualStudies.map(s => referenceKey({
+      bookName: s.reference.bookName, chapter: s.reference.chapter, verse: s.reference.verseNumber, verseEnd: s.reference.verseEnd,
       translation: s.reference.bibleVersion,
     })));
-    for (const ref of merged.values()) {
-      if (existingKeys.has(referenceKey(ref))) continue;
-      contextualStudies.push({ surfaceText: ref.surfaceText || null, customDefinition: ref.adminExplanation || null,
-        sortOrder: ref.sortOrder || 0, themes: ref.themes || [], reference: {
-          bookName: ref.bookName, chapter: ref.chapter, verseNumber: ref.verse, bibleVersion: ref.translation,
-        } });
+    for (const study of entry.contextualStudies || []) {
+      const ref = study.reference;
+      if (!ref || !existingKeys.has(referenceKey({
+        bookName: ref.bookName, chapter: ref.chapter, verse: ref.verseNumber, verseEnd: ref.verseEnd, translation: ref.bibleVersion,
+      }))) contextualStudies.push(study);
     }
     return { ...entry, verseReferences, verseCount: verseReferences.length, contextualStudies };
   });
