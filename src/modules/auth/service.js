@@ -329,42 +329,64 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
   };
 };
 
+const normalizeRegistrationEmail = value => typeof value === "string" ? value.trim().toLowerCase() : "";
+const isRegistrationEmail = email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+// Use exact case-insensitive equality, not a LIKE pattern: addresses can
+// contain literal underscores or percent signs.
+const registrationEmailExists = async (email) => {
+  const rows = await prisma.$queryRaw`
+    SELECT 1 AS present FROM system_users WHERE lower(email) = ${email} LIMIT 1
+  `;
+  return rows.length > 0;
+};
+
+const duplicateRegistrationEmail = () => ({
+  status: 409,
+  message: "Email already exists, try another email address",
+  data: { reason: "email_exists" },
+});
+
 export const checkEmailAvailability = async (data) => {
-  const email = typeof data?.email === "string" ? data.email.trim().toLowerCase() : "";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  const email = normalizeRegistrationEmail(data?.email);
+  if (!isRegistrationEmail(email)) {
     return { status: 400, message: "Enter a valid email address" };
   }
-  const existingEmail = await prisma.systemUser.findFirst({
+  const existingUser = await prisma.systemUser.findFirst({
     where: { email },
-    select: { id: true },
+    select: { emailVerified: true },
   });
   return {
     status: 200,
-    message: existingEmail ? "Email already exists" : "Email is available",
-    data: { available: !existingEmail },
+    message: existingUser ? "Email already exists" : "Email is available",
+    data: {
+      available: !existingUser,
+      verified: existingUser?.emailVerified === true,
+    },
   };
 };
 
 export const register = async (data) => {
-  const { username, email, password, firstName, lastName, phoneNumber, dateOfBirth, gender, userRole } = data;
+  const { username, password, firstName, lastName, phoneNumber, dateOfBirth, gender } = data;
+  const email = normalizeRegistrationEmail(data.email);
 
+  if (!isRegistrationEmail(email)) {
+    return { status: 400, message: "Enter a valid email address" };
+  }
   if (!password) {
     return { status: 400, message: "Password is required" };
   }
 
-  const passwordError = validatePassword(password);
+  const passwordError = validatePassword(password, { requireSymbol: false });
   if (passwordError) {
     return { status: 400, message: passwordError };
   }
 
+  if (await registrationEmailExists(email)) return duplicateRegistrationEmail();
+
   const existingUser = await prisma.systemUser.findFirst({ where: { username } });
   if (existingUser) {
     return { status: 401, message: "Username already exists, try another one" };
-  }
-
-  const existingEmail = await prisma.systemUser.findFirst({ where: { email: email.toLowerCase() } });
-  if (existingEmail) {
-    return { status: 401, message: "Email already exists, try another email address" };
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
@@ -374,7 +396,7 @@ export const register = async (data) => {
   const user = await prisma.systemUser.create({
     data: {
       username,
-      email: email.toLowerCase(),
+      email,
       password: hashedPassword,
       firstName,
       lastName,
@@ -390,7 +412,14 @@ export const register = async (data) => {
       loginCount: 0n,
       subscriptionTier: "free",
     },
+  }).catch(error => {
+    // A competing signup can claim this address after the read above.
+    const target = error?.meta?.target;
+    if (error?.code === "P2002" &&
+        (Array.isArray(target) ? target.includes("email") : target === "system_users_email_key")) return null;
+    throw error;
   });
+  if (!user) return duplicateRegistrationEmail();
 
   // Create Stripe customer instantly so the free tier is linked from the start
   try {

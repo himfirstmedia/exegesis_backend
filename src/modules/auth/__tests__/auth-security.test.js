@@ -9,6 +9,7 @@ jest.mock("stripe", () => ({
 
 jest.mock("../../../config/db.js", () => ({
   prisma: {
+    $queryRaw: jest.fn(),
     systemUser: {
       findFirst: jest.fn(),
       create: jest.fn(),
@@ -59,23 +60,21 @@ const existingUser = {
 describe("onboarding email availability", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.$queryRaw.mockResolvedValue([]);
   });
 
   test("normalizes the email and reports an existing account", async () => {
-    prisma.systemUser.findFirst.mockResolvedValue({ id: "existing-user" });
+    prisma.$queryRaw.mockResolvedValue([{ present: 1 }]);
 
-    const result = await checkEmailAvailability({ email: " Reader@Example.COM " });
+    const result = await checkEmailAvailability({ email: " Read_Er@Example.COM " });
 
-    expect(prisma.systemUser.findFirst).toHaveBeenCalledWith({
-      where: { email: "reader@example.com" },
-      select: { id: true },
-    });
+    const [sql, email] = prisma.$queryRaw.mock.calls[0];
+    expect(sql.join("?")).toContain("WHERE lower(email) = ?");
+    expect(email).toBe("read_er@example.com");
     expect(result).toMatchObject({ status: 200, data: { available: false } });
   });
 
   test("reports a new email without creating an account", async () => {
-    prisma.systemUser.findFirst.mockResolvedValue(null);
-
     const result = await checkEmailAvailability({ email: "new@example.com" });
 
     expect(result).toMatchObject({ status: 200, data: { available: true } });
@@ -86,13 +85,14 @@ describe("onboarding email availability", () => {
     const result = await checkEmailAvailability({ email: "not-an-email" });
 
     expect(result.status).toBe(400);
-    expect(prisma.systemUser.findFirst).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 });
 
 describe("registration cannot self-assign a privileged role", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.$queryRaw.mockResolvedValue([]);
     process.env.JWT_SECRET = "auth-security-test-secret";
     prisma.systemUser.findFirst.mockResolvedValue(null);
     prisma.systemUser.create.mockImplementation(async ({ data }) => ({
@@ -131,6 +131,59 @@ describe("registration cannot self-assign a privileged role", () => {
 
     const { data } = prisma.systemUser.create.mock.calls[0][0];
     expect(Number(data.userRole)).toBe(2);
+  });
+
+  test("accepts email signup passwords without a symbol", async () => {
+    const result = await register({
+      username: "newreader",
+      email: "newreader@example.com",
+      password: "Secure123",
+      firstName: "New",
+      lastName: "Reader",
+    });
+
+    expect(result.status).toBe(200);
+    expect(prisma.systemUser.create.mock.calls[0][0].data.password).not.toBe("Secure123");
+    expect(prisma.verification.create).toHaveBeenCalledTimes(1);
+  });
+
+  test("still rejects email signup passwords missing a required number", async () => {
+    const result = await register({
+      username: "newreader",
+      email: "newreader@example.com",
+      password: "NoDigitsHere",
+      firstName: "New",
+      lastName: "Reader",
+    });
+
+    expect(result.status).toBe(400);
+    expect(result.message).not.toContain("special character");
+    expect(prisma.systemUser.create).not.toHaveBeenCalled();
+  });
+
+  test("checks the normalized email again before registration or sending a code", async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([{ present: 1 }]);
+    const result = await register({
+      username: "newreader", email: " Reader@Example.COM ", password: "Secure123",
+      firstName: "New", lastName: "Reader",
+    });
+
+    expect(prisma.$queryRaw.mock.calls[0][1]).toBe("reader@example.com");
+    expect(result).toMatchObject({ status: 409, data: { reason: "email_exists" } });
+    expect(prisma.systemUser.create).not.toHaveBeenCalled();
+    expect(prisma.verification.create).not.toHaveBeenCalled();
+    expect(prisma.message.create).not.toHaveBeenCalled();
+  });
+
+  test("reports an email claimed between the duplicate check and signup insert", async () => {
+    prisma.systemUser.create.mockRejectedValueOnce({ code: "P2002", meta: { target: ["email"] } });
+    const result = await register({
+      username: "newreader", email: "reader@example.com", password: "Secure123",
+      firstName: "New", lastName: "Reader",
+    });
+    expect(result).toMatchObject({ status: 409, data: { reason: "email_exists" } });
+    expect(prisma.verification.create).not.toHaveBeenCalled();
+    expect(prisma.message.create).not.toHaveBeenCalled();
   });
 });
 
