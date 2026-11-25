@@ -11,6 +11,7 @@ jest.mock('../../config/db.js', () => ({
       findMany: jest.fn(),
       count: jest.fn(),
       upsert: jest.fn(),
+      update: jest.fn(),
       delete: jest.fn(),
     },
   },
@@ -54,6 +55,7 @@ const makePrologue = (overrides = {}) => ({
 
 test('successful admin additions/edits and deletions wake the overview publisher', async () => {
   jest.clearAllMocks();
+  prisma.bookPrologue.findUnique.mockResolvedValue(null);
   prisma.bookPrologue.upsert.mockResolvedValue(makePrologue());
   await upsertBookPrologue('admin-id', { bookName: 'Genesis', summary: 'New source' });
   expect(requestOverviewPackPublication).toHaveBeenCalledTimes(1);
@@ -64,7 +66,10 @@ test('successful admin additions/edits and deletions wake the overview publisher
 });
 
 describe('prologue titles and canonical book names', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.bookPrologue.findUnique.mockResolvedValue(null);
+  });
 
   test('creates a title and returns it when the prologue is reloaded', async () => {
     const source = makePrologue({ title: 'Beginnings and Covenant' });
@@ -81,18 +86,33 @@ describe('prologue titles and canonical book names', () => {
 
   test('updates a title and includes it in the admin list', async () => {
     const source = makePrologue({ title: 'A New Title' });
-    prisma.bookPrologue.upsert.mockResolvedValue(source);
+    prisma.bookPrologue.findUnique.mockResolvedValue(makePrologue({ title: 'Old title' }));
+    prisma.bookPrologue.update.mockResolvedValue(source);
     await upsertBookPrologue('editor', { bookName: 'Genesis', title: 'A New Title' });
-    expect(prisma.bookPrologue.upsert.mock.calls[0][0].update.title).toBe('A New Title');
+    expect(prisma.bookPrologue.update).toHaveBeenCalledWith({
+      where: { bookName: 'Genesis' }, data: { title: 'A New Title', updatedBy: 'editor' },
+    });
     prisma.bookPrologue.findMany.mockResolvedValue([source]);
     prisma.bookPrologue.count.mockResolvedValue(1);
     expect((await getAllBookPrologues({})).data.data[0].title).toBe('A New Title');
   });
 
   test('does not clear a saved title when an older client omits it', async () => {
-    prisma.bookPrologue.upsert.mockResolvedValue(makePrologue({ title: 'Existing' }));
-    await upsertBookPrologue('editor', { bookName: 'Genesis', summary: 'Updated summary' });
-    expect(prisma.bookPrologue.upsert.mock.calls[0][0].update).not.toHaveProperty('title');
+    const current = makePrologue({ title: 'Existing' });
+    prisma.bookPrologue.findUnique.mockResolvedValue(current);
+    prisma.bookPrologue.update.mockResolvedValue({ ...current, summary: 'Updated summary' });
+    await upsertBookPrologue('editor', { bookName: 'Genesis', author: current.author, summary: 'Updated summary' });
+    expect(prisma.bookPrologue.update).toHaveBeenCalledWith({
+      where: { bookName: 'Genesis' }, data: { summary: 'Updated summary', updatedBy: 'editor' },
+    });
+  });
+
+  test('does not write or republish a no-op save', async () => {
+    const current = makePrologue();
+    prisma.bookPrologue.findUnique.mockResolvedValue(current);
+    await upsertBookPrologue('editor', { bookName: 'Genesis', summary: current.summary, structure: current.structure.map(row => ({ ...row })) });
+    expect(prisma.bookPrologue.update).not.toHaveBeenCalled();
+    expect(requestOverviewPackPublication).not.toHaveBeenCalled();
   });
 
   test('rejects invalid names and invalid titles without writing', async () => {

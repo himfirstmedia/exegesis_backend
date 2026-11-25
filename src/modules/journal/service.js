@@ -1,5 +1,6 @@
 import { localizeListPreviews } from '../admin/listPreview.js';
 import { serializeBigInt } from "../../utils/helpers.js";
+import { changedFields } from "../../utils/rowPatch.js";
 import { prisma } from "../../config/db.js";
 import { cache } from "../../services/cacheService.js";
 import { parseLocalDate } from "../../utils/dates.js";
@@ -631,10 +632,11 @@ export const updateJournalPrompt = async (data, userId) => {
   if (chapter !== undefined) updateData.chapter = chapter ? BigInt(chapter) : null;
   if (verseNumber !== undefined) updateData.verseNumber = verseNumber ? BigInt(verseNumber) : null;
 
-  const journalPrompt = await prisma.journalPrompt.update({
+  const patch = changedFields(existing, updateData);
+  const journalPrompt = Object.keys(patch).length ? await prisma.journalPrompt.update({
     where: { id: BigInt(id) },
-    data: updateData,
-  });
+    data: patch,
+  }) : existing;
 
   return {
     returnCode: 200,

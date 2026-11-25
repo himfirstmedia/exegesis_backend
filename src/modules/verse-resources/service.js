@@ -1,4 +1,5 @@
 import { serializeBigInt } from '../../utils/helpers.js';
+import { changedFields } from '../../utils/rowPatch.js';
 import { prisma } from '../../config/db.js';
 import { cache } from '../../services/cacheService.js';
 import { getVerse, getCatalog } from '../bible-translations/service.js';
@@ -817,15 +818,30 @@ export const upsertVerseResource = async (data, userId) => {
     };
 
     let result;
+    let previous;
     if (id) {
-      result = await prisma.verseResource.update({ where: { id: BigInt(id) }, data: payload });
+      const where = { id: BigInt(id) };
+      previous = await prisma.verseResource.findUnique({ where });
+      if (!previous) return { status: 404, message: 'Resource not found' };
+      const supplied = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'updatedBy' && data[key] !== undefined));
+      const patch = changedFields(previous, supplied);
+      result = Object.keys(patch).length
+        ? await prisma.verseResource.update({ where, data: { ...patch, updatedBy: userId } })
+        : previous;
     } else {
       result = await prisma.verseResource.create({
         data: { ...payload, createdBy: userId },
       });
     }
 
-    await cache.del('verse-resources', `${bookName}:${chapter}:${verseStart}`);
+    if (result !== previous) {
+      const keys = new Set([`${result.bookName}:${result.chapter}:${result.verseStart}`]);
+      if (previous) keys.add(`${previous.bookName}:${previous.chapter}:${previous.verseStart}`);
+      await Promise.all([...keys].flatMap(key => [
+        cache.del('verse-resources', key),
+        cache.del('verse-resources-counts', key),
+      ]));
+    }
     return {
       status: 200,
       message: 'Resource saved successfully',

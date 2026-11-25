@@ -33,9 +33,25 @@ test('daily partial writes use current shared content, not the stale compatibili
     .mockResolvedValueOnce({ id: 1n, explanation: 'Current shared', reflection: 'Updated reflection' });
   const data = { reflection: 'Updated reflection', explanation: undefined };
   const result = await writeDailyContent(client, 'dailyVerse', { id: 1, data });
+  expect(tx.dailyVerse.update).toHaveBeenCalledWith({ where: { id: 1n }, data: { reflection: 'Updated reflection', updatedBy: undefined } });
+  expect(tx.dailyVerse.findUnique).toHaveBeenCalledTimes(1);
   expect(writeStudy).toHaveBeenCalledWith(tx, 'verse', expect.objectContaining({ id: 1n, explanation: 'Current shared', application: 'Current application', reflection: 'Updated reflection' }),
     { allowSharedEdit: true, expectedVersion: 4 });
   expect(result.reflection).toBe('Updated reflection');
+});
+
+test('daily devotion edits patch only changed legacy fields while retaining the shared link', async () => {
+  const old = { id: 2n, sharedStudyId: 7n, title: 'Before', explanation: 'Saved' };
+  const tx = { dailyDevotion: {
+    findUnique: jest.fn().mockResolvedValue(old),
+    update: jest.fn().mockResolvedValue({ ...old, title: 'After' }),
+  } };
+  const client = { $transaction: jest.fn(callback => callback(tx)) };
+  hydrateStudies.mockImplementation(async (_tx, _type, source) => source);
+  writeStudy.mockResolvedValueOnce({ id: 7n, version: 3 });
+  await writeDailyContent(client, 'dailyDevotion', { id: 2, data: { title: 'After', explanation: 'Saved', updatedBy: 'admin' } });
+  expect(tx.dailyDevotion.update).toHaveBeenCalledWith({ where: { id: 2n }, data: { title: 'After', updatedBy: 'admin' } });
+  expect(hydrateStudies.mock.calls.at(-1)[2].sharedStudyId).toBe(7n);
 });
 
 test('write failures propagate through the transaction, not a separate post-save shared update', async () => {

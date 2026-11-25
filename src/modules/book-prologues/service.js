@@ -1,6 +1,7 @@
 import { localizeListPreviews } from '../admin/listPreview.js';
 import { prisma } from '../../config/db.js';
 import { serializeBigInt } from '../../utils/helpers.js';
+import { changedFields } from '../../utils/rowPatch.js';
 import { normalizeLanguage, translateMany } from '../../utils/translator.js';
 import { withContentLanguage } from '../../utils/contentLanguage.js';
 import { requestOverviewPackPublication } from './pack-worker.js';
@@ -279,11 +280,20 @@ export const upsertBookPrologue = async (userId, body) => {
     christConnection: christConnection || null,
   };
 
-  const prologue = await prisma.bookPrologue.upsert({
-    where: { bookName },
-    create: { bookName, ...data, createdBy: userId, updatedBy: userId },
-    update: { ...data, updatedBy: userId },
-  });
+  const where = { bookName };
+  const existing = await prisma.bookPrologue.findUnique({ where });
+  const supplied = Object.fromEntries(Object.entries(data).filter(([key]) => body[key] !== undefined));
+  const patch = changedFields(existing, supplied);
+  if (existing && !Object.keys(patch).length) {
+    return { status: 200, message: 'Book prologue saved', data: serializeBigInt(existing) };
+  }
+  const prologue = existing
+    ? await prisma.bookPrologue.update({ where, data: { ...patch, updatedBy: userId } })
+    : await prisma.bookPrologue.upsert({
+        where,
+        create: { bookName, ...data, createdBy: userId, updatedBy: userId },
+        update: { ...supplied, updatedBy: userId },
+      });
 
   requestOverviewPackPublication();
   return { status: 200, message: 'Book prologue saved', data: serializeBigInt(prologue) };

@@ -103,3 +103,64 @@ test('concurrent version changes stop before deleting existing study sections', 
   expect(tx.studyWord.deleteMany).not.toHaveBeenCalled();
   expect(tx.dailyVerse.update).not.toHaveBeenCalled();
 });
+
+test('editing only prose does not rewrite shared children or relink the source', async () => {
+  const tx = transaction(study());
+  const input = source({
+    sharedStudyId: 12n, verseIntroduction: 'Introduction', explanation: 'Updated explanation',
+    application: 'Application', takeaways: '["One\\nparagraph"]',
+    wordStudies: '[{"word":"word","strongs":"H1/H2","definition":"meaning"}]',
+  });
+  await expect(writeStudy(tx, 'verse', input, { allowSharedEdit: true, expectedVersion: 3 }))
+    .resolves.toEqual({ id: 12n, version: 4 });
+  expect(tx.passageStudy.updateMany).toHaveBeenCalledWith({
+    where: { id: 12n, version: 3 },
+    data: { explanation: 'Updated explanation', version: { increment: 1 } },
+  });
+  expect(tx.dailyVerse.update).not.toHaveBeenCalled();
+});
+
+test('patches one shared word and its changed Strong’s links without replacing the row', async () => {
+  const previous = study();
+  previous.words[0].id = 71n;
+  const tx = transaction(previous);
+  tx.studyWord = { update: jest.fn(), deleteMany: jest.fn(), createManyAndReturn: jest.fn() };
+  tx.studyWordStrong = { deleteMany: jest.fn(), createMany: jest.fn() };
+  tx.strongsDictionary = { findMany: jest.fn().mockResolvedValue([]) };
+  tx.strongsIdentifier = { createMany: jest.fn() };
+  await writeStudy(tx, 'verse', source({
+    sharedStudyId: 12n, verseIntroduction: 'Introduction', explanation: 'Explanation',
+    application: 'Application', takeaways: '["One\\nparagraph"]',
+    wordStudies: '[{"word":"word","strongs":"H1/H3","definition":"new meaning"}]',
+  }), { allowSharedEdit: true, expectedVersion: 3 });
+  expect(tx.studyWord.update).toHaveBeenCalledWith({ where: { id: 71n }, data: { contextualMeaning: 'new meaning' } });
+  expect(tx.studyWord.deleteMany).not.toHaveBeenCalled();
+  expect(tx.studyWord.createManyAndReturn).not.toHaveBeenCalled();
+  expect(tx.studyWordStrong.deleteMany).toHaveBeenCalledWith({ where: { OR: [{ studyWordId: 71n, strongsId: { in: ['H2'] } }] } });
+  expect(tx.studyWordStrong.createMany).toHaveBeenCalledWith({ data: [{ studyWordId: 71n, strongsId: 'H3' }] });
+});
+
+test.each([true, false])('batches and reuses cross-reference passages (already stored: %s)', async alreadyStored => {
+  const tx = transaction(null);
+  tx.passageStudy.create = jest.fn().mockResolvedValue({ id: 12n, version: 1 });
+  tx.bibleBook.createMany = jest.fn();
+  const target = { bookId: 45, startChapter: 5, startVerse: 1, endChapter: 5, endVerse: 3 };
+  const stored = { ...target, id: 99n };
+  tx.scripturePassage.findMany = jest.fn().mockResolvedValue(alreadyStored ? [stored] : []);
+  tx.scripturePassage.createManyAndReturn = jest.fn().mockResolvedValue([stored]);
+  tx.studyCrossReference = { createMany: jest.fn() };
+  await writeStudy(tx, 'verse', source({ crossReferences: JSON.stringify([
+    { bookName: 'Romans', chapter: 5, verseNumber: 1, verseEnd: 3, commentary: 'First' },
+    { bookName: 'Genesis', chapter: 1, verseNumber: 1, commentary: 'Self' },
+    { bookName: 'Romans', chapter: 5, verseNumber: 1, verseEnd: 3, commentary: 'Repeated' },
+  ]) }));
+  expect(tx.scripturePassage.upsert).toHaveBeenCalledTimes(1);
+  if (alreadyStored) expect(tx.scripturePassage.createManyAndReturn).not.toHaveBeenCalled();
+  else expect(tx.scripturePassage.createManyAndReturn).toHaveBeenCalledWith({ data: [target], skipDuplicates: true });
+  expect(tx.scripturePassage.findMany).toHaveBeenCalledTimes(1);
+  expect(tx.studyCrossReference.createMany).toHaveBeenCalledWith({ data: [
+    expect.objectContaining({ passageId: 99n, commentary: 'First', sortOrder: 0 }),
+    expect.objectContaining({ passageId: 1n, commentary: 'Self', sortOrder: 1 }),
+    expect.objectContaining({ passageId: 99n, commentary: 'Repeated', sortOrder: 2 }),
+  ] });
+});

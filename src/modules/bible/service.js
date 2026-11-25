@@ -1,4 +1,5 @@
 import { serializeBigInt } from "../../utils/helpers.js";
+import { planRowPatch } from "../../utils/rowPatch.js";
 import { validVerseRange, verseEndData } from '../../utils/verseRange.js';
 import { localizeListPreviews } from '../admin/listPreview.js';
 import { prisma } from "../../config/db.js";
@@ -901,15 +902,26 @@ const getCachedDailyTranslationOrWarm = async ({
 };
 
 export const getVerseExplanationForEdit = async (data = {}) => {
-  const id = String(data.id ?? "");
-  if (!/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n) {
-    return { status: 400, message: "A valid explanation ID is required" };
+  let where;
+  if (data.id != null) {
+    const id = String(data.id);
+    if (!/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n) {
+      return { status: 400, message: "A valid explanation ID is required" };
+    }
+    where = { id: BigInt(id) };
+  } else {
+    const { bookName, chapter, verseNumber } = data;
+    if (typeof bookName !== "string" || !bookName.trim() ||
+        ![chapter, verseNumber].every(value => Number.isSafeInteger(value) && value > 0)) {
+      return { status: 400, message: "A valid verse reference is required" };
+    }
+    where = { bookName_chapter_verseNumber: { bookName, chapter: BigInt(chapter), verseNumber: BigInt(verseNumber) } };
   }
 
-  // Read the canonical record directly by its primary key. Editor reads
+  // Read the canonical record directly by ID or reference. Editor reads
   // do not need translation or additional scripture/dictionary requests.
   const record = await sharedStudy().verseExplanation.findUnique({
-    where: { id: BigInt(id) },
+    where,
     include: {
       exegesis: true,
       studyMetadata: true,
@@ -1133,27 +1145,55 @@ export const addVerseExplanation = async (data, userId) => {
     return { status: 400, message: `Word study ${invalidWordIndex + 1}: invalid Strong's ID` };
   }
 
+  const includeLegacyContent = {
+    exegesis: true,
+    studyMetadata: true,
+    wordStudies: { orderBy: { sortOrder: "asc" } },
+    practicalApps: { orderBy: { sortOrder: "asc" } },
+    crossReferences: { orderBy: { sortOrder: "asc" } },
+    themes: { orderBy: { sortOrder: "asc" } },
+  };
+  const changedFields = (row, fields) => Object.fromEntries(Object.entries(fields)
+    .filter(([key, value]) => value !== undefined && (row?.[key] ?? null) !== (value ?? null)));
   try {
+    let previousReference;
+    // Legacy rows and the shared study must commit together. Moving a rich
+    // explanation can exceed Prisma's default five seconds over a remote DB.
     const result = await prisma.$transaction(async (tx) => {
       // 1. Handle Root
       const savedAt = new Date();
       let root;
+      let contentChanged = false;
       if (id) {
-        root = await tx.verseExplanation.update({
+        previousReference = await tx.verseExplanation.findUnique({
           where: { id: BigInt(id) },
+          select: { bookName: true, chapter: true, verseNumber: true, verseEnd: true, bibleVersion: true, sortOrder: true, updatedOn: true },
+        });
+        root = await tx.verseExplanation.update({
+          where: { id: BigInt(id), ...(previousReference?.updatedOn !== undefined ? { updatedOn: previousReference.updatedOn } : {}) },
           data: {
-            bookName,
-            chapter: BigInt(chapter),
-            verseNumber: BigInt(verseNumber),
-            bibleVersion,
-            ...verseEndData(data.verseEnd),
-            sortOrder,
+            ...changedFields(previousReference, {
+              bookName, chapter: BigInt(chapter), verseNumber: BigInt(verseNumber),
+              bibleVersion, ...verseEndData(data.verseEnd), sortOrder,
+            }),
             updatedBy: userId,
             updatedOn: savedAt,
           },
+          include: includeLegacyContent,
         });
       } else {
-        root = await tx.verseExplanation.upsert({
+        const create = {
+          bookName,
+          chapter: BigInt(chapter),
+          verseNumber: BigInt(verseNumber),
+          bibleVersion,
+          ...verseEndData(data.verseEnd),
+          sortOrder,
+          createdBy: userId,
+          createdOn: savedAt,
+          updatedOn: savedAt,
+        };
+        root = data.createOnly === true ? await tx.verseExplanation.create({ data: create }) : await tx.verseExplanation.upsert({
           where: {
             bookName_chapter_verseNumber: {
               bookName,
@@ -1162,50 +1202,36 @@ export const addVerseExplanation = async (data, userId) => {
             },
           },
           update: { bibleVersion, ...verseEndData(data.verseEnd), sortOrder, updatedBy: userId, updatedOn: savedAt },
-          create: {
-            bookName,
-            chapter: BigInt(chapter),
-            verseNumber: BigInt(verseNumber),
-            bibleVersion,
-            ...verseEndData(data.verseEnd),
-            sortOrder,
-            createdBy: userId,
-            createdOn: savedAt,
-            updatedOn: savedAt,
-          },
+          create,
+          include: includeLegacyContent,
         });
       }
 
-      // 2. Handle Exegesis (1:1)
-      if (exegesis) {
-        await tx.verseExegesis.upsert({
+      const saveDetail = async (table, current, fields) => {
+        if (!fields) return;
+        const patch = changedFields(current, fields);
+        if (current && !Object.keys(patch).length) return;
+        contentChanged = true;
+        await table.upsert({
           where: { explanationId: root.id },
-          update: {
-            explanationText: exegesis.explanationText,
-            applicationText: exegesis.applicationText,
-          },
-          create: {
-            explanationId: root.id,
-            explanationText: exegesis.explanationText,
-            applicationText: exegesis.applicationText,
-          },
+          update: patch,
+          create: { explanationId: root.id, ...fields },
         });
-      }
-
-      // 3. Handle Metadata (1:1)
-      if (studyMetadata) {
-        const pendingStudyMetadata = normalizeStudyMetadata(studyMetadata);
-        await tx.verseStudyMetadata.upsert({
-          where: { explanationId: root.id },
-          update: { ...pendingStudyMetadata },
-          create: { explanationId: root.id, ...pendingStudyMetadata },
-        });
-      }
-
-      // 4. Handle Collections (1:N) - Delete and Re-insert for simplicity in Admin
-      await tx.verseWordStudyEntry.deleteMany({
-        where: { explanationId: root.id },
+      };
+      await saveDetail(tx.verseExegesis, root.exegesis, exegesis && {
+        explanationText: exegesis.explanationText, applicationText: exegesis.applicationText,
       });
+      await saveDetail(tx.verseStudyMetadata, root.studyMetadata, studyMetadata && normalizeStudyMetadata(studyMetadata));
+
+      const saveRows = async (table, current, rows) => {
+        const { create, update, remove } = planRowPatch(current ?? [], rows, row => row);
+        if (!create.length && !update.length && !remove.length) return;
+        contentChanged = true;
+        if (remove.length) await table.deleteMany({ where: { id: { in: remove.map(row => row.id) } } });
+        for (const { row, data } of update) await table.update({ where: { id: row.id }, data });
+        if (create.length) await table.createMany({ data: create.map(row => ({ explanationId: root.id, ...row })) });
+      };
+      let preparedWordStudies = [];
       if (submittedWordStudies.length) {
         // The legacy column holds only one dictionary foreign key. The shared
         // study below keeps every submitted ID, even if the dictionary lacks it.
@@ -1213,86 +1239,52 @@ export const addVerseExplanation = async (data, userId) => {
           new Set(wordStudyIds.flatMap(({ ids }) => ids.length === 1 ? ids : [])),
         );
 
-        let existingStrongIds = new Set();
-        if (inputStrongIds.length > 0) {
+        // A foreign key already present on a legacy row proves the
+        // dictionary entry exists; only look up unfamiliar IDs.
+        const existingStrongIds = new Set((root.wordStudies || []).map(row => row.strongsId).filter(Boolean));
+        const unknownIds = inputStrongIds.filter(id => !existingStrongIds.has(id));
+        if (unknownIds.length) {
           const existing = await tx.strongsDictionary.findMany({
-            where: { strongsId: { in: inputStrongIds } },
+            where: { strongsId: { in: unknownIds } },
             select: { strongsId: true },
           });
-          existingStrongIds = new Set(existing.map((e) => e.strongsId));
+          for (const { strongsId } of existing) existingStrongIds.add(strongsId);
         }
 
-        const preparedWordStudies = submittedWordStudies.map((ws, i) => {
+        preparedWordStudies = submittedWordStudies.map((ws, i) => {
           const { ids } = wordStudyIds[i];
           return {
-            explanationId: root.id,
             strongsId: ids.length === 1 && existingStrongIds.has(ids[0]) ? ids[0] : null,
             surfaceText: ws.surfaceText,
             customDefinition: ws.customDefinition,
             sortOrder: ws.sortOrder,
           };
         });
-
-        await tx.verseWordStudyEntry.createMany({ data: preparedWordStudies });
       }
+      await saveRows(tx.verseWordStudyEntry, root.wordStudies, preparedWordStudies);
+      await saveRows(tx.versePracticalApplication, root.practicalApps, (practicalApps || []).map((pa, i) => ({
+        applicationText: pa.applicationText,
+        sortOrder: pa.sortOrder ?? i,
+      })));
+      await saveRows(tx.verseCrossReference, root.crossReferences, (crossReferences || []).map((cr, i) => ({
+        bookName: cr.bookName,
+        chapter: BigInt(cr.chapter),
+        verseNumber: BigInt(cr.verseNumber),
+        ...verseEndData(cr.verseEnd),
+        referenceText: cr.referenceText,
+        commentary: cr.commentary,
+        sortOrder: cr.sortOrder ?? i,
+      })));
+      await saveRows(tx.verseTheme, root.themes, (themes || []).map((t, i) => ({
+        themeName: t.themeName,
+        sortOrder: t.sortOrder ?? i,
+      })));
 
-      await tx.versePracticalApplication.deleteMany({
-        where: { explanationId: root.id },
-      });
-      if (practicalApps) {
-        const preparedPracticalApps = practicalApps.map((pa, i) => ({
-          explanationId: root.id,
-          applicationText: pa.applicationText,
-          sortOrder: pa.sortOrder ?? i,
-        }));
-        await tx.versePracticalApplication.createMany({
-          data: preparedPracticalApps,
-        });
-      }
-
-      await tx.verseCrossReference.deleteMany({
-        where: { explanationId: root.id },
-      });
-      if (crossReferences) {
-        const preparedCrossReferences = crossReferences.map((cr, i) => ({
-          explanationId: root.id,
-          bookName: cr.bookName,
-          chapter: BigInt(cr.chapter),
-          verseNumber: BigInt(cr.verseNumber),
-          ...verseEndData(cr.verseEnd),
-          referenceText: cr.referenceText,
-          commentary: cr.commentary,
-          sortOrder: cr.sortOrder ?? i,
-        }));
-        await tx.verseCrossReference.createMany({
-          data: preparedCrossReferences,
-        });
-      }
-
-      await tx.verseTheme.deleteMany({ where: { explanationId: root.id } });
-      if (themes) {
-        const preparedThemes = themes.map((t, i) => ({
-          explanationId: root.id,
-          themeName: t.themeName,
-          sortOrder: t.sortOrder ?? i,
-        }));
-        await tx.verseTheme.createMany({
-          data: preparedThemes,
-        });
-      }
-
-      // 6. Store the same editorial content once per passage/edition/language
-      //    and link this explanation to it inside the same transaction.
-      const complete = await tx.verseExplanation.findUnique({
+      // A reference-only correction keeps the original child rows and does
+      // not need a second relational read to build the shared-study input.
+      const complete = !contentChanged ? root : await tx.verseExplanation.findUnique({
         where: { id: root.id },
-        include: {
-          exegesis: true,
-          studyMetadata: true,
-          wordStudies: { orderBy: { sortOrder: "asc" } },
-          practicalApps: { orderBy: { sortOrder: "asc" } },
-          crossReferences: { orderBy: { sortOrder: "asc" } },
-          themes: { orderBy: { sortOrder: "asc" } },
-        },
+        include: includeLegacyContent,
       });
       const expectedSharedVersion = sharedStudyVersion ?? expectedVersion;
       const savedStudy = await writeStudy(tx, "explanation", {
@@ -1309,23 +1301,20 @@ export const addVerseExplanation = async (data, userId) => {
       return savedStudy
         ? hydrateStudies(tx, "explanation", { ...complete, sharedStudyId: savedStudy.id })
         : complete;
-    });
+    }, { timeout: 30000 });
 
+    const references = new Map();
+    for (const ref of [{ bookName, chapter, verseNumber }, previousReference]) {
+      if (ref?.bookName) references.set(`${ref.bookName}:${ref.chapter}:${ref.verseNumber}`, ref);
+    }
     await Promise.all([
       invalidateVerseExplanationLists(),
-      cache.del(
-        "bible",
-        verseExplanationCacheKey(bookName, chapter, verseNumber),
-      ),
-      cache.del(
-        "verse-resources",
-        `${bookName}:${chapter}:${verseNumber}`,
-      ),
-      cache.del(
-        "verse-resources-counts",
-        `${bookName}:${chapter}:${verseNumber}`,
-      ),
-      invalidateVerseExplanationCache(bookName, Number(chapter), Number(verseNumber)),
+      ...Array.from(references, ([key, ref]) => [
+        cache.del("bible", verseExplanationCacheKey(ref.bookName, ref.chapter, ref.verseNumber)),
+        cache.del("verse-resources", key),
+        cache.del("verse-resources-counts", key),
+        invalidateVerseExplanationCache(ref.bookName, Number(ref.chapter), Number(ref.verseNumber)),
+      ]).flat(),
     ]);
 
     const serializedResult = withLegacyVerseExplanationFields(
@@ -1340,6 +1329,16 @@ export const addVerseExplanation = async (data, userId) => {
       data: serializedResult,
     };
   } catch (error) {
+    if (error.code === "P2025" && id) {
+      return { status: 409, message: "This explanation changed or was removed. Reload it before saving." };
+    }
+    if (error.code === "P2028") {
+      console.error("Verse explanation save transaction did not complete:", error);
+      return { status: 503, message: "Saving the explanation took too long. Your changes are still in the editor. Please try saving again." };
+    }
+    if (error.code === "P2002" && (id || data.createOnly === true)) {
+      return { status: 409, message: "This verse already has an explanation. Reload the selected verse before saving." };
+    }
     if (error instanceof SharedStudyError) {
       return {
         status: error.status,

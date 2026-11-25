@@ -50,6 +50,17 @@ const record = () => ({
   studyMetadata: {},
 });
 
+test("looks up editable content by exact reference without translating it", async () => {
+  jest.clearAllMocks();
+  prisma.verseExplanation.findUnique.mockResolvedValueOnce(record());
+  const result = await getVerseExplanationForEdit({ bookName: "John", chapter: 3, verseNumber: 16 });
+  expect(result).toMatchObject({ status: 200, data: { id: 7, exegesis: { explanationText: "God gave his Son" } } });
+  expect(prisma.verseExplanation.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+    where: { bookName_chapter_verseNumber: { bookName: "John", chapter: 3n, verseNumber: 16n } },
+  }));
+  expect(translateMany).not.toHaveBeenCalled();
+});
+
 describe("getAllVersesExplanation localization", () => {
   beforeEach(async () => {
     await invalidateVerseExplanationLists();

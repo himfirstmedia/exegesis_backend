@@ -1,4 +1,5 @@
 import { hydrateStudies, writeStudy } from './repository.js';
+import { changedFields } from '../../utils/rowPatch.js';
 
 const types = { dailyVerse: 'verse', dailyDevotion: 'devotion', verseExplanation: 'explanation' };
 
@@ -35,16 +36,18 @@ export async function writeDailyContent(client, model, { id, data, expectedVersi
   return client.$transaction(async tx => {
     const old = id ? await tx[model].findUnique({ where: { id: BigInt(id) } }) : null;
     const current = old ? await hydrateStudies(tx, type, old) : null;
+    const { updatedBy, ...fields } = data;
+    const patch = changedFields(old, fields);
     const source = id
-      ? await tx[model].update({ where: { id: BigInt(id) }, data })
+      ? (old && !Object.keys(patch).length ? old : await tx[model].update({ where: { id: BigInt(id) }, data: { ...patch, updatedBy } }))
       : await tx[model].create({ data });
     // Only provided properties override hydrated content (Prisma ignores undefined).
     const provided = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
     const content = { ...source, ...(current || {}), ...provided, id: source.id, sharedStudyId: source.sharedStudyId };
-    await writeStudy(tx, type, content, {
+    const saved = await writeStudy(tx, type, content, {
       allowSharedEdit: Boolean(old?.sharedStudyId),
       expectedVersion: expectedVersion ?? current?.sharedStudyVersion,
     });
-    return hydrateStudies(tx, type, await tx[model].findUnique({ where: { id: source.id } }));
+    return hydrateStudies(tx, type, { ...source, sharedStudyId: saved?.id ?? null });
   }, { timeout: 30000 });
 }

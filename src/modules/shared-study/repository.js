@@ -1,4 +1,5 @@
 import { CANONICAL_BOOK_ORDER } from '../../constants/bible-books.js';
+import { planRowPatch } from '../../utils/rowPatch.js';
 import { SCALARS, mergeStudy, normalizeSource, same } from './normalization.js';
 
 export const studyInclude = {
@@ -38,6 +39,7 @@ export function studyDocument(study) {
 const passageIdentity = passage => Object.fromEntries(
   ['bookId', 'startChapter', 'startVerse', 'endChapter', 'endVerse'].map(key => [key, passage[key]]),
 );
+const passageKey = p => `${p.bookId}:${p.startChapter}:${p.startVerse}:${p.endChapter}:${p.endVerse}`;
 
 const dailyReference = reference => ({
   bookName: reference.passage.book.name,
@@ -125,10 +127,10 @@ export async function writeStudy(tx, type, source, { expectedVersion, allowShare
   await tx.bibleEdition.upsert({ where: { id: edition }, update: {}, create: { id: edition, name: edition } });
   const identity = { passageId: ref.id, bibleEditionId: edition, languageCode: language };
   const existing = await tx.passageStudy.findUnique({ where: { passageId_bibleEditionId_languageCode: identity }, include: studyInclude });
+  const previous = existing ? studyDocument(existing) : null;
+  const ownsLink = existing && source.sharedStudyId != null && String(source.sharedStudyId) === String(existing.id);
   let document = incoming;
   if (existing) {
-    const comparison = mergeStudy(studyDocument(existing), incoming);
-    const ownsLink = source.sharedStudyId != null && String(source.sharedStudyId) === String(existing.id);
     if (allowSharedEdit && ownsLink) {
       if (!Number.isInteger(expectedVersion) || expectedVersion !== existing.version) {
         throw new SharedStudyError('Shared study changed; reload before saving', ['version']);
@@ -137,39 +139,126 @@ export async function writeStudy(tx, type, source, { expectedVersion, allowShare
       // First-time link (new daily verse or not yet linked): always use the
       // merged result. Fields that only differ on the incoming side keep the
       // existing study value — the shared content is authoritative. No 409.
-      document = comparison.merged;
+      document = mergeStudy(previous, incoming).merged;
     }
   }
-  if (existing && same(studyDocument(existing), document)) {
-    await tx[table].update({ where: { id: source.id }, data: { sharedStudyId: existing.id } });
+  if (existing && same(previous, document)) {
+    if (!ownsLink) await tx[table].update({ where: { id: source.id }, data: { sharedStudyId: existing.id } });
     return { id: existing.id, version: existing.version };
   }
-  const scalars = Object.fromEntries(SCALARS.map(field => [field, document[field]]));
+  const scalars = Object.fromEntries(SCALARS.filter(field => !previous || previous[field] !== document[field])
+    .map(field => [field, document[field]]));
   let saved;
   if (existing) {
     // Optimistic lock also protects simultaneous missing-field merges.
     const update = await tx.passageStudy.updateMany({ where: { id: existing.id, version: existing.version }, data: { ...scalars, version: { increment: 1 } } });
     if (update.count !== 1) throw new SharedStudyError('Shared study changed; reload before saving', ['version']);
     saved = { id: existing.id, version: existing.version + 1 };
-    for (const table of ['studyTakeaway', 'studyPracticalApplication', 'studyTheme', 'studyWord', 'studyCrossReference']) await tx[table].deleteMany({ where: { studyId: saved.id } });
   } else {
     saved = await tx.passageStudy.create({ data: { ...identity, ...scalars, status: 'REVIEW' } });
   }
+  const changed = field => !previous || !same(previous[field], document[field]);
   for (const [field, table] of [['takeaways', 'studyTakeaway'], ['practicalApplications', 'studyPracticalApplication'], ['themes', 'studyTheme']]) {
-    if (document[field].length) await tx[table].createMany({ data: document[field].map((text, sortOrder) => ({ studyId: saved.id, text, sortOrder })) });
+    if (!changed(field)) continue;
+    const patch = planRowPatch(existing?.[field] ?? [], document[field].map((text, sortOrder) => ({ text, sortOrder })), row => row);
+    await removeRows(tx[table], patch.remove);
+    for (const { row, data } of patch.update) await tx[table].update({ where: { id: row.id }, data });
+    if (patch.create.length) await tx[table].createMany({ data: patch.create.map(row => ({ studyId: saved.id, ...row })) });
   }
-  const strongsIds = [...new Set(document.words.flatMap(word => word.strongsIds))];
-  const dictionaryIds = new Set(strongsIds.length ? (await tx.strongsDictionary.findMany({ where: { strongsId: { in: strongsIds } }, select: { strongsId: true } })).map(row => row.strongsId) : []);
-  for (const id of strongsIds) await tx.strongsIdentifier.upsert({ where: { id }, update: dictionaryIds.has(id) ? { dictionaryId: id } : {}, create: { id, dictionaryId: dictionaryIds.has(id) ? id : null } });
-  for (const [sortOrder, word] of document.words.entries()) await tx.studyWord.create({ data: {
-    studyId: saved.id, surfaceText: word.surfaceText, contextualMeaning: word.contextualMeaning, sortOrder,
-    strongLinks: { create: word.strongsIds.map(strongsId => ({ strongsId })) },
-  } });
-  for (const [sortOrder, reference] of document.crossReferences.entries()) {
-    const target = await ensurePassage(tx, reference.passage);
-    await tx.studyCrossReference.create({ data: { studyId: saved.id, passageId: target.id, bibleEditionId: edition,
-      quotationOverride: reference.quotationOverride, commentary: reference.commentary, sortOrder } });
-  }
-  await tx[table].update({ where: { id: source.id }, data: { sharedStudyId: saved.id } });
+  if (changed('words') && (existing?.words.length || document.words.length))
+    await writeWords(tx, saved.id, existing?.words ?? [], document.words);
+  if (changed('crossReferences') && (existing?.crossReferences.length || document.crossReferences.length))
+    await writeReferences(tx, saved.id, edition, passage, ref.id, existing?.crossReferences ?? [], document.crossReferences);
+  if (!ownsLink) await tx[table].update({ where: { id: source.id }, data: { sharedStudyId: saved.id } });
   return saved;
+}
+
+async function removeRows(table, rows) {
+  if (rows.length) await table.deleteMany({ where: { id: { in: rows.map(row => row.id) } } });
+}
+
+async function writeWords(tx, studyId, current, words) {
+  const patch = planRowPatch(current, words.map((word, sortOrder) => ({ ...word, sortOrder })), row => ({
+    ...row, strongsIds: row.strongLinks.map(link => link.strongsId).sort(),
+  }), same);
+  await removeRows(tx.studyWord, patch.remove);
+  const links = [];
+  const removedLinks = [];
+  for (const { row, data: { strongsIds, ...fields } } of patch.update) {
+    if (Object.keys(fields).length) await tx.studyWord.update({ where: { id: row.id }, data: fields });
+    if (strongsIds) {
+      const previous = new Set(row.strongLinks.map(link => link.strongsId));
+      const removed = [...previous].filter(id => !strongsIds.includes(id));
+      if (removed.length) removedLinks.push({ studyWordId: row.id, strongsId: { in: removed } });
+      for (const strongsId of strongsIds) if (!previous.has(strongsId)) links.push({ studyWordId: row.id, strongsId });
+    }
+  }
+  if (removedLinks.length) await tx.studyWordStrong.deleteMany({ where: { OR: removedLinks } });
+  const identifiers = [...new Set([...patch.create.flatMap(word => word.strongsIds), ...links.map(link => link.strongsId)])];
+  if (identifiers.length) {
+    const dictionary = await tx.strongsDictionary.findMany({ where: { strongsId: { in: identifiers } }, select: { strongsId: true } });
+    const dictionaryIds = new Set(dictionary.map(row => row.strongsId));
+    await tx.strongsIdentifier.createMany({
+      data: identifiers.map(id => ({ id, dictionaryId: dictionaryIds.has(id) ? id : null })),
+      skipDuplicates: true,
+    });
+    // Existing identifiers for formerly missing dictionary rows may need linking.
+    if (dictionaryIds.size) {
+      const existing = await tx.strongsIdentifier.findMany({ where: { id: { in: [...dictionaryIds] } }, select: { id: true, dictionaryId: true } });
+      for (const { id, dictionaryId } of existing) {
+        if (id !== dictionaryId) await tx.strongsIdentifier.update({ where: { id }, data: { dictionaryId: id } });
+      }
+    }
+  }
+  if (patch.create.length) {
+    const rows = await tx.studyWord.createManyAndReturn({
+      data: patch.create.map(({ surfaceText, contextualMeaning, sortOrder }) => ({ studyId, surfaceText, contextualMeaning, sortOrder })),
+      select: { id: true, sortOrder: true },
+    });
+    // Prisma does not guarantee the order returned by a bulk insert.
+    for (const { id, sortOrder } of rows) {
+      for (const strongsId of words[sortOrder].strongsIds) links.push({ studyWordId: id, strongsId });
+    }
+  }
+  if (links.length) await tx.studyWordStrong.createMany({ data: links });
+}
+
+async function writeReferences(tx, studyId, edition, mainPassage, mainId, current, references) {
+  const patch = planRowPatch(current, references.map((row, sortOrder) => ({ ...row, sortOrder })),
+    row => ({ ...row, passage: passageIdentity(row.passage) }), same);
+  await removeRows(tx.studyCrossReference, patch.remove);
+  const mainKey = passageKey(mainPassage);
+  const ids = new Map([...current.map(row => [passageKey(row.passage), row.passageId ?? row.passage.id]), [mainKey, mainId]]);
+  const targets = [...patch.create.map(row => row.passage), ...patch.update.map(({ data }) => data.passage).filter(Boolean)];
+  const passages = [...new Map(targets.map(passage => [passageKey(passage), passage])).values()]
+    .filter(passage => !ids.has(passageKey(passage)));
+  if (passages.length) {
+    const rows = await tx.scripturePassage.findMany({ where: { OR: passages } });
+    for (const row of rows) ids.set(passageKey(row), row.id);
+    const missing = passages.filter(passage => !ids.has(passageKey(passage)));
+    if (missing.length) {
+      const bookIds = [...new Set(missing.map(passage => passage.bookId))].filter(id => id !== mainPassage.bookId);
+      if (bookIds.length) await tx.bibleBook.createMany({
+        data: bookIds.map(id => ({ id, name: CANONICAL_BOOK_ORDER[id - 1] })), skipDuplicates: true,
+      });
+      const inserted = await tx.scripturePassage.createManyAndReturn({ data: missing, skipDuplicates: true });
+      for (const row of inserted) ids.set(passageKey(row), row.id);
+      // Another save may have inserted the same passage after our first read.
+      const concurrent = missing.filter(passage => !ids.has(passageKey(passage)));
+      if (concurrent.length) {
+        for (const row of await tx.scripturePassage.findMany({ where: { OR: concurrent } })) ids.set(passageKey(row), row.id);
+      }
+    }
+  }
+  const resolve = passage => {
+    const passageId = ids.get(passageKey(passage));
+    if (passageId == null) throw new SharedStudyError('Could not resolve cross-reference passage', [passageKey(passage)], 500);
+    return passageId;
+  };
+  for (const { row, data: { passage, ...fields } } of patch.update) {
+    await tx.studyCrossReference.update({ where: { id: row.id }, data: { ...fields, ...(passage ? { passageId: resolve(passage) } : {}) } });
+  }
+  if (patch.create.length) await tx.studyCrossReference.createMany({ data: patch.create.map(({ passage, ...fields }) => ({
+    ...fields, studyId, passageId: resolve(passage), bibleEditionId: edition,
+  })) });
 }

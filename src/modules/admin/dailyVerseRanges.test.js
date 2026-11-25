@@ -56,6 +56,24 @@ test('daily verse create/edit writes directly to prisma without touching shared 
   expect(writeStudy).not.toHaveBeenCalled();
 });
 
+test('daily verse edits patch only changed fields and skip unchanged saves', async () => {
+  const { parseLocalDate } = require('../../utils/dates.js');
+  const current = {
+    id: 9n, bookName: 'Genesis', chapter: 3n, verseNumber: 6n, verseEnd: 10n,
+    bibleVersion: 'KJV', displayDate: parseLocalDate(verse.displayDate), displayTime: null,
+    explanation: verse.explanation, isPublished: true,
+  };
+  prisma.dailyVerse.findUnique.mockResolvedValue(current);
+  await addDailyVerse({ ...verse, id: 9 }, 'admin-1');
+  expect(prisma.dailyVerse.update).not.toHaveBeenCalled();
+  expect(cache.del).not.toHaveBeenCalled();
+
+  await addDailyVerse({ ...verse, id: 9, explanation: 'Changed' }, 'admin-1');
+  expect(prisma.dailyVerse.update).toHaveBeenCalledWith({
+    where: { id: 9n }, data: { explanation: 'Changed', updatedBy: 'admin-1' },
+  });
+});
+
 test('rejects a daily verse when another verse already occupies the date', async () => {
   prisma.dailyVerse.findFirst.mockResolvedValueOnce({
     id: 42n, displayDate: new Date('2026-11-18T00:00:00Z'),
@@ -248,8 +266,10 @@ test('saves and reopens Strong’s IDs when the dictionary has no matching entri
     bibleEdition: { upsert: jest.fn() },
     scripturePassage: { upsert: jest.fn().mockResolvedValue({ id: 10n }) },
     strongsDictionary: { findMany: jest.fn().mockResolvedValue([]) },
-    strongsIdentifier: { upsert: jest.fn() },
-    studyWord: { create: jest.fn() },
+    strongsIdentifier: { createMany: jest.fn() },
+    studyWord: { createManyAndReturn: jest.fn(async ({ data }) =>
+      data.map((row, index) => ({ id: BigInt(index + 1), sortOrder: row.sortOrder })).reverse()) },
+    studyWordStrong: { createMany: jest.fn() },
     passageStudy: {
       findUnique: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: 12n, version: 1 }),
@@ -257,8 +277,10 @@ test('saves and reopens Strong’s IDs when the dictionary has no matching entri
       findMany: jest.fn(async () => [{
         id: 12n, version: 1, explanation: verse.explanation,
         takeaways: [], practicalApplications: [], themes: [], crossReferences: [],
-        words: tx.studyWord.create.mock.calls.map(([{ data }]) => ({
-          ...data, strongLinks: data.strongLinks.create.map(link => ({ ...link, strongs: { dictionary: null } })),
+        words: tx.studyWord.createManyAndReturn.mock.calls[0][0].data.map((row, index) => ({
+          ...row, strongLinks: tx.studyWordStrong.createMany.mock.calls[0][0].data
+            .filter(link => link.studyWordId === BigInt(index + 1))
+            .map(link => ({ ...link, strongs: { dictionary: null } })),
         })),
       }]),
     },
@@ -281,9 +303,12 @@ test('saves and reopens Strong’s IDs when the dictionary has no matching entri
   ] }, 'admin-1');
   expect(result.status).toBe(200);
   expect(tx.verseWordStudyEntry.createMany.mock.calls[0][0].data.map(row => row.strongsId)).toEqual([null, null]);
-  expect(tx.strongsIdentifier.upsert.mock.calls.map(([{ create }]) => create)).toEqual([
+  expect(tx.strongsIdentifier.createMany).toHaveBeenCalledTimes(1);
+  expect(tx.strongsIdentifier.createMany).toHaveBeenCalledWith({ skipDuplicates: true, data: [
     { id: 'H03045A', dictionaryId: null }, { id: 'H0430', dictionaryId: null }, { id: 'H589', dictionaryId: null },
-  ]);
+  ] });
+  expect(tx.studyWord.createManyAndReturn).toHaveBeenCalledTimes(1);
+  expect(tx.studyWordStrong.createMany).toHaveBeenCalledTimes(1);
   const expected = [
     expect.objectContaining({ strongsId: 'H03045A', strongsIds: ['H03045A'], strongs: null, customDefinition: 'Editorial meaning' }),
     expect.objectContaining({ strongsId: 'H0430/H589', strongsIds: ['H0430', 'H589'], strongs: null, customDefinition: 'Editorial phrase' }),
@@ -315,23 +340,102 @@ test('daily verse saves invalidate every dependent view and the landing cache', 
   expect(cache.del).toHaveBeenCalledWith('landing', expect.stringContaining('daily-verse:'));
 });
 
-test('explanation saves invalidate explanation, resource and AI caches', async () => {
+test('moving an explanation invalidates explanation, resource and AI caches for both verses', async () => {
   const table = () => ({ deleteMany: jest.fn().mockResolvedValue({}), createMany: jest.fn().mockResolvedValue({}) });
+  const wordStudies = [{ strongsId: 'H3045', surfaceText: 'Know', customDefinition: 'Know intimately', sortOrder: 0 }];
+  const crossReferences = [{ bookName: 'Romans', chapter: 5, verseNumber: 1, referenceText: 'Quote', commentary: 'Comment', sortOrder: 0 }];
   const tx = {
     verseExplanation: {
       upsert: jest.fn().mockResolvedValue({ id: 1n, sharedStudyId: 7n }),
-      update: jest.fn().mockResolvedValue({ id: 1n, sharedStudyId: 7n }),
-      findUnique: jest.fn().mockResolvedValue({ id: 1n, sharedStudyId: 7n }),
+      update: jest.fn().mockImplementation(async ({ data }) => ({
+        ...data, id: 1n, sharedStudyId: 7n,
+        exegesis: { explanationText: verse.explanation, applicationText: '' },
+        wordStudies, practicalApps: [], themes: [],
+        crossReferences: crossReferences.map(row => ({ ...row, chapter: 5n, verseNumber: 1n, verseEnd: null })),
+      })),
+      findUnique: jest.fn().mockResolvedValue({ bookName: 'John', chapter: 3n, verseNumber: 17n }),
     },
+    strongsDictionary: { findMany: jest.fn() },
     verseExegesis: { upsert: jest.fn().mockResolvedValue({}) },
     verseWordStudyEntry: table(), versePracticalApplication: table(), verseCrossReference: table(), verseTheme: table(),
   };
   prisma.$transaction.mockImplementation(fn => fn(tx));
-  await addVerseExplanation({ ...verse, id: 1, sharedStudyVersion: 5 }, 'admin-1');
-  expect(cache.del).toHaveBeenCalledWith('bible', 'explanation-detailed:v4:Genesis:3:6');
-  expect(cache.del).toHaveBeenCalledWith('verse-resources', 'Genesis:3:6');
-  expect(cache.del).toHaveBeenCalledWith('verse-resources-counts', 'Genesis:3:6');
-  expect(cache.del).toHaveBeenCalledWith('ai', expect.stringContaining('Genesis:3:6'));
+  const result = await addVerseExplanation({
+    ...verse, id: 1, sharedStudyVersion: 5, bookName: 'John', verseNumber: 18, verseEnd: null, wordStudies, crossReferences,
+  }, 'admin-1');
+  expect(result.status).toBe(200);
+  expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 30000 });
+  expect(tx.verseExplanation.update).toHaveBeenCalledWith(expect.objectContaining({
+    where: { id: 1n }, data: expect.objectContaining({ verseNumber: 18n }),
+  }));
+  expect(tx.verseExplanation.upsert).not.toHaveBeenCalled();
+  expect(tx.verseExplanation.findUnique).toHaveBeenCalledTimes(1);
+  expect(tx.verseExegesis.upsert).not.toHaveBeenCalled();
+  expect(tx.strongsDictionary.findMany).not.toHaveBeenCalled();
+  expect(tx.verseWordStudyEntry.deleteMany).not.toHaveBeenCalled();
+  expect(tx.verseCrossReference.deleteMany).not.toHaveBeenCalled();
+  expect(tx.verseCrossReference.createMany).not.toHaveBeenCalled();
+  const { writeStudy } = require('../shared-study/repository.js');
+  expect(writeStudy).toHaveBeenCalledWith(tx, 'explanation', expect.objectContaining({
+    id: 1n, verseNumber: 18n, exegesis: expect.objectContaining({ explanationText: verse.explanation }),
+  }), expect.any(Object));
+  for (const reference of ['John:3:17', 'John:3:18']) {
+    expect(cache.del).toHaveBeenCalledWith('bible', `explanation-detailed:v4:${reference}`);
+    expect(cache.del).toHaveBeenCalledWith('verse-resources', reference);
+    expect(cache.del).toHaveBeenCalledWith('verse-resources-counts', reference);
+    expect(cache.del).toHaveBeenCalledWith('ai', expect.stringContaining(reference));
+  }
+});
+
+test('an expired explanation save returns a retryable error without invalidating caches', async () => {
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    prisma.$transaction.mockRejectedValueOnce(Object.assign(new Error('Transaction already closed'), { code: 'P2028' }));
+    const result = await addVerseExplanation({ ...verse, id: 1 }, 'admin-1');
+    expect(result).toMatchObject({ status: 503, message: expect.stringContaining('try saving again') });
+    expect(cache.del).not.toHaveBeenCalled();
+  } finally {
+    log.mockRestore();
+  }
+});
+
+test('editing one existing cross-reference patches only that row and changed field', async () => {
+  const reference = { bookName: 'Romans', chapter: 5, verseNumber: 1, referenceText: 'Quote', commentary: 'Before', sortOrder: 0 };
+  const savedReference = { ...reference, id: 8n, chapter: 5n, verseNumber: 1n, verseEnd: null };
+  const root = { id: 1n, bookName: 'Genesis', chapter: 3n, verseNumber: 6n,
+    wordStudies: [], practicalApps: [], themes: [], crossReferences: [savedReference] };
+  const tx = {
+    verseExplanation: { findUnique: jest.fn().mockResolvedValue(root), update: jest.fn().mockResolvedValue(root) },
+    verseCrossReference: { update: jest.fn(), deleteMany: jest.fn(), createMany: jest.fn() },
+  };
+  prisma.$transaction.mockImplementation(fn => fn(tx));
+  const result = await addVerseExplanation({
+    id: 1, bookName: 'Genesis', chapter: 3, verseNumber: 6,
+    crossReferences: [{ ...reference, commentary: 'After' }],
+  }, 'admin-1');
+  expect(result.status).toBe(200);
+  expect(tx.verseCrossReference.update).toHaveBeenCalledTimes(1);
+  expect(tx.verseCrossReference.update).toHaveBeenCalledWith({ where: { id: 8n }, data: { commentary: 'After' } });
+  expect(tx.verseCrossReference.deleteMany).not.toHaveBeenCalled();
+  expect(tx.verseCrossReference.createMany).not.toHaveBeenCalled();
+});
+
+test.each([{}, { id: 1 }])('rejects a reference collision without overwriting the other record (%j)', async edit => {
+  const duplicate = Object.assign(new Error('Unique constraint'), { code: 'P2002' });
+  const tx = {
+    verseExplanation: {
+      create: jest.fn().mockRejectedValue(duplicate),
+      update: jest.fn().mockRejectedValue(duplicate),
+      findUnique: jest.fn().mockResolvedValue(null),
+      upsert: jest.fn(),
+    },
+    verseExegesis: { upsert: jest.fn() },
+  };
+  prisma.$transaction.mockImplementation(fn => fn(tx));
+  const result = await addVerseExplanation({ ...verse, ...edit, createOnly: !edit.id }, 'admin-1');
+  expect(result).toMatchObject({ status: 409, message: expect.stringContaining('already has an explanation') });
+  expect(tx.verseExplanation.upsert).not.toHaveBeenCalled();
+  expect(tx.verseExegesis.upsert).not.toHaveBeenCalled();
 });
 
 test('incomplete cross references return a clear validation error', async () => {

@@ -2,6 +2,7 @@ import {
   generateRandomPassword,
   serializeBigInt,
 } from "../../utils/helpers.js";
+import { changedFields } from "../../utils/rowPatch.js";
 import { prisma } from "../../config/db.js";
 import { validVerseRange, verseEndData } from '../../utils/verseRange.js';
 import { cache } from "../../services/cacheService.js";
@@ -748,17 +749,16 @@ export const addDailyVerse = async (data, adminId) => {
     ...(id ? { updatedBy: adminId } : { createdBy: adminId }),
   };
 
-  let dailyVerse;
-  try {
-    dailyVerse = id
-      ? await prisma.dailyVerse.update({ where: { id: BigInt(id) }, data: legacyData })
-      : await prisma.dailyVerse.create({ data: legacyData });
-  } catch (error) {
-    throw error;
-  }
+  const { updatedBy, ...fields } = legacyData;
+  const patch = changedFields(previous, fields);
+  const unchanged = previous && !Object.keys(patch).length;
+  const dailyVerse = id
+    ? (unchanged ? previous : await prisma.dailyVerse.update({ where: { id: BigInt(id) }, data: { ...patch, updatedBy } }))
+    : await prisma.dailyVerse.create({ data: legacyData });
   const msg = id
     ? "Daily verse updated successfully"
     : "Daily verse added successfully";
+  if (unchanged) return { status: 200, message: msg, data: serializeBigInt(dailyVerse) };
 
   // Admin changes must be visible immediately rather than waiting for the
   // 30-minute daily-verse cache to expire. Clear both the old and new date/
@@ -1344,14 +1344,18 @@ export const addDailyExegesis = async (data, adminId) => {
     isPublished: published ?? true,
   };
 
-  const dailyExegesis = id
-    ? await prisma.dailyExegesis.update({
-        where: { id: BigInt(id) },
-        data: { ...payload, updatedBy: adminId },
-      })
-    : await prisma.dailyExegesis.create({
-        data: { ...payload, createdBy: adminId },
-      });
+  let dailyExegesis;
+  if (id) {
+    const where = { id: BigInt(id) };
+    const previous = await prisma.dailyExegesis.findUnique({ where });
+    if (!previous) return { status: 404, message: "Daily exegesis not found" };
+    const patch = changedFields(previous, payload);
+    dailyExegesis = Object.keys(patch).length
+      ? await prisma.dailyExegesis.update({ where, data: { ...patch, updatedBy: adminId } })
+      : previous;
+  } else {
+    dailyExegesis = await prisma.dailyExegesis.create({ data: { ...payload, createdBy: adminId } });
+  }
 
   const msg = id
     ? "Daily exegesis updated successfully"

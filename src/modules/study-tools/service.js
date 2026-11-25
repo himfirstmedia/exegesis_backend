@@ -1,6 +1,7 @@
 import { localizeListPreviews } from '../admin/listPreview.js';
 import { prisma } from '../../config/db.js';
 import { serializeBigInt } from '../../utils/helpers.js';
+import { changedFields, planRowPatch } from '../../utils/rowPatch.js';
 import { translateStudyTools } from './translation.js';
 
 const TOOL_TYPES = ['COMMAND', 'PROMISE', 'WARNING', 'REPEATED_WORD', 'TRANSITION', 'CONTRAST'];
@@ -283,56 +284,45 @@ export const updateSingleTool = async (userId, body) => {
 
   if (!id) return { status: 400, message: 'id is required' };
 
-  const existing = await prisma.chapterStudyTool.findUnique({ where: { id: BigInt(id) } });
+  const where = { id: BigInt(id) };
+  const include = { studyToolWords: {
+    orderBy: { wordOrder: 'asc' },
+    include: { strongs: { select: {
+      strongsId: true, originalWord: true, transliteration: true, shortDefinition: true, adminExplanation: true, language: true,
+    } } },
+  } };
+  const existing = await prisma.chapterStudyTool.findUnique({ where, include });
   if (!existing) return { status: 404, message: 'Study tool not found' };
 
-  // Delete existing study tool words
-  await prisma.studyToolWord.deleteMany({ where: { studyToolId: BigInt(id) } });
-
-  const tool = await prisma.chapterStudyTool.update({
-    where: { id: BigInt(id) },
-    data: {
-      ...(bookName ? { bookName } : {}),
-      ...(chapter ? { chapter: BigInt(chapter) } : {}),
-      ...(toolType ? { toolType } : {}),
-      ...(label ? { label } : {}),
-      ...(description !== undefined ? { description } : {}),
-      ...(verseRefs ? { verseRefs } : {}),
-      ...(strongsIds !== undefined ? { strongsIds } : {}),
-      ...(order !== undefined ? { order } : {}),
-      studyToolWords: studyToolWords?.length
-        ? {
-            create: studyToolWords.map((w, idx) => ({
-              strongsId: w.strongsId,
-              bookName: bookName || existing.bookName,
-              chapter: BigInt(w.chapter || chapter || existing.chapter),
-              verse: BigInt(w.verse || 1),
-              surfaceText: w.surfaceText || '',
-              originalWord: w.originalWord || null,
-              transliteration: w.transliteration || null,
-              adminExplanation: w.adminExplanation || null,
-              wordOrder: w.wordOrder ?? idx,
-            })),
-          }
-        : undefined,
-    },
-    include: {
-      studyToolWords: {
-        include: {
-          strongs: {
-            select: {
-              strongsId: true,
-              originalWord: true,
-              transliteration: true,
-              shortDefinition: true,
-              adminExplanation: true,
-              language: true,
-            },
-          },
-        },
-      },
-    },
+  const data = changedFields(existing, {
+    bookName: bookName || undefined, chapter: chapter ? BigInt(chapter) : undefined,
+    toolType: toolType || undefined, label: label || undefined, description,
+    verseRefs: verseRefs || undefined, strongsIds, order,
   });
+  if (studyToolWords !== undefined) {
+    if (!Array.isArray(studyToolWords)) return { status: 400, message: 'studyToolWords must be an array' };
+    const words = studyToolWords.map((word, index) => ({
+      strongsId: word.strongsId,
+      bookName: bookName || existing.bookName,
+      chapter: BigInt(word.chapter || chapter || existing.chapter),
+      verse: BigInt(word.verse || 1),
+      surfaceText: word.surfaceText || '',
+      originalWord: word.originalWord || null,
+      transliteration: word.transliteration || null,
+      adminExplanation: word.adminExplanation || null,
+      wordOrder: word.wordOrder ?? index,
+    }));
+    const { create, update, remove } = planRowPatch(existing.studyToolWords, words, word => word, Object.is, 'wordOrder');
+    if (create.length || update.length || remove.length) {
+      data.studyToolWords = {
+        ...(create.length ? { create } : {}),
+        ...(update.length ? { update: update.map(({ row, data }) => ({ where: { id: row.id }, data })) } : {}),
+        ...(remove.length ? { deleteMany: { id: { in: remove.map(row => row.id) } } } : {}),
+      };
+    }
+  }
+  // One nested Prisma write keeps parent and word edits atomic.
+  const tool = Object.keys(data).length ? await prisma.chapterStudyTool.update({ where, data, include }) : existing;
 
   return { status: 200, message: 'Study tool updated', data: serializeBigInt(tool) };
 };

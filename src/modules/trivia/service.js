@@ -1,6 +1,7 @@
 import { prisma } from '../../config/db.js';
 import { localizeListPreviews } from '../admin/listPreview.js';
 import { serializeBigInt } from '../../utils/helpers.js';
+import { changedFields } from '../../utils/rowPatch.js';
 
 /**
  * ── Admin CRUD ──────────────────────────────────────────────────────────────
@@ -54,12 +55,11 @@ export const updateQuestion = async (userId, body) => {
   if (category !== undefined) updateData.category = category;
   if (difficulty !== undefined) updateData.difficulty = difficulty;
   if (isActive !== undefined) updateData.isActive = isActive;
-  updateData.updatedBy = userId;
-
-  const updated = await prisma.triviaQuestion.update({
+  const patch = changedFields(existing, updateData);
+  const updated = Object.keys(patch).length ? await prisma.triviaQuestion.update({
     where: { id: BigInt(id) },
-    data: updateData,
-  });
+    data: { ...patch, updatedBy: userId },
+  }) : existing;
 
   return { status: 200, message: 'Trivia question updated', data: serializeBigInt(updated) };
 };

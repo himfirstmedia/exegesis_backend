@@ -2,6 +2,7 @@ import { localizeListPreviews } from '../admin/listPreview.js';
 import { serializeBigInt } from "../../utils/helpers.js";
 import { prisma } from "../../config/db.js";
 import { generatePlanId } from "../../utils/helpers.js";
+import { changedFields } from "../../utils/rowPatch.js";
 import { cache } from "../../services/cacheService.js";
 import { translateText, translateMany } from "../../utils/translator.js";
 import { utcToday } from "../../utils/dates.js";
@@ -827,6 +828,15 @@ export const getQuizStatistics = async (data, userId) => {
   };
 };
 
+async function patchReadingContent(table, where, fields, userId) {
+  const current = await table.findUnique({ where });
+  if (!current) return null;
+  const patch = changedFields(current, fields);
+  return Object.keys(patch).length
+    ? table.update({ where, data: { ...patch, updatedOn: new Date(), updatedBy: userId } })
+    : current;
+}
+
 export const updateReadingPlan = async (data, userId) => {
   const {
     planId,
@@ -849,13 +859,8 @@ export const updateReadingPlan = async (data, userId) => {
   if (category !== undefined) updateData.category = category;
   if (difficulty !== undefined) updateData.difficulty = difficulty;
   if (isActive !== undefined) updateData.isActive = isActive;
-  updateData.updatedOn = new Date();
-  updateData.updatedBy = userId;
-
-  const plan = await prisma.readingPlan.update({
-    where: { planId },
-    data: updateData,
-  });
+  const plan = await patchReadingContent(prisma.readingPlan, { planId }, updateData, userId);
+  if (!plan) return { status: 404, message: "Reading plan not found" };
 
   return {
     status: 200,
@@ -873,13 +878,8 @@ export const updateQuizQuestion = async (data, userId) => {
   if (options) updateData.optionsJson = JSON.stringify(options);
   if (correctAnswer !== undefined) updateData.correctAnswer = correctAnswer;
   if (explanation !== undefined) updateData.explanation = explanation;
-  updateData.updatedOn = new Date();
-  updateData.updatedBy = userId;
-
-  const updatedQuestion = await prisma.quizQuestion.update({
-    where: { id: BigInt(questionId) },
-    data: updateData,
-  });
+  const updatedQuestion = await patchReadingContent(prisma.quizQuestion, { id: BigInt(questionId) }, updateData, userId);
+  if (!updatedQuestion) return { status: 404, message: "Quiz question not found" };
 
   return {
     status: 200,
@@ -908,13 +908,8 @@ export const updateDailyAssignment = async (data, userId) => {
     updateData.reflectionQuestions = reflectionQuestions
       ? JSON.stringify(reflectionQuestions)
       : null;
-  updateData.updatedOn = new Date();
-  updateData.updatedBy = userId;
-
-  const assignment = await prisma.dailyAssignment.update({
-    where: { id: BigInt(assignmentId) },
-    data: updateData,
-  });
+  const assignment = await patchReadingContent(prisma.dailyAssignment, { id: BigInt(assignmentId) }, updateData, userId);
+  if (!assignment) return { status: 404, message: "Daily assignment not found" };
 
   return {
     status: 200,
