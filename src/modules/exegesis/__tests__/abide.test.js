@@ -1,19 +1,30 @@
-import { saveAbideStage } from '../service.js';
+import {
+  completeSession,
+  saveAbideStage,
+  saveApplyStage,
+  saveLookStage,
+  saveListenStage,
+  saveProgress,
+  saveSessionLedger,
+  startSession,
+} from '../service.js';
 
 jest.mock('../../../config/db.js', () => {
   const prisma = {
     exegesisSession: {
       findFirst: jest.fn(),
+      create: jest.fn(),
       update: jest.fn(),
     },
     journalEntry: {
       findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      upsert: jest.fn(),
     },
     $transaction: jest.fn(),
   };
-  prisma.$transaction.mockImplementation((callback) => callback(prisma));
+  prisma.$transaction.mockImplementation(callback => callback(prisma));
   return { prisma };
 });
 
@@ -26,106 +37,324 @@ const session = {
   bookName: 'John',
   chapter: BigInt(3),
   verseStart: BigInt(16),
-  lookNotes: 'God loved the world.',
+  verseEnd: BigInt(16),
+  currentStage: 'abide',
+  completed: false,
+  applySavedOn: null,
+  lookNotes: JSON.stringify({ 0: 'God loved the world.' }),
+  observations: ['God gives His Son'],
+  lookHighlights: [{ verse: 16, text: 'For God so loved the world' }],
+  lookQuestions: ['Who receives eternal life?'],
+  listenSelections: [{ abbreviation: 'BSB', language: 'en' }],
+  listenNotes: 'Heard the contrast between life and perishing.',
+  listenQuestions: ['Why does “whoever” matter here?'],
+  learnSummary: 'God saves through belief in His Son.',
+  learnNotes: 'Belief is more than knowing a fact.',
+  learnQuestions: ['How does verse 16 relate to verse 17?'],
+  abideSelectedVerse: 'John 3:16',
+  abideTruth: 'God’s love gives life.',
+  abideReflection: 'I can receive rather than earn this gift.',
+  abidePrayer: 'Thank you for your Son.',
+  abideApplication: 'Share this hope with a friend.',
+  abideTags: 'faith,love',
+  applyPrinciple: 'God’s grace calls for a faithful response.',
+  applyResponse: 'I will trust Christ today.',
+  applyChallenge: 'Tell one person why I have hope.',
+  applyTiming: { day: 'Tuesday', time: '18:00' },
+  applyReminder: { enabled: true, note: 'Pray for my friend' },
+  applyResults: 'I had the conversation.',
   strongsWords: JSON.stringify([{ strongsId: 'G25', surfaceText: 'agape' }]),
   strongsIds: 'G25',
-  isPublic: false,
+  isPublic: true,
   journalEntryId: null,
-  abideReflection: null,
-  abidePrayer: null,
-  abideApplication: null,
-  abideTags: null,
-};
-
-const savedSession = {
-  ...session,
-  journalEntryId: BigInt(7),
-  completed: true,
-  currentStage: 'completed',
 };
 
 const journalEntry = {
   id: BigInt(7),
   userId: 'user-1',
   title: 'Exegesis: John 3:16',
-  content: 'Reflection',
-  observations: 'God loved the world.',
+  sourceSessionId: 'session-1',
 };
 
-describe('saveAbideStage', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    prisma.exegesisSession.findFirst.mockResolvedValue(session);
-    prisma.exegesisSession.update.mockResolvedValue(savedSession);
-    prisma.journalEntry.findFirst.mockResolvedValue(null);
-    prisma.journalEntry.create.mockResolvedValue(journalEntry);
-    prisma.journalEntry.update.mockResolvedValue(journalEntry);
-  });
+beforeEach(() => {
+  jest.clearAllMocks();
+  prisma.exegesisSession.findFirst.mockResolvedValue(session);
+  prisma.exegesisSession.update.mockImplementation(({ data }) => Promise.resolve({ ...session, ...data }));
+  prisma.journalEntry.findFirst.mockResolvedValue(null);
+  prisma.journalEntry.update.mockResolvedValue(journalEntry);
+  prisma.journalEntry.upsert.mockResolvedValue(journalEntry);
+});
 
-  test('creates one journal entry with observations and studied words', async () => {
+describe('five-stage session saves', () => {
+  test('Abide saves artifacts without completing or writing a Ledger entry', async () => {
     const result = await saveAbideStage('session-1', 'user-1', {
-      reflection: 'Reflection',
-      prayer: 'Prayer',
-      application: 'Application',
-      tags: 'faith',
-      isPublic: false,
+      selectedVerse: 'John 3:16',
+      truth: 'God loves.',
+      reflection: 'A new reflection',
+      prayer: '',
+      application: 'Act on it',
+      tags: '',
+      isPublic: true,
     });
 
-    expect(prisma.journalEntry.create).toHaveBeenCalledTimes(1);
-    expect(prisma.journalEntry.create).toHaveBeenCalledWith({
+    expect(result.status).toBe(200);
+    expect(prisma.exegesisSession.update).toHaveBeenCalledWith({
+      where: { id: 'session-1' },
       data: expect.objectContaining({
+        currentStage: 'apply',
+        abideSelectedVerse: 'John 3:16',
+        abideTruth: 'God loves.',
+        abideReflection: 'A new reflection',
+        abidePrayer: '',
+        abideApplication: 'Act on it',
+        abideTags: '',
+        isPublic: true,
+      }),
+    });
+    expect(prisma.journalEntry.create).not.toHaveBeenCalled();
+    expect(prisma.journalEntry.upsert).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  test('Apply draft progress preserves fields but does not authorize completion', async () => {
+    const result = await saveProgress('session-1', 'user-1', {
+      principle: 'A principle',
+      response: '',
+      challenge: 'A challenge',
+      timing: { day: 'Wednesday' },
+      reminder: null,
+      results: '',
+      applySaved: true,
+    });
+
+    expect(result.status).toBe(200);
+    const { data } = prisma.exegesisSession.update.mock.calls[0][0];
+    expect(data).toMatchObject({
+      applyPrinciple: 'A principle',
+      applyResponse: '',
+      applyChallenge: 'A challenge',
+      applyTiming: { day: 'Wednesday' },
+      applyResults: '',
+    });
+    expect(data).not.toHaveProperty('applySavedOn');
+    expect(data).not.toHaveProperty('completed');
+    expect(data).not.toHaveProperty('currentStage');
+
+    const completion = await completeSession('session-1', 'user-1');
+    expect(completion.status).toBe(409);
+  });
+
+  test('an empty explicit Apply save is valid and records its marker', async () => {
+    const result = await saveApplyStage('session-1', 'user-1', {});
+
+    expect(result.status).toBe(200);
+    expect(prisma.exegesisSession.update).toHaveBeenCalledWith({
+      where: { id: 'session-1' },
+      data: {
+        applySavedOn: expect.any(Date),
+        currentStage: 'apply',
+      },
+    });
+  });
+
+  test('completion follows a successful Apply save and is idempotent', async () => {
+    prisma.exegesisSession.findFirst.mockResolvedValue({
+      ...session,
+      currentStage: 'apply',
+      applySavedOn: new Date('2026-11-24T10:00:00Z'),
+    });
+
+    const result = await completeSession('session-1', 'user-1');
+
+    expect(result.status).toBe(200);
+    expect(result.data).toMatchObject({ completed: true, currentStage: 'completed' });
+    expect(prisma.exegesisSession.update).toHaveBeenCalledWith({
+      where: { id: 'session-1' },
+      data: {
+        completed: true,
+        completedOn: expect.any(Date),
+        currentStage: 'completed',
+      },
+    });
+
+    prisma.exegesisSession.findFirst.mockResolvedValue({ ...session, completed: true, currentStage: 'completed' });
+    const repeated = await completeSession('session-1', 'user-1');
+    expect(repeated.status).toBe(200);
+    expect(prisma.exegesisSession.update).toHaveBeenCalledTimes(1);
+  });
+
+  test('replayed earlier stage saves cannot move the lifecycle backward', async () => {
+    prisma.exegesisSession.findFirst.mockResolvedValue({ ...session, currentStage: 'apply' });
+
+    await saveLookStage('session-1', 'user-1', { notes: 'Replayed notes' });
+
+    expect(prisma.exegesisSession.update).toHaveBeenCalledWith({
+      where: { id: 'session-1' },
+      data: { currentStage: 'apply', lookNotes: 'Replayed notes' },
+    });
+  });
+});
+
+describe('Legacy Ledger save', () => {
+  test('requires completion before creating an entry', async () => {
+    const result = await saveSessionLedger('session-1', 'user-1');
+
+    expect(result.status).toBe(409);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  test('aggregates every stage, stays private by default, and links one stable entry', async () => {
+    prisma.exegesisSession.findFirst.mockResolvedValue({
+      ...session,
+      currentStage: 'completed',
+      completed: true,
+      applySavedOn: new Date(),
+    });
+
+    const result = await saveSessionLedger('session-1', 'user-1');
+
+    expect(result.status).toBe(200);
+    expect(prisma.journalEntry.upsert).toHaveBeenCalledWith({
+      where: { sourceSessionId: 'session-1' },
+      create: expect.objectContaining({
         userId: 'user-1',
-        content: 'Reflection',
-        observations: 'God loved the world.',
-        prayers: 'Prayer',
-        application: 'Application',
-        tags: 'faith',
+        sourceSessionId: 'session-1',
         isPublished: false,
         source: 'exegesis-lab',
         strongsIds: 'G25',
       }),
+      update: expect.objectContaining({ isPublished: false }),
     });
-    expect(result.status).toBe(200);
-    expect(result.data.journalEntryId).toBe(7);
+    const { create } = prisma.journalEntry.upsert.mock.calls[0][0];
+    expect(create.content).toContain('John 3:16');
+    expect(create.content).toContain('God’s love gives life.');
+    expect(create.observations).toContain('God loved the world.');
+    expect(create.observations).toContain('God gives His Son');
+    expect(create.observations).toContain('For God so loved the world');
+    expect(create.observations).toContain('BSB');
+    expect(create.observations).toContain('contrast between life and perishing');
+    expect(create.learnings).toContain('God saves through belief in His Son.');
+    expect(create.learnings).toContain('How does verse 16 relate to verse 17?');
+    expect(create.prayers).toBe('Thank you for your Son.');
+    expect(create.application).toContain('Tell one person why I have hope.');
+    expect(create.application).not.toContain('Pray for my friend');
+    expect(create.application).toContain('I had the conversation.');
+    expect(prisma.exegesisSession.update).toHaveBeenCalledWith({
+      where: { id: 'session-1' },
+      data: { journalEntryId: BigInt(7) },
+    });
   });
 
-  test('updates the linked entry instead of creating a duplicate on retry', async () => {
-    const linkedSession = { ...session, journalEntryId: BigInt(7) };
-    prisma.exegesisSession.findFirst.mockResolvedValue(linkedSession);
+  test('updates the linked entry on retry and publishes only on explicit request', async () => {
+    const completed = {
+      ...session,
+      currentStage: 'completed',
+      completed: true,
+      journalEntryId: BigInt(7),
+    };
+    prisma.exegesisSession.findFirst.mockResolvedValue(completed);
     prisma.journalEntry.findFirst.mockResolvedValue(journalEntry);
 
-    const result = await saveAbideStage('session-1', 'user-1', {
-      reflection: 'Updated reflection',
-      prayer: 'Updated prayer',
-      application: 'Updated application',
-      tags: 'faith,trust',
-      isPublic: true,
-    });
+    await saveSessionLedger('session-1', 'user-1', { isPublic: true });
 
-    expect(prisma.journalEntry.create).not.toHaveBeenCalled();
-    expect(prisma.journalEntry.update).toHaveBeenCalledTimes(1);
+    expect(prisma.journalEntry.upsert).not.toHaveBeenCalled();
     expect(prisma.journalEntry.update).toHaveBeenCalledWith({
       where: { id: BigInt(7) },
-      data: expect.objectContaining({
-        content: 'Updated reflection',
-        prayers: 'Updated prayer',
-        application: 'Updated application',
-        tags: 'faith,trust',
-        isPublished: true,
-      }),
+      data: expect.objectContaining({ isPublished: true, updatedBy: 'user-1' }),
     });
-    expect(result.data.journalEntryId).toBe(7);
   });
 
-  test('recreates the entry when the linked entry was deleted', async () => {
+  test('a missing legacy link still converges through sourceSessionId', async () => {
     prisma.exegesisSession.findFirst.mockResolvedValue({
       ...session,
+      currentStage: 'completed',
+      completed: true,
       journalEntryId: BigInt(7),
     });
     prisma.journalEntry.findFirst.mockResolvedValue(null);
 
-    await saveAbideStage('session-1', 'user-1', { reflection: 'Reflection' });
+    await saveSessionLedger('session-1', 'user-1');
 
-    expect(prisma.journalEntry.create).toHaveBeenCalledTimes(1);
+    expect(prisma.journalEntry.create).not.toHaveBeenCalled();
+    expect(prisma.journalEntry.upsert).toHaveBeenCalledTimes(1);
+  });
+});
+
+test('Listen persists the selection, questions, notes and repeat count sent by mobile', async () => {
+  await saveListenStage('session-1', 'user-1', {
+    selections: [{ abbreviation: 'BSB' }], notes: '', questions: [], repeats: 3, repeatCount: 2,
+    listenCompleted: false,
+  });
+  expect(prisma.exegesisSession.update).toHaveBeenCalledWith({
+    where: { id: 'session-1' },
+    data: expect.objectContaining({
+      listenSelections: [{ abbreviation: 'BSB' }], listenNotes: '', listenQuestions: [],
+      listenRepeats: 3, listenRepeatCount: 2, listenCompleted: false,
+    }),
+  });
+});
+
+test('Apply, completion and Ledger refuse sessions not owned by the caller', async () => {
+  prisma.exegesisSession.findFirst.mockResolvedValue(null);
+  expect((await saveApplyStage('session-1', 'other-user', {})).status).toBe(404);
+  expect((await completeSession('session-1', 'other-user')).status).toBe(404);
+  expect((await saveSessionLedger('session-1', 'other-user')).status).toBe(404);
+  expect(prisma.exegesisSession.findFirst).toHaveBeenCalledTimes(3);
+  expect(prisma.exegesisSession.findFirst).toHaveBeenCalledWith({
+    where: { id: 'session-1', userId: 'other-user' },
+  });
+  expect(prisma.exegesisSession.update).not.toHaveBeenCalled();
+  expect(prisma.$transaction).not.toHaveBeenCalled();
+});
+
+describe('session passage matching', () => {
+  test('resumes only the exact requested passage', async () => {
+    prisma.exegesisSession.findFirst.mockResolvedValue(session);
+
+    const result = await startSession('user-1', {
+      bookName: ' John ',
+      chapter: 3,
+      verseStart: 16,
+      verseEnd: 16,
+    });
+
+    expect(result.message).toBe('Continuing existing session');
+    expect(prisma.exegesisSession.findFirst).toHaveBeenCalledWith({
+      where: {
+        userId: 'user-1',
+        completed: false,
+        bookName: 'John',
+        chapter: BigInt(3),
+        verseStart: BigInt(16),
+        verseEnd: BigInt(16),
+      },
+      orderBy: [{ updatedOn: 'desc' }, { id: 'desc' }],
+    });
+    expect(prisma.exegesisSession.create).not.toHaveBeenCalled();
+  });
+
+  test('createNew does not silently resume an existing study', async () => {
+    prisma.exegesisSession.create.mockResolvedValue(session);
+
+    await startSession('user-1', {
+      bookName: 'John', chapter: 3, verseStart: 16, verseEnd: 16, createNew: true,
+    });
+
+    expect(prisma.exegesisSession.findFirst).not.toHaveBeenCalled();
+    expect(prisma.exegesisSession.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ bookName: 'John', artifactVersion: 2 }),
+    });
+  });
+
+  test.each([
+    { bookName: 'John', chapter: 'invalid' },
+    { bookName: 'John', chapter: 0 },
+    { bookName: 'John', chapter: 3, verseEnd: 16 },
+    { bookName: 'John', chapter: 3, verseStart: 17, verseEnd: 16 },
+  ])('rejects an invalid passage without a database write', async body => {
+    const result = await startSession('user-1', body);
+
+    expect(result.status).toBe(400);
+    expect(prisma.exegesisSession.create).not.toHaveBeenCalled();
   });
 });

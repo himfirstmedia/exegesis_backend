@@ -1,31 +1,32 @@
 import express from 'express';
 import * as exegesisController from './controller.js';
 import { authenticate } from '../../middlewares/auth.middleware.js';
-import { requireTier } from '../../middlewares/gating.middleware.js';
 
 const router = express.Router();
 
-const authAndTier = [authenticate, requireTier('legacy_sower')];
-
 // Session management
-router.post('/start', ...authAndTier, exegesisController.startSession);
-router.post('/current', ...authAndTier, exegesisController.getCurrentSession);
-router.post('/history', ...authAndTier, exegesisController.getSessionHistory);
+router.use(authenticate);
+router.post('/start', exegesisController.startSession);
+router.post('/current', exegesisController.getCurrentSession);
+router.post('/history', exegesisController.getSessionHistory);
 
 // Session retrieval (resume)
-router.post('/:id', ...authAndTier, exegesisController.getSession);
+router.post('/:id', exegesisController.getSession);
 
 // Save progress without advancing stage
-router.post('/:id/progress', ...authAndTier, exegesisController.saveProgress);
+router.post('/:id/progress', exegesisController.saveProgress);
 
 // Stage progress
-router.post('/:id/look', ...authAndTier, exegesisController.saveLookStage);
-router.post('/:id/listen', ...authAndTier, exegesisController.saveListenStage);
-router.post('/:id/learn', ...authAndTier, exegesisController.saveLearnStage);
-router.post('/:id/abide', ...authAndTier, exegesisController.saveAbideStage);
-router.post('/:id/abandon', ...authAndTier, exegesisController.abandonSession);
+router.post('/:id/look', exegesisController.saveLookStage);
+router.post('/:id/listen', exegesisController.saveListenStage);
+router.post('/:id/learn', exegesisController.saveLearnStage);
+router.post('/:id/abide', exegesisController.saveAbideStage);
+router.post('/:id/apply', exegesisController.saveApplyStage);
+router.post('/:id/complete', exegesisController.completeSession);
+router.post('/:id/ledger', exegesisController.saveSessionLedger);
+router.post('/:id/abandon', exegesisController.abandonSession);
 
 // PDF export
-router.post('/:id/pdf', ...authAndTier, exegesisController.exportSessionPdf);
+router.post('/:id/pdf', exegesisController.exportSessionPdf);
 
 export default router;

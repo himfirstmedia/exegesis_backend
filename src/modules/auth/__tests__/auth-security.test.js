@@ -34,7 +34,7 @@ jest.mock("../../../services/objectStorage.js", () => ({
 }));
 
 const { prisma } = require("../../../config/db.js");
-const { register, setPassword, verifyCode } = require("../service.js");
+const { register, setPassword, verifyCode, checkEmailAvailability } = require("../service.js");
 const {
   generatePasswordSetProof,
   verifyPasswordSetProof,
@@ -55,6 +55,40 @@ const existingUser = {
   status: true,
   subscriptionTier: "free",
 };
+
+describe("onboarding email availability", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test("normalizes the email and reports an existing account", async () => {
+    prisma.systemUser.findFirst.mockResolvedValue({ id: "existing-user" });
+
+    const result = await checkEmailAvailability({ email: " Reader@Example.COM " });
+
+    expect(prisma.systemUser.findFirst).toHaveBeenCalledWith({
+      where: { email: "reader@example.com" },
+      select: { id: true },
+    });
+    expect(result).toMatchObject({ status: 200, data: { available: false } });
+  });
+
+  test("reports a new email without creating an account", async () => {
+    prisma.systemUser.findFirst.mockResolvedValue(null);
+
+    const result = await checkEmailAvailability({ email: "new@example.com" });
+
+    expect(result).toMatchObject({ status: 200, data: { available: true } });
+    expect(prisma.systemUser.create).not.toHaveBeenCalled();
+  });
+
+  test("rejects malformed input without querying the database", async () => {
+    const result = await checkEmailAvailability({ email: "not-an-email" });
+
+    expect(result.status).toBe(400);
+    expect(prisma.systemUser.findFirst).not.toHaveBeenCalled();
+  });
+});
 
 describe("registration cannot self-assign a privileged role", () => {
   beforeEach(() => {

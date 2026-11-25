@@ -1,6 +1,16 @@
 import * as authService from "./service.js";
 import { formatApiResponse } from "../../utils/helpers.js";
 
+export const checkEmailAvailability = async (req, res) => {
+  try {
+    const result = await authService.checkEmailAvailability(req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error("Email availability error:", error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: "Could not check email availability" }));
+  }
+};
+
 export const register = async (req, res) => {
   try {
     const result = await authService.register(req.body);

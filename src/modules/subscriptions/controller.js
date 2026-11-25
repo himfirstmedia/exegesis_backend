@@ -346,7 +346,7 @@ const FALLBACK_TIERS = [
     price: 0,
     currency: "usd",
     interval: "none",
-    features: ["Bible reading", "Daily verse", "Basic tools"],
+    features: ["Bible reading", "Daily verse", "Basic tools", "Exegesis Lab and Legacy Ledger"],
     isActive: true,
     sortOrder: 0,
   },
@@ -357,9 +357,7 @@ const FALLBACK_TIERS = [
     currency: "usd",
     interval: "month",
     features: [
-      "Advanced word study (Strong's Concordance)",
       "In-depth verse explanations",
-      "Lab (AI-assisted study)",
       "Higher-rate API access",
       "Legacy badge",
     ],
@@ -402,7 +400,7 @@ async function buildMonthlyTiers() {
       try { if (product.metadata?.features) features = JSON.parse(product.metadata.features); } catch { /* reviewed defaults */ }
       tiers.push({ ...stored, id, name: product.name, description: product.description || '',
         price: cents / 100, currency: 'usd', interval: 'month', isActive: true,
-        features: Array.isArray(features) ? features.filter(item => typeof item === 'string') : [],
+        features: Array.isArray(features) ? features.filter(item => typeof item === 'string' && !/\b(?:lab|strong.s|ledger)\b/i.test(item)) : [],
         stripePriceId: price.id, stripeProductId: product.id,
         sortOrder: baseId === 'legacy_sower' ? 1 : 2 });
     } catch (error) { console.warn('[Subscription] Monthly price unavailable:', id, error.type || error.message); }

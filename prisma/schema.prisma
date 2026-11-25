@@ -591,6 +591,7 @@ model JournalEntry {
   strongsWords     String?           @map("strongs_words") // JSON: [{ strongsId, surfaceText, lemma }]
   strongsIds       String?           @map("strongs_ids") // Comma-separated: "H7225,G26,G2889"
   source           String            @default("manual") @map("source") // "manual" | "exegesis-lab"
+  sourceSessionId  String?           @unique @map("source_session_id") // Exegesis Ledger idempotency key
   tags             String?           @map("tags")
   createdOn        DateTime          @default(now()) @map("created_on")
   updatedOn        DateTime          @updatedAt @map("updated_on")
@@ -902,33 +903,54 @@ model VerseWord {
 }
 
 model ExegesisSession {
-  id               String        @id @default(uuid())
-  userId           String        @map("user_id")
-  passageRef       String        @map("passage_ref")
-  bookName         String        @map("book_name")
-  chapter          BigInt
-  verseStart       BigInt?       @map("verse_start")
-  verseEnd         BigInt?       @map("verse_end")
-  currentStage     String        @default("look") @map("current_stage") // look | listen | learn | abide | completed
-  lookNotes        String?       @map("look_notes")
-  lookPromptsJson  String?       @map("look_prompts_json")
-  listenCompleted  Boolean       @default(false) @map("listen_completed")
-  listenDuration   Int?          @map("listen_duration") // seconds chosen
-  listenElapsed    Int?          @map("listen_elapsed") // seconds elapsed mid-timer
-  learnNotes       String?       @map("learn_notes")
-  abideReflection  String?       @map("abide_reflection")
-  abidePrayer      String?       @map("abide_prayer")
-  abideApplication String?       @map("abide_application")
-  abideTags        String?       @map("abide_tags")
-  strongsWords     String?       @map("strongs_words") // JSON array of studied Strong's words
-  strongsIds       String?       @map("strongs_ids") // Comma-separated Strong's IDs
-  isPublic         Boolean       @default(false) @map("is_public")
-  journalEntryId   BigInt?       @map("journal_entry_id")
-  completed        Boolean       @default(false)
-  createdOn        DateTime      @default(now()) @map("created_on")
-  updatedOn        DateTime      @updatedAt @map("updated_on")
-  user             SystemUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  journalEntry     JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+  id                 String        @id @default(uuid())
+  userId             String        @map("user_id")
+  passageRef         String        @map("passage_ref")
+  bookName           String        @map("book_name")
+  chapter            BigInt
+  verseStart         BigInt?       @map("verse_start")
+  verseEnd           BigInt?       @map("verse_end")
+  currentStage       String        @default("look") @map("current_stage") // look | listen | learn | abide | apply | completed | abandoned
+  artifactVersion    Int           @default(2) @map("artifact_version")
+  lookNotes          String?       @map("look_notes")
+  lookPromptsJson    String?       @map("look_prompts_json")
+  observations       Json?         @map("look_observations")
+  lookHighlights     Json?         @map("look_highlights")
+  lookQuestions      Json?         @map("look_questions")
+  listenCompleted    Boolean       @default(false) @map("listen_completed")
+  listenDuration     Int?          @map("listen_duration") // seconds chosen
+  listenElapsed      Int?          @map("listen_elapsed") // seconds elapsed mid-timer
+  listenSelections   Json?         @map("listen_selections")
+  listenNotes        String?       @map("listen_notes")
+  listenQuestions    Json?         @map("listen_questions")
+  listenRepeats      Int?          @map("listen_repeats")
+  listenRepeatCount  Int?          @map("listen_repeat_count")
+  learnSummary       String?       @map("learn_summary")
+  learnNotes         String?       @map("learn_notes")
+  learnQuestions     Json?         @map("learn_questions")
+  abideSelectedVerse String?       @map("abide_selected_verse")
+  abideTruth         String?       @map("abide_truth")
+  abideReflection    String?       @map("abide_reflection")
+  abidePrayer        String?       @map("abide_prayer")
+  abideApplication   String?       @map("abide_application")
+  abideTags          String?       @map("abide_tags")
+  applyPrinciple     String?       @map("apply_principle")
+  applyResponse      String?       @map("apply_response")
+  applyChallenge     String?       @map("apply_challenge")
+  applyTiming        Json?         @map("apply_timing")
+  applyReminder      Json?         @map("apply_reminder")
+  applyResults       Json?         @map("apply_results")
+  applySavedOn       DateTime?     @map("apply_saved_on")
+  completedOn        DateTime?     @map("completed_on")
+  strongsWords       String?       @map("strongs_words") // JSON array of studied Strong's words
+  strongsIds         String?       @map("strongs_ids") // Comma-separated Strong's IDs
+  isPublic           Boolean       @default(false) @map("is_public")
+  journalEntryId     BigInt?       @map("journal_entry_id")
+  completed          Boolean       @default(false)
+  createdOn          DateTime      @default(now()) @map("created_on")
+  updatedOn          DateTime      @updatedAt @map("updated_on")
+  user               SystemUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  journalEntry       JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([userId, completed])

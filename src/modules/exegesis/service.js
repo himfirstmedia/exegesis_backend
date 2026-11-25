@@ -1,4 +1,5 @@
 import { prisma } from '../../config/db.js';
+import { Prisma } from '@prisma/client';
 import { serializeBigInt } from '../../utils/helpers.js';
 import PDFDocument from 'pdfkit';
 import { translateSessionPrompts } from './translation.js';
@@ -12,40 +13,164 @@ const LOOK_PROMPTS = [
   'What questions does this passage raise in your mind?',
 ];
 
-export const startSession = async (userId, body) => {
-  const { bookName, chapter, verseStart, verseEnd } = body;
+const JSON_FIELDS = new Set([
+  'observations',
+  'lookHighlights',
+  'lookQuestions',
+  'listenSelections',
+  'listenQuestions',
+  'learnQuestions',
+  'applyTiming',
+  'applyReminder',
+  'applyResults',
+]);
 
-  if (!bookName || !chapter) {
+const LOOK_FIELDS = {
+  lookNotes: ['lookNotes', 'notes'],
+  observations: ['observations', 'lookObservations'],
+  lookHighlights: ['lookHighlights', 'highlights'],
+  lookQuestions: ['lookQuestions', 'questions'],
+};
+
+const LISTEN_FIELDS = {
+  listenDuration: ['listenDuration', 'duration'],
+  listenElapsed: ['listenElapsed'],
+  listenSelections: ['listenSelections', 'selections'],
+  listenNotes: ['listenNotes', 'notes'],
+  listenQuestions: ['listenQuestions', 'questions'],
+  listenRepeats: ['listenRepeats', 'repeats'],
+  listenRepeatCount: ['listenRepeatCount', 'repeatCount'],
+};
+
+const LEARN_FIELDS = {
+  learnSummary: ['learnSummary', 'summary'],
+  learnNotes: ['learnNotes', 'notes'],
+  learnQuestions: ['learnQuestions', 'questions'],
+};
+
+const ABIDE_FIELDS = {
+  abideSelectedVerse: ['abideSelectedVerse', 'selectedVerse'],
+  abideTruth: ['abideTruth', 'selectedTruth', 'truth'],
+  abideReflection: ['abideReflection', 'reflection'],
+  abidePrayer: ['abidePrayer', 'prayer'],
+  abideApplication: ['abideApplication', 'application'],
+  abideTags: ['abideTags', 'tags'],
+};
+
+const APPLY_FIELDS = {
+  applyPrinciple: ['applyPrinciple', 'principle'],
+  applyResponse: ['applyResponse', 'response'],
+  applyChallenge: ['applyChallenge', 'challenge'],
+  applyTiming: ['applyTiming', 'timing'],
+  applyReminder: ['applyReminder', 'reminder'],
+  applyResults: ['applyResults', 'results'],
+};
+
+const LEGACY_FIELDS = {
+  isPublic: ['isPublic'],
+  strongsWords: ['strongsWords'],
+  strongsIds: ['strongsIds'],
+};
+
+// Undefined means "not sent" and must not overwrite a draft. Null, empty text,
+// false, zero, and empty arrays/objects are intentional values. Prisma uses a
+// distinct sentinel for SQL NULL on nullable JSON columns.
+const copyDefinedFields = (target, body, fields) => {
+  let copied = false;
+  Object.entries(fields).forEach(([field, aliases]) => {
+    const key = aliases.find(alias => body?.[alias] !== undefined);
+    if (!key) return;
+    const value = body[key];
+    target[field] = value === null && JSON_FIELDS.has(field) ? Prisma.DbNull : value;
+    copied = true;
+  });
+  return copied;
+};
+
+const STAGE_RANK = { look: 0, listen: 1, learn: 2, abide: 3, apply: 4, completed: 5, abandoned: 5 };
+
+// A delayed/offline replay may save artifacts again, but it must never move the
+// lifecycle backward or reopen a completed/abandoned session.
+const nextStage = (session, stage) => {
+  if (session.completed) return session.currentStage === 'abandoned' ? 'abandoned' : 'completed';
+  const currentRank = STAGE_RANK[session.currentStage] ?? 0;
+  return currentRank > STAGE_RANK[stage] ? session.currentStage : stage;
+};
+
+const savedSession = (message, session) => ({
+  status: 200,
+  message,
+  data: serializeBigInt(session),
+});
+
+const optionalBigInt = value =>
+  value === undefined || value === null || value === '' ? null : BigInt(value);
+
+
+export const startSession = async (userId, body) => {
+  const { bookName, chapter, verseStart, verseEnd, createNew = false } = body;
+  if (typeof bookName !== 'string' || !bookName.trim() || chapter === undefined || chapter === null || chapter === '') {
     return { status: 400, message: 'bookName and chapter are required' };
   }
 
-  // Check for existing incomplete session
-  const existing = await prisma.exegesisSession.findFirst({
-    where: { userId, completed: false },
-  });
-
-  if (existing) {
-    // Return existing session so user can continue
-    return {
-      status: 200,
-      message: 'Continuing existing session',
-      data: await translateSessionPrompts(serializeBigInt(existing), body?.lang),
-    };
+  let normalizedChapter;
+  let normalizedVerseStart;
+  let normalizedVerseEnd;
+  try {
+    normalizedChapter = BigInt(chapter);
+    normalizedVerseStart = optionalBigInt(verseStart);
+    normalizedVerseEnd = optionalBigInt(verseEnd);
+  } catch {
+    return { status: 400, message: 'chapter and verse numbers must be valid integers' };
   }
 
-  const passageRef = verseStart
-    ? `${bookName} ${chapter}:${verseStart}${verseEnd && verseEnd !== verseStart ? `-${verseEnd}` : ''}`
-    : `${bookName} ${chapter}`;
+  if (normalizedChapter < 1 || (normalizedVerseStart !== null && normalizedVerseStart < 1) ||
+      (normalizedVerseEnd !== null && normalizedVerseEnd < 1) ||
+      (normalizedVerseStart === null && normalizedVerseEnd !== null) ||
+      (normalizedVerseStart !== null && normalizedVerseEnd !== null && normalizedVerseEnd < normalizedVerseStart)) {
+    return { status: 400, message: 'Enter a valid chapter and verse range' };
+  }
+
+  const normalizedBookName = bookName.trim();
+
+  const passageRef = normalizedVerseStart !== null
+    ? `${normalizedBookName} ${chapter}:${verseStart}${normalizedVerseEnd !== null && normalizedVerseEnd !== normalizedVerseStart ? `-${verseEnd}` : ''}`
+    : `${normalizedBookName} ${chapter}`;
+
+  // Legacy callers may continue a draft, but only for the exact requested
+  // passage. createNew always creates a separate draft for that passage.
+  if (!createNew) {
+    const existing = await prisma.exegesisSession.findFirst({
+      where: {
+        userId,
+        completed: false,
+        bookName: normalizedBookName,
+        chapter: normalizedChapter,
+        verseStart: normalizedVerseStart,
+        verseEnd: normalizedVerseEnd,
+      },
+      orderBy: [{ updatedOn: 'desc' }, { id: 'desc' }],
+    });
+
+    if (existing) {
+      return {
+        status: 200,
+        message: 'Continuing existing session',
+        data: await translateSessionPrompts(serializeBigInt(existing), body?.lang),
+      };
+    }
+  }
 
   const session = await prisma.exegesisSession.create({
     data: {
       userId,
       passageRef,
-      bookName,
-      chapter: BigInt(chapter),
-      verseStart: verseStart ? BigInt(verseStart) : null,
-      verseEnd: verseEnd ? BigInt(verseEnd) : null,
+      bookName: normalizedBookName,
+      chapter: normalizedChapter,
+      verseStart: normalizedVerseStart,
+      verseEnd: normalizedVerseEnd,
       currentStage: 'look',
+      artifactVersion: 2,
       lookPromptsJson: JSON.stringify(LOOK_PROMPTS),
     },
   });
@@ -60,7 +185,7 @@ export const startSession = async (userId, body) => {
 export const getCurrentSession = async (userId, lang = 'en') => {
   const session = await prisma.exegesisSession.findFirst({
     where: { userId, completed: false },
-    orderBy: { createdOn: 'desc' },
+    orderBy: [{ updatedOn: 'desc' }, { id: 'desc' }],
   });
 
   if (!session) {
@@ -120,19 +245,15 @@ export const saveLookStage = async (sessionId, userId, body) => {
     return { status: 404, message: 'Session not found' };
   }
 
+  const data = { currentStage: nextStage(session, 'listen') };
+  copyDefinedFields(data, body, LOOK_FIELDS);
+
   const updated = await prisma.exegesisSession.update({
     where: { id: sessionId },
-    data: {
-      lookNotes: body.notes || session.lookNotes,
-      currentStage: 'listen',
-    },
+    data,
   });
 
-  return {
-    status: 200,
-    message: 'Look stage saved',
-    data: serializeBigInt(updated),
-  };
+  return savedSession('Look stage saved', updated);
 };
 
 export const saveListenStage = async (sessionId, userId, body) => {
@@ -144,20 +265,18 @@ export const saveListenStage = async (sessionId, userId, body) => {
     return { status: 404, message: 'Session not found' };
   }
 
+  const data = {
+    listenCompleted: body?.listenCompleted !== false,
+    currentStage: nextStage(session, 'learn'),
+  };
+  copyDefinedFields(data, body, LISTEN_FIELDS);
+
   const updated = await prisma.exegesisSession.update({
     where: { id: sessionId },
-    data: {
-      listenCompleted: true,
-      listenDuration: body.duration || session.listenDuration,
-      currentStage: 'learn',
-    },
+    data,
   });
 
-  return {
-    status: 200,
-    message: 'Listen stage saved',
-    data: serializeBigInt(updated),
-  };
+  return savedSession('Listen stage saved', updated);
 };
 
 export const saveLearnStage = async (sessionId, userId, body) => {
@@ -169,20 +288,16 @@ export const saveLearnStage = async (sessionId, userId, body) => {
     return { status: 404, message: 'Session not found' };
   }
 
+  const data = { currentStage: nextStage(session, 'abide') };
+  copyDefinedFields(data, body, LEARN_FIELDS);
+  copyDefinedFields(data, body, { isPublic: LEGACY_FIELDS.isPublic });
+
   const updated = await prisma.exegesisSession.update({
     where: { id: sessionId },
-    data: {
-      learnNotes: body.notes || session.learnNotes,
-      isPublic: body.isPublic !== undefined ? body.isPublic : session.isPublic,
-      currentStage: 'abide',
-    },
+    data,
   });
 
-  return {
-    status: 200,
-    message: 'Learn stage saved',
-    data: serializeBigInt(updated),
-  };
+  return savedSession('Learn stage saved', updated);
 };
 
 export const saveAbideStage = async (sessionId, userId, body) => {
@@ -194,85 +309,19 @@ export const saveAbideStage = async (sessionId, userId, body) => {
     return { status: 404, message: 'Session not found' };
   }
 
-  // Abide may be retried (offline replay, double tap, re-opened session).
-  // Reuse the session's journal entry so the Legacy Ledger never receives
-  // duplicate rows for the same Lab session.
-  const journalData = {
-    content: body.reflection || '',
-    prayers: body.prayer || '',
-    application: body.application || '',
-    tags: body.tags || '',
-    isPublished: body.isPublic ?? session.isPublic ?? false,
-    strongsWords: body.strongsWords ?? session.strongsWords ?? null,
-    strongsIds: body.strongsIds ?? session.strongsIds ?? null,
-  };
+  // Abide is a draft save only. Completion and Ledger persistence are separate,
+  // explicitly requested operations after Apply has been saved.
+  const data = { currentStage: nextStage(session, 'apply') };
+  copyDefinedFields(data, body, LOOK_FIELDS);
+  copyDefinedFields(data, body, ABIDE_FIELDS);
+  copyDefinedFields(data, body, LEGACY_FIELDS);
 
-  const { journalEntry, updated } = await prisma.$transaction(async (tx) => {
-    let entry = null;
-
-    if (session.journalEntryId) {
-      entry = await tx.journalEntry.findFirst({
-        where: { id: session.journalEntryId, userId },
-      });
-      if (entry) {
-        entry = await tx.journalEntry.update({
-          where: { id: entry.id },
-          data: {
-            ...journalData,
-            ...(body.observations !== undefined
-              ? { observations: body.observations }
-              : {}),
-            updatedBy: userId,
-          },
-        });
-      }
-    }
-
-    if (!entry) {
-      entry = await tx.journalEntry.create({
-        data: {
-          userId,
-          title: `Exegesis: ${session.passageRef}`,
-          ...journalData,
-          observations: body.observations ?? session.lookNotes ?? null,
-          bookName: session.bookName,
-          chapter: session.chapter,
-          verseNumber: session.verseStart,
-          category: 'study',
-          source: 'exegesis-lab',
-          createdBy: userId,
-        },
-      });
-    }
-
-    const savedSession = await tx.exegesisSession.update({
-      where: { id: sessionId },
-      data: {
-        abideReflection: body.reflection ?? session.abideReflection,
-        abidePrayer: body.prayer ?? session.abidePrayer,
-        abideApplication: body.application ?? session.abideApplication,
-        abideTags: body.tags ?? session.abideTags,
-        strongsWords: journalData.strongsWords,
-        strongsIds: journalData.strongsIds,
-        isPublic: journalData.isPublished,
-        journalEntryId: entry.id,
-        completed: true,
-        currentStage: 'completed',
-      },
-    });
-
-    return { journalEntry: entry, updated: savedSession };
+  const updated = await prisma.exegesisSession.update({
+    where: { id: sessionId },
+    data,
   });
 
-  return {
-    status: 200,
-    message: 'Exegesis complete! Saved to Legacy Ledger.',
-    data: serializeBigInt({
-      session: updated,
-      journalEntry: serializeBigInt(journalEntry),
-      journalEntryId: serializeBigInt(journalEntry.id),
-    }),
-  };
+  return savedSession('Abide stage saved', updated);
 };
 
 export const saveProgress = async (sessionId, userId, body) => {
@@ -284,23 +333,29 @@ export const saveProgress = async (sessionId, userId, body) => {
     return { status: 404, message: 'Session not found' };
   }
 
-  // Build update object with only the fields that were provided
-  // Do NOT change currentStage — this is a save-without-advancing endpoint
+  // Save without advancing the stage. Completion and journalEntryId are owned
+  // by their explicit endpoints so replayed progress cannot bypass lifecycle.
   const updateData = {};
-  if (body.lookNotes !== undefined) updateData.lookNotes = body.lookNotes;
-  if (body.learnNotes !== undefined) updateData.learnNotes = body.learnNotes;
-  if (body.listenDuration !== undefined) updateData.listenDuration = body.listenDuration;
-  if (body.listenElapsed !== undefined) updateData.listenElapsed = body.listenElapsed;
+  const fields = {
+    ...LOOK_FIELDS,
+    ...LISTEN_FIELDS,
+    ...LEARN_FIELDS,
+    ...ABIDE_FIELDS,
+    ...APPLY_FIELDS,
+    ...LEGACY_FIELDS,
+  };
+  // Generic draft saves use canonical names for ambiguous fields (e.g.
+  // `notes` could be Look, Listen or Learn); stage routes accept short names.
+  const aliasCounts = Object.values(fields).flat().reduce((counts, alias) => {
+    counts[alias] = (counts[alias] ?? 0) + 1;
+    return counts;
+  }, Object.create(null));
+  copyDefinedFields(updateData, body, Object.fromEntries(
+    Object.entries(fields).map(([field, aliases]) => [
+      field, aliases.filter(alias => aliasCounts[alias] === 1),
+    ]),
+  ));
   if (body.listenCompleted !== undefined) updateData.listenCompleted = body.listenCompleted;
-  if (body.abideReflection !== undefined) updateData.abideReflection = body.abideReflection;
-  if (body.abidePrayer !== undefined) updateData.abidePrayer = body.abidePrayer;
-  if (body.abideApplication !== undefined) updateData.abideApplication = body.abideApplication;
-  if (body.abideTags !== undefined) updateData.abideTags = body.abideTags;
-  if (body.isPublic !== undefined) updateData.isPublic = body.isPublic;
-  if (body.strongsWords !== undefined) updateData.strongsWords = body.strongsWords;
-  if (body.strongsIds !== undefined) updateData.strongsIds = body.strongsIds;
-  if (body.journalEntryId !== undefined) updateData.journalEntryId = BigInt(body.journalEntryId);
-  if (body.completed !== undefined) updateData.completed = body.completed;
 
   if (Object.keys(updateData).length === 0) {
     return { status: 400, message: 'No fields to update' };
@@ -311,11 +366,178 @@ export const saveProgress = async (sessionId, userId, body) => {
     data: updateData,
   });
 
-  return {
-    status: 200,
-    message: 'Progress saved',
-    data: serializeBigInt(updated),
+  return savedSession('Progress saved', updated);
+};
+
+export const saveApplyStage = async (sessionId, userId, body) => {
+  const session = await prisma.exegesisSession.findFirst({
+    where: { id: sessionId, userId },
+  });
+
+  if (!session) {
+    return { status: 404, message: 'Session not found' };
+  }
+
+  // An empty Apply save is valid: reading and reflection need not produce typed
+  // text, but the successful save marker is required before completion.
+  const data = {
+    applySavedOn: new Date(),
+    currentStage: nextStage(session, 'apply'),
   };
+  copyDefinedFields(data, body, APPLY_FIELDS);
+
+  const updated = await prisma.exegesisSession.update({
+    where: { id: sessionId },
+    data,
+  });
+
+  return savedSession('Apply stage saved', updated);
+};
+
+export const completeSession = async (sessionId, userId) => {
+  const session = await prisma.exegesisSession.findFirst({
+    where: { id: sessionId, userId },
+  });
+
+  if (!session) {
+    return { status: 404, message: 'Session not found' };
+  }
+
+  if (session.currentStage === 'abandoned') {
+    return { status: 409, message: 'An abandoned session cannot be completed' };
+  }
+  if (session.completed) {
+    return savedSession('Exegesis session already completed', session);
+  }
+
+  if (!session.applySavedOn) {
+    return { status: 409, message: 'Apply stage must be saved before completion' };
+  }
+
+  const updated = await prisma.exegesisSession.update({
+    where: { id: sessionId },
+    data: {
+      completed: true,
+      completedOn: session.completedOn ?? new Date(),
+      currentStage: 'completed',
+    },
+  });
+
+  return savedSession('Exegesis session completed', updated);
+};
+
+const artifactText = value => {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value, null, 2);
+};
+
+const artifactSection = (label, value) => {
+  const text = artifactText(value);
+  return text && text !== '[]' && text !== '{}' ? `${label}:\n${text}` : '';
+};
+
+const artifactSections = sections => sections.filter(Boolean).join('\n\n');
+
+const ledgerArtifacts = session => ({
+  content: artifactSections([
+    artifactSection('Selected verse', session.abideSelectedVerse),
+    artifactSection('Truth', session.abideTruth),
+    artifactSection('Reflection', session.abideReflection),
+  ]),
+  observations: artifactSections([
+    artifactSection('Look notes', session.lookNotes),
+    artifactSection('Observations', session.observations),
+    artifactSection('Highlights', session.lookHighlights),
+    artifactSection('Look questions', session.lookQuestions),
+    artifactSection('Listen selections', session.listenSelections),
+    artifactSection('Listening notes', session.listenNotes),
+    artifactSection('Wording questions', session.listenQuestions),
+  ]),
+  learnings: artifactSections([
+    artifactSection('Summary', session.learnSummary),
+    artifactSection('Study notes', session.learnNotes),
+    artifactSection('Unresolved questions', session.learnQuestions),
+  ]),
+  prayers: artifactText(session.abidePrayer),
+  application: artifactSections([
+    artifactSection('Abide application', session.abideApplication),
+    artifactSection('Principle', session.applyPrinciple),
+    artifactSection('Response', session.applyResponse),
+    artifactSection('Challenge', session.applyChallenge),
+    artifactSection('Timing', session.applyTiming),
+    artifactSection('Later results', session.applyResults),
+  ]),
+});
+
+export const saveSessionLedger = async (sessionId, userId, body = {}) => {
+  const session = await prisma.exegesisSession.findFirst({
+    where: { id: sessionId, userId },
+  });
+
+  if (!session) {
+    return { status: 404, message: 'Session not found' };
+  }
+
+  if (!session.completed || session.currentStage === 'abandoned') {
+    return { status: 409, message: 'Complete the Apply stage before saving to the Legacy Ledger' };
+  }
+
+  const artifacts = ledgerArtifacts(session);
+  const journalData = {
+    title: `Exegesis: ${session.passageRef}`,
+    ...artifacts,
+    observations: artifacts.observations || null,
+    learnings: artifacts.learnings || null,
+    prayers: artifacts.prayers || null,
+    application: artifacts.application || null,
+    bookName: session.bookName,
+    chapter: session.chapter,
+    verseNumber: session.verseStart,
+    category: 'study',
+    source: 'exegesis-lab',
+    sourceSessionId: session.id,
+    // The early Lab isPublic preference is deliberately not inherited. Every
+    // Ledger save is private unless this request explicitly chooses public.
+    isPublished: body.isPublic === true || body.isPublished === true,
+    strongsWords: session.strongsWords ?? null,
+    strongsIds: session.strongsIds ?? null,
+    tags: session.abideTags ?? null,
+  };
+
+  const updated = await prisma.$transaction(async tx => {
+    let entry = session.journalEntryId
+      ? await tx.journalEntry.findFirst({
+          where: { id: session.journalEntryId, userId },
+        })
+      : null;
+
+    if (entry) {
+      entry = await tx.journalEntry.update({
+        where: { id: entry.id },
+        data: { ...journalData, updatedBy: userId },
+      });
+    } else {
+      // The stable sourceSessionId also covers a cleared/deleted legacy link and
+      // makes concurrent or offline replays converge on one JournalEntry row.
+      entry = await tx.journalEntry.upsert({
+        where: { sourceSessionId: session.id },
+        create: {
+          userId,
+          ...journalData,
+          createdBy: userId,
+        },
+        update: { ...journalData, updatedBy: userId },
+      });
+    }
+
+    return tx.exegesisSession.update({
+      where: { id: session.id },
+      data: { journalEntryId: entry.id },
+    });
+  });
+
+  return savedSession('Exegesis session saved to Legacy Ledger', updated);
 };
 
 export const getSession = async (sessionId, userId, lang = 'en') => {

@@ -329,6 +329,22 @@ export const completeGoogleRegistration = async (data, deviceInfo = null) => {
   };
 };
 
+export const checkEmailAvailability = async (data) => {
+  const email = typeof data?.email === "string" ? data.email.trim().toLowerCase() : "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { status: 400, message: "Enter a valid email address" };
+  }
+  const existingEmail = await prisma.systemUser.findFirst({
+    where: { email },
+    select: { id: true },
+  });
+  return {
+    status: 200,
+    message: existingEmail ? "Email already exists" : "Email is available",
+    data: { available: !existingEmail },
+  };
+};
+
 export const register = async (data) => {
   const { username, email, password, firstName, lastName, phoneNumber, dateOfBirth, gender, userRole } = data;
 

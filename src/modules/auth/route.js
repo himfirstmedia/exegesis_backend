@@ -5,6 +5,7 @@ import { authLimiter, registerLimiter } from "../../middlewares/rateLimiter.midd
 
 const router = express.Router();
 
+router.post("/check-email-availability", authLimiter, authController.checkEmailAvailability);
 router.post("/register", registerLimiter, authController.register);
 router.post("/verify-account", authLimiter, authController.verifyAccount);
 router.post("/verify-code", authLimiter, authController.verifyCode);

@@ -75,6 +75,39 @@ export const saveAbideStage = async (req, res) => {
   }
 };
 
+export const saveApplyStage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await exegesisService.saveApplyStage(id, req.user.id, req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[ExegesisController] saveApplyStage error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error saving Apply stage: ' + error.message }));
+  }
+};
+
+export const completeSession = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await exegesisService.completeSession(id, req.user.id);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[ExegesisController] completeSession error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error completing exegesis session: ' + error.message }));
+  }
+};
+
+export const saveSessionLedger = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await exegesisService.saveSessionLedger(id, req.user.id, req.body);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    console.error('[ExegesisController] saveSessionLedger error:', error);
+    return res.status(500).json(formatApiResponse({ status: 500, message: 'Error saving session to Legacy Ledger: ' + error.message }));
+  }
+};
+
 export const saveProgress = async (req, res) => {
   try {
     const { id } = req.params;

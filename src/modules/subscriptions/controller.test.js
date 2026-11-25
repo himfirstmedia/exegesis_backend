@@ -497,7 +497,7 @@ describe("listTiers field-safe translation", () => {
         price: 0,
         currency: "usd",
         interval: "none",
-        features: ["Bible reading", "Daily verse", "Basic tools"],
+        features: ["Bible reading", "Daily verse", "Basic tools", "Exegesis Lab and Legacy Ledger"],
         isActive: true,
         sortOrder: 0,
       }),

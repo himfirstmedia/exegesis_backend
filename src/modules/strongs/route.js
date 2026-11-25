@@ -1,7 +1,6 @@
 import express from 'express';
 import * as strongsController from './controller.js';
 import { authenticate, requireAdmin } from '../../middlewares/auth.middleware.js';
-import { requireTier } from '../../middlewares/gating.middleware.js';
 import { validate } from '../../middlewares/validate.middleware.js';
 import {
   searchStrongsSchema,
@@ -23,12 +22,10 @@ import {
 
 const router = express.Router();
 
-const authAndTier = [authenticate, requireTier('legacy_sower')];
-
-router.get('/search', ...authAndTier, validate(searchStrongsSchema, 'query'), strongsController.searchStrongs);
-router.get('/search-related/:strongsId', ...authAndTier, validate(getRelatedWordsSchema, 'query'), strongsController.getRelatedWords);
-router.get('/topics/search', ...authAndTier, validate(searchTopicsSchema, 'query'), strongsController.searchTopics);
-router.get('/topics/:topicName/verses', ...authAndTier, validate(getTopicVersesSchema, 'query'), strongsController.getTopicVerses);
+router.get('/search', authenticate, validate(searchStrongsSchema, 'query'), strongsController.searchStrongs);
+router.get('/search-related/:strongsId', authenticate, validate(getRelatedWordsSchema, 'query'), strongsController.getRelatedWords);
+router.get('/topics/search', authenticate, validate(searchTopicsSchema, 'query'), strongsController.searchTopics);
+router.get('/topics/:topicName/verses', authenticate, validate(getTopicVersesSchema, 'query'), strongsController.getTopicVerses);
 router.get('/book-words/:bookName', validate(getBookWordsSchema, 'query'), strongsController.getBookWords);
 router.get('/random-words', validate(getRandomWordsSchema, 'query'), strongsController.getRandomWords);
 router.get('/:strongsId', validate(getStrongsEntrySchema, 'query'), strongsController.getStrongsEntry);
