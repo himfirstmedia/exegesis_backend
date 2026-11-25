@@ -67,6 +67,62 @@ test('linked shared edits require the current version, even if old source text m
   expect(tx.passageStudy.updateMany).not.toHaveBeenCalled();
 });
 
+test('a new verse 17 explanation replaces detached study content from the explanation moved to verse 18', async () => {
+  const previous = study({
+    explanation: 'Old content that belongs at verse 18', introduction: null, application: null,
+    takeaways: [], words: [],
+    _count: { explanations: 0, dailyVerses: 0, devotions: 0 },
+  });
+  const tx = transaction(previous);
+  tx.verseExplanation = { update: jest.fn() };
+  const result = await writeStudy(tx, 'explanation', source({
+    id: 22n, bookName: 'John', chapter: 3, verseNumber: 17,
+    exegesis: { explanationText: 'New content for verse 17' },
+  }));
+  expect(result).toEqual({ id: 12n, version: 4 });
+  expect(tx.passageStudy.updateMany).toHaveBeenCalledWith({
+    where: { id: 12n, version: 3, explanations: { none: {} }, dailyVerses: { none: {} }, devotions: { none: {} } },
+    data: { explanation: 'New content for verse 17', version: { increment: 1 } },
+  });
+  expect(tx.verseExplanation.update).toHaveBeenCalledWith({ where: { id: 22n }, data: { sharedStudyId: 12n } });
+});
+
+test('a reference-only move carries the original study and children to verse 18 and leaves verse 17 free for a new study', async () => {
+  const original = study({ bibleEditionId: 'BSB', languageCode: 'en',
+    _count: { explanations: 1, dailyVerses: 0, devotions: 0 } });
+  const tx = transaction(null);
+  tx.verseExplanation = { update: jest.fn() };
+  tx.scripturePassage.upsert.mockResolvedValueOnce({ id: 18n }).mockResolvedValueOnce({ id: 17n });
+  tx.passageStudy.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(original).mockResolvedValueOnce(null);
+  tx.passageStudy.create = jest.fn().mockResolvedValue({ id: 23n, version: 1 });
+  const doc = source({
+    id: 41n, sharedStudyId: 12n, bookName: 'John', chapter: 3, verseNumber: 18,
+  });
+  await expect(writeStudy(tx, 'explanation', doc, { referenceOnly: true, expectedVersion: 3, allowSharedEdit: true }))
+    .resolves.toEqual({ id: 12n, version: 4 });
+  expect(tx.passageStudy.updateMany).toHaveBeenCalledWith({
+    where: { id: 12n, version: 3, explanations: { some: { id: 41n }, every: { id: 41n } }, dailyVerses: { none: {} }, devotions: { none: {} } },
+    data: { passageId: 18n, version: { increment: 1 } },
+  });
+  expect(tx.passageStudy.create).not.toHaveBeenCalled();
+  expect(tx.verseExplanation.update).not.toHaveBeenCalled();
+
+  await expect(writeStudy(tx, 'explanation', source({
+    id: 42n, bookName: 'John', chapter: 3, verseNumber: 17, exegesis: { explanationText: 'Independent verse 17 content' },
+  }))).resolves.toEqual({ id: 23n, version: 1 });
+  expect(tx.passageStudy.create).toHaveBeenCalledWith({ data: expect.objectContaining({ passageId: 17n, explanation: 'Independent verse 17 content' }) });
+  expect(tx.verseExplanation.update).toHaveBeenCalledWith({ where: { id: 42n }, data: { sharedStudyId: 23n } });
+});
+
+test('does not silently adopt conflicting content from a still-linked daily verse', async () => {
+  const tx = transaction(study({ _count: { explanations: 0, dailyVerses: 1, devotions: 0 } }));
+  tx.verseExplanation = { update: jest.fn() };
+  await expect(writeStudy(tx, 'explanation', source({ exegesis: { explanationText: 'Different explanation' } })))
+    .rejects.toMatchObject({ status: 409, issues: expect.arrayContaining(['explanation']) });
+  expect(tx.passageStudy.updateMany).not.toHaveBeenCalled();
+  expect(tx.verseExplanation.update).not.toHaveBeenCalled();
+});
+
 test('a metadata-only attachment preserves richer existing content without replacing children', async () => {
   const tx = transaction(study());
   expect(await writeStudy(tx, 'verse', source({ explanation: 'Explanation' }))).toEqual({ id: 12n, version: 3 });

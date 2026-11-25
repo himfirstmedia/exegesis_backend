@@ -1076,8 +1076,10 @@ export const getVerseExplanation = async (data) => {
 };
 
 export const addVerseExplanation = async (data, userId) => {
+  const referenceOnly = data.referenceOnly === true;
+  if (referenceOnly && !data.id) return { status: 400, message: 'An explanation ID is required to change its reference.' };
   if (!validVerseRange(data.verseNumber, data.verseEnd)) return { status: 400, message: 'Invalid verse range' };
-  if ((data.crossReferences || []).some(cr => !cr.bookName || !Number.isInteger(Number(cr.chapter)) || Number(cr.chapter) < 1 || !validVerseRange(cr.verseNumber, cr.verseEnd))) {
+  if (!referenceOnly && (data.crossReferences || []).some(cr => !cr.bookName || !Number.isInteger(Number(cr.chapter)) || Number(cr.chapter) < 1 || !validVerseRange(cr.verseNumber, cr.verseEnd))) {
     return { status: 400, message: 'Complete each cross-reference passage or remove its empty row.' };
   }
   const {
@@ -1130,10 +1132,10 @@ export const addVerseExplanation = async (data, userId) => {
     };
 
   const sortOrder = canonicalBookIndex(bookName);
-  if (wordStudies != null && (!Array.isArray(wordStudies) || wordStudies.some(row => !row || typeof row !== "object" || Array.isArray(row)))) {
+  if (!referenceOnly && wordStudies != null && (!Array.isArray(wordStudies) || wordStudies.some(row => !row || typeof row !== "object" || Array.isArray(row)))) {
     return { status: 400, message: "Word studies must be an array of study rows" };
   }
-  const submittedWordStudies = (wordStudies || []).map((row, index) => ({
+  const submittedWordStudies = (referenceOnly ? [] : wordStudies || []).map((row, index) => ({
     ...row, sortOrder: row.sortOrder ?? index,
   }));
   const wordStudyIds = submittedWordStudies.map(row => {
@@ -1174,7 +1176,7 @@ export const addVerseExplanation = async (data, userId) => {
           data: {
             ...changedFields(previousReference, {
               bookName, chapter: BigInt(chapter), verseNumber: BigInt(verseNumber),
-              bibleVersion, ...verseEndData(data.verseEnd), sortOrder,
+              bibleVersion: referenceOnly ? undefined : bibleVersion, ...verseEndData(data.verseEnd), sortOrder,
             }),
             updatedBy: userId,
             updatedOn: savedAt,
@@ -1205,6 +1207,15 @@ export const addVerseExplanation = async (data, userId) => {
           create,
           include: includeLegacyContent,
         });
+      }
+
+      if (referenceOnly) {
+        const savedStudy = await writeStudy(tx, "explanation", root, {
+          referenceOnly: true,
+          allowSharedEdit: root.sharedStudyId != null,
+          expectedVersion: (sharedStudyVersion ?? expectedVersion) == null ? undefined : Number(sharedStudyVersion ?? expectedVersion),
+        });
+        return savedStudy ? hydrateStudies(tx, "explanation", { ...root, sharedStudyId: savedStudy.id }) : root;
       }
 
       const saveDetail = async (table, current, fields) => {

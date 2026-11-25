@@ -111,10 +111,14 @@ async function ensurePassage(tx, identity) {
 /** Must be called inside the caller's transaction, after its legacy-compatible
  * write and before commit. Shared edits require an explicit expected version;
  * merely attaching a new source may only fill missing/equal content. */
-export async function writeStudy(tx, type, source, { expectedVersion, allowSharedEdit = false } = {}) {
+export async function writeStudy(tx, type, source, { expectedVersion, allowSharedEdit = false, referenceOnly = false } = {}) {
   const table = { explanation: 'verseExplanation', verse: 'dailyVerse', devotion: 'dailyDevotion' }[type];
   if (!table) throw new SharedStudyError('Unsupported study source', [type], 400);
-  const normalized = normalizeSource(type, source);
+  const linkedReferenceOnly = referenceOnly && type === 'explanation' && source.sharedStudyId != null;
+  const normalized = normalizeSource(type, linkedReferenceOnly ? {
+    ...source, exegesis: undefined, studyMetadata: undefined,
+    wordStudies: [], practicalApps: [], crossReferences: [], themes: [],
+  } : source);
   if (normalized.status === 'NO_PASSAGE') {
     // Removing a devotion's passage must not leave an old study linked.
     await tx[table].update({ where: { id: source.id }, data: { sharedStudyId: null } });
@@ -126,23 +130,58 @@ export async function writeStudy(tx, type, source, { expectedVersion, allowShare
   const ref = await ensurePassage(tx, passage);
   await tx.bibleEdition.upsert({ where: { id: edition }, update: {}, create: { id: edition, name: edition } });
   const identity = { passageId: ref.id, bibleEditionId: edition, languageCode: language };
-  const existing = await tx.passageStudy.findUnique({ where: { passageId_bibleEditionId_languageCode: identity }, include: studyInclude });
+  const sourceLinks = { explanations: true, dailyVerses: true, devotions: true };
+  let existing = await tx.passageStudy.findUnique({
+    where: { passageId_bibleEditionId_languageCode: identity },
+    include: type === 'explanation' ? { ...studyInclude, _count: { select: sourceLinks } } : studyInclude,
+  });
+  let moving = false;
+  let movedDocument;
+  if (linkedReferenceOnly) {
+    const original = existing?.id === source.sharedStudyId ? existing : await tx.passageStudy.findUnique({
+      where: { id: source.sharedStudyId },
+      include: { ...studyInclude, _count: { select: sourceLinks } },
+    });
+    if (!original || original.version !== expectedVersion) {
+      throw new SharedStudyError('Shared study changed; reload before saving', ['version']);
+    }
+    movedDocument = studyDocument(original);
+    if (!existing && original.bibleEditionId === edition && original.languageCode === language &&
+        original._count.explanations === 1 && !original._count.dailyVerses && !original._count.devotions) {
+      // Move the canonical study itself: its content, child IDs, and audit
+      // history stay intact, and its old passage has nothing to auto-load.
+      existing = original;
+      moving = true;
+    }
+  }
   const previous = existing ? studyDocument(existing) : null;
   const ownsLink = existing && source.sharedStudyId != null && String(source.sharedStudyId) === String(existing.id);
-  let document = incoming;
+  // Moving an explanation leaves its previous passage study behind. It is
+  // safe to reuse that row for fresh editorial content only when unreferenced.
+  const reuseDetached = type === 'explanation' && !ownsLink && existing?._count &&
+    Object.keys(sourceLinks).every(key => existing._count[key] === 0);
+  let document = movedDocument ?? incoming;
   if (existing) {
     if (allowSharedEdit && ownsLink) {
       if (!Number.isInteger(expectedVersion) || expectedVersion !== existing.version) {
         throw new SharedStudyError('Shared study changed; reload before saving', ['version']);
       }
-    } else {
-      // First-time link (new daily verse or not yet linked): always use the
-      // merged result. Fields that only differ on the incoming side keep the
-      // existing study value — the shared content is authoritative. No 409.
-      document = mergeStudy(previous, incoming).merged;
+    } else if (!reuseDetached) {
+      const { merged, conflicts } = mergeStudy(previous, document);
+      if (type === 'explanation' && !ownsLink && conflicts.length) {
+        throw new SharedStudyError(
+          'This passage already has different study content linked to another item. The explanation was not saved.',
+          conflicts,
+        );
+      }
+      // A reference-only correction must not import extra destination fields.
+      if (linkedReferenceOnly && !same(previous, document)) {
+        throw new SharedStudyError('The destination has different shared study content. The explanation was not moved.', ['reference']);
+      }
+      document = merged;
     }
   }
-  if (existing && same(previous, document)) {
+  if (!moving && existing && same(previous, document)) {
     if (!ownsLink) await tx[table].update({ where: { id: source.id }, data: { sharedStudyId: existing.id } });
     return { id: existing.id, version: existing.version };
   }
@@ -151,7 +190,17 @@ export async function writeStudy(tx, type, source, { expectedVersion, allowShare
   let saved;
   if (existing) {
     // Optimistic lock also protects simultaneous missing-field merges.
-    const update = await tx.passageStudy.updateMany({ where: { id: existing.id, version: existing.version }, data: { ...scalars, version: { increment: 1 } } });
+    const update = await tx.passageStudy.updateMany({
+      where: {
+        id: existing.id, version: existing.version,
+        ...(reuseDetached ? { explanations: { none: {} }, dailyVerses: { none: {} }, devotions: { none: {} } } : {}),
+        ...(moving ? {
+          explanations: { some: { id: source.id }, every: { id: source.id } },
+          dailyVerses: { none: {} }, devotions: { none: {} },
+        } : {}),
+      },
+      data: { ...scalars, ...(moving ? { passageId: ref.id } : {}), version: { increment: 1 } },
+    });
     if (update.count !== 1) throw new SharedStudyError('Shared study changed; reload before saving', ['version']);
     saved = { id: existing.id, version: existing.version + 1 };
   } else {

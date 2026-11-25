@@ -399,6 +399,26 @@ test('an expired explanation save returns a retryable error without invalidating
   }
 });
 
+test('reference-only save keeps the explanation ID and skips updates to its editorial rows', async () => {
+  const root = { id: 71n, bookName: 'John', chapter: 3n, verseNumber: 18n, bibleVersion: 'BSB',
+    exegesis: { explanationText: 'Original text' }, crossReferences: [{ id: 99n, commentary: 'Original note' }] };
+  const tx = { verseExplanation: {
+    findUnique: jest.fn().mockResolvedValue({ ...root, verseNumber: 17n, sortOrder: 42 }),
+    update: jest.fn().mockResolvedValue(root),
+  } };
+  prisma.$transaction.mockImplementation(fn => fn(tx));
+  const result = await addVerseExplanation({
+    id: 71, bookName: 'John', chapter: 3, verseNumber: 18, referenceOnly: true,
+  }, 'admin-1');
+  expect(result).toMatchObject({ status: 200, data: { id: 71, verseNumber: 18, exegesis: { explanationText: 'Original text' } } });
+  expect(tx.verseExplanation.update).toHaveBeenCalledWith(expect.objectContaining({
+    where: { id: 71n }, data: expect.objectContaining({ verseNumber: 18n }),
+  }));
+  expect(tx.verseExplanation.findUnique).toHaveBeenCalledTimes(1);
+  expect(require('../shared-study/repository.js').writeStudy).toHaveBeenCalledWith(tx, 'explanation', root,
+    expect.objectContaining({ referenceOnly: true }));
+});
+
 test('editing one existing cross-reference patches only that row and changed field', async () => {
   const reference = { bookName: 'Romans', chapter: 5, verseNumber: 1, referenceText: 'Quote', commentary: 'Before', sortOrder: 0 };
   const savedReference = { ...reference, id: 8n, chapter: 5n, verseNumber: 1n, verseEnd: null };
