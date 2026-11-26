@@ -9,6 +9,7 @@ router.use(authenticate);
 router.post('/start', exegesisController.startSession);
 router.post('/current', exegesisController.getCurrentSession);
 router.post('/history', exegesisController.getSessionHistory);
+router.post('/catalog', exegesisController.getCatalog);
 
 // Session retrieval (resume)
 router.post('/:id', exegesisController.getSession);

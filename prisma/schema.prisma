@@ -902,6 +902,18 @@ model VerseWord {
   @@map("verse_words")
 }
 
+model LabStudy {
+  id       String  @id
+  pathway  String
+  title    String
+  purpose  String
+  scope    String
+  sessions Json
+  active   Boolean @default(true)
+
+  @@map("lab_studies")
+}
+
 model ExegesisSession {
   id                 String        @id @default(uuid())
   userId             String        @map("user_id")
@@ -910,6 +922,8 @@ model ExegesisSession {
   chapter            BigInt
   verseStart         BigInt?       @map("verse_start")
   verseEnd           BigInt?       @map("verse_end")
+  labStudyId         String?       @map("lab_study_id")
+  labStudyPosition   Int?          @map("lab_study_position")
   currentStage       String        @default("look") @map("current_stage") // look | listen | learn | abide | apply | completed | abandoned
   artifactVersion    Int           @default(2) @map("artifact_version")
   lookNotes          String?       @map("look_notes")
@@ -955,6 +969,7 @@ model ExegesisSession {
   @@index([userId])
   @@index([userId, completed])
   @@index([userId, createdOn])
+  @@index([userId, labStudyId, labStudyPosition])
   @@map("exegesis_sessions")
 }
 

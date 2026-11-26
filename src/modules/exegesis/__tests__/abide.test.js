@@ -4,6 +4,7 @@ import {
   saveApplyStage,
   saveLookStage,
   saveListenStage,
+  saveLearnStage,
   saveProgress,
   saveSessionLedger,
   startSession,
@@ -145,6 +146,7 @@ describe('five-stage session saves', () => {
   });
 
   test('an empty explicit Apply save is valid and records its marker', async () => {
+    prisma.exegesisSession.findFirst.mockResolvedValue({ ...session, currentStage: 'apply' });
     const result = await saveApplyStage('session-1', 'user-1', {});
 
     expect(result.status).toBe(200);
@@ -193,6 +195,20 @@ describe('five-stage session saves', () => {
       data: { currentStage: 'apply', lookNotes: 'Replayed notes' },
     });
   });
+});
+
+test('only the current or an earlier stage can be saved, and Listen requires all chosen readings', async () => {
+  prisma.exegesisSession.findFirst.mockResolvedValue({ ...session, currentStage: 'look' });
+  for (const save of [saveListenStage, saveLearnStage, saveAbideStage, saveApplyStage]) {
+    expect((await save('session-1', 'user-1', { listenCompleted: true, repeats: 1, repeatCount: 1 })).status).toBe(409);
+  }
+  expect(prisma.exegesisSession.update).not.toHaveBeenCalled();
+  expect((await saveLookStage('session-1', 'user-1', {})).data.currentStage).toBe('listen');
+
+  prisma.exegesisSession.findFirst.mockResolvedValue({ ...session, currentStage: 'listen' });
+  expect((await saveListenStage('session-1', 'user-1', { listenCompleted: true, repeats: 3, repeatCount: 2 })).status).toBe(409);
+  expect((await saveListenStage('session-1', 'user-1', { listenCompleted: false, repeats: 3, repeatCount: 3 })).status).toBe(409);
+  expect((await saveListenStage('session-1', 'user-1', { listenCompleted: true, repeats: 3, repeatCount: 3 })).data.currentStage).toBe('learn');
 });
 
 describe('Legacy Ledger save', () => {
@@ -327,6 +343,7 @@ describe('session passage matching', () => {
         chapter: BigInt(3),
         verseStart: BigInt(16),
         verseEnd: BigInt(16),
+        labStudyId: null,
       },
       orderBy: [{ updatedOn: 'desc' }, { id: 'desc' }],
     });

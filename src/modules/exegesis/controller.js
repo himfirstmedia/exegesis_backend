@@ -1,5 +1,14 @@
 import * as exegesisService from './service.js';
 import { formatApiResponse } from '../../utils/helpers.js';
+import { listLabStudies } from './catalog.js';
+
+export const getCatalog = async (req, res, next) => {
+  try {
+    return res.json(formatApiResponse({ status: 200, message: 'Lab studies', data: await listLabStudies(req.user.id) }));
+  } catch (error) {
+    return next(error);
+  }
+};
 
 export const startSession = async (req, res) => {
   try {

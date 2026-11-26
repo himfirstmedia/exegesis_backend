@@ -88,6 +88,8 @@ const copyDefinedFields = (target, body, fields) => {
 };
 
 const STAGE_RANK = { look: 0, listen: 1, learn: 2, abide: 3, apply: 4, completed: 5, abandoned: 5 };
+const stageNotReached = (session, stage) => (STAGE_RANK[session.currentStage] ?? 0) < STAGE_RANK[stage];
+const finishPreviousStage = { status: 409, message: 'Complete the previous Lab stage before continuing' };
 
 // A delayed/offline replay may save artifacts again, but it must never move the
 // lifecycle backward or reopen a completed/abandoned session.
@@ -108,7 +110,7 @@ const optionalBigInt = value =>
 
 
 export const startSession = async (userId, body) => {
-  const { bookName, chapter, verseStart, verseEnd, createNew = false } = body;
+  const { bookName, chapter, verseStart, verseEnd, createNew = false, labStudyId, labStudyPosition } = body;
   if (typeof bookName !== 'string' || !bookName.trim() || chapter === undefined || chapter === null || chapter === '') {
     return { status: 400, message: 'bookName and chapter are required' };
   }
@@ -132,6 +134,19 @@ export const startSession = async (userId, body) => {
   }
 
   const normalizedBookName = bookName.trim();
+  let studyContext = null;
+  if (labStudyId !== undefined || labStudyPosition !== undefined) {
+    if (typeof labStudyId !== 'string' || !Number.isSafeInteger(labStudyPosition) || labStudyPosition < 0) {
+      return { status: 400, message: 'Choose a valid Lab study session' };
+    }
+    const study = await prisma.labStudy.findUnique({ where: { id: labStudyId } });
+    const selected = study?.active && Array.isArray(study.sessions) ? study.sessions[labStudyPosition] : null;
+    if (!selected || selected.bookName !== normalizedBookName || String(selected.chapter) !== String(normalizedChapter) ||
+        String(selected.verseStart) !== String(normalizedVerseStart) || String(selected.verseEnd) !== String(normalizedVerseEnd)) {
+      return { status: 400, message: 'This passage is no longer available for that Lab study' };
+    }
+    studyContext = { labStudyId, labStudyPosition };
+  }
 
   const passageRef = normalizedVerseStart !== null
     ? `${normalizedBookName} ${chapter}:${verseStart}${normalizedVerseEnd !== null && normalizedVerseEnd !== normalizedVerseStart ? `-${verseEnd}` : ''}`
@@ -148,6 +163,7 @@ export const startSession = async (userId, body) => {
         chapter: normalizedChapter,
         verseStart: normalizedVerseStart,
         verseEnd: normalizedVerseEnd,
+        ...(studyContext ?? { labStudyId: null }),
       },
       orderBy: [{ updatedOn: 'desc' }, { id: 'desc' }],
     });
@@ -169,6 +185,7 @@ export const startSession = async (userId, body) => {
       chapter: normalizedChapter,
       verseStart: normalizedVerseStart,
       verseEnd: normalizedVerseEnd,
+      ...studyContext,
       currentStage: 'look',
       artifactVersion: 2,
       lookPromptsJson: JSON.stringify(LOOK_PROMPTS),
@@ -264,6 +281,12 @@ export const saveListenStage = async (sessionId, userId, body) => {
   if (!session) {
     return { status: 404, message: 'Session not found' };
   }
+  if (stageNotReached(session, 'listen')) return finishPreviousStage;
+  if (session.currentStage === 'listen' && (body?.listenCompleted !== true ||
+      !Number.isSafeInteger(body.repeats) || body.repeats < 1 ||
+      !Number.isSafeInteger(body.repeatCount) || body.repeatCount < body.repeats)) {
+    return { status: 409, message: 'Complete the selected readings before continuing to Learn' };
+  }
 
   const data = {
     listenCompleted: body?.listenCompleted !== false,
@@ -287,6 +310,7 @@ export const saveLearnStage = async (sessionId, userId, body) => {
   if (!session) {
     return { status: 404, message: 'Session not found' };
   }
+  if (stageNotReached(session, 'learn')) return finishPreviousStage;
 
   const data = { currentStage: nextStage(session, 'abide') };
   copyDefinedFields(data, body, LEARN_FIELDS);
@@ -308,6 +332,7 @@ export const saveAbideStage = async (sessionId, userId, body) => {
   if (!session) {
     return { status: 404, message: 'Session not found' };
   }
+  if (stageNotReached(session, 'abide')) return finishPreviousStage;
 
   // Abide is a draft save only. Completion and Ledger persistence are separate,
   // explicitly requested operations after Apply has been saved.
@@ -377,6 +402,7 @@ export const saveApplyStage = async (sessionId, userId, body) => {
   if (!session) {
     return { status: 404, message: 'Session not found' };
   }
+  if (stageNotReached(session, 'apply')) return finishPreviousStage;
 
   // An empty Apply save is valid: reading and reflection need not produce typed
   // text, but the successful save marker is required before completion.
