@@ -20,6 +20,15 @@ export const startSession = async (req, res) => {
   }
 };
 
+export const getLabSetupStatus = async (req, res, next) => {
+  try {
+    const result = await exegesisService.getLabSetupStatus(req.user.id, req.body?.expectedUserId);
+    return res.status(result.status).json(formatApiResponse(result));
+  } catch (error) {
+    return next(error);
+  }
+};
+
 export const getCurrentSession = async (req, res) => {
   try {
     const result = await exegesisService.getCurrentSession(req.user.id, req.body?.lang);

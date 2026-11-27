@@ -152,6 +152,25 @@ describe('field-safe exegesis translation', () => {
     expect(translatorMock.translateMany).not.toHaveBeenCalled();
   });
 
+  it('loads note previews only for the owner-scoped, opt-in history request', async () => {
+    const strongsWords = '[{"surfaceText":"kindness","strongsId":"H2617"}]';
+    prismaMock.exegesisSession.findMany.mockResolvedValue([
+      { id: 'session-1', chapter: 2n, lookNotes: '{"0":"My observation"}', strongsWords },
+    ]);
+    prismaMock.exegesisSession.count.mockResolvedValue(1);
+    const result = await getSessionHistory('user-1', { includePreview: true, page: 0, pageSize: 20 });
+
+    const query = prismaMock.exegesisSession.findMany.mock.calls[0][0];
+    expect(query.where).toEqual({ userId: 'user-1' });
+    expect(query.select).toMatchObject({ lookNotes: true, strongsWords: true });
+    expect(query.select).not.toHaveProperty('applyReminder');
+    expect(result.data.data[0]).toMatchObject({
+      id: 'session-1', chapter: 2, preview: { lookNotes: '{"0":"My observation"}', strongsWords },
+    });
+    expect(result.data.data[0]).not.toHaveProperty('lookNotes');
+    expect(translatorMock.translateMany).not.toHaveBeenCalled();
+  });
+
   it('fails soft without changing any field when prompt translation rejects', async () => {
     const session = makeSession();
     prismaMock.exegesisSession.findFirst.mockResolvedValue(session);

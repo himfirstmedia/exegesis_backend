@@ -1,5 +1,6 @@
 import {
   completeSession,
+  getLabSetupStatus,
   saveAbideStage,
   saveApplyStage,
   saveLookStage,
@@ -84,6 +85,22 @@ beforeEach(() => {
   prisma.journalEntry.findFirst.mockResolvedValue(null);
   prisma.journalEntry.update.mockResolvedValue(journalEntry);
   prisma.journalEntry.upsert.mockResolvedValue(journalEntry);
+});
+
+test('Lab setup status uses the authenticated account’s first stored session', async () => {
+  expect((await getLabSetupStatus('user-1', 'user-2')).status).toBe(409);
+  expect(prisma.exegesisSession.findFirst).not.toHaveBeenCalled();
+  expect((await startSession('user-1', { expectedUserId: 'user-2' })).status).toBe(409);
+  expect(prisma.exegesisSession.create).not.toHaveBeenCalled();
+
+  expect((await getLabSetupStatus('user-1', 'user-1')).data).toEqual({
+    userId: 'user-1', firstSessionId: 'session-1',
+  });
+  expect(prisma.exegesisSession.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+    where: { userId: 'user-1' }, select: { id: true },
+  }));
+  prisma.exegesisSession.findFirst.mockResolvedValue(null);
+  expect((await getLabSetupStatus('user-2', 'user-2')).data.firstSessionId).toBeNull();
 });
 
 describe('five-stage session saves', () => {
@@ -259,6 +276,41 @@ describe('Legacy Ledger save', () => {
       where: { id: 'session-1' },
       data: { journalEntryId: BigInt(7) },
     });
+  });
+
+  test('renders structured Lab fields as prose instead of raw JSON', async () => {
+    prisma.exegesisSession.findFirst.mockResolvedValue({
+      ...session,
+      currentStage: 'completed',
+      completed: true,
+      applySavedOn: new Date(),
+      lookPromptsJson: JSON.stringify(['What stands out?', 'Who is speaking?']),
+      lookNotes: JSON.stringify({ 0: 'The shepherd and quiet waters.', 1: 'David speaks.' }),
+      lookHighlights: [
+        { bookName: 'John', chapter: 3, verse: 16, text: 'For God so loved the world' },
+      ],
+      listenSelections: [
+        { version: 'Berean Standard Bible (BSB)', abbreviation: 'BSB' },
+        { abbreviation: 'ASV' },
+      ],
+      applyTiming: { day: 'Tuesday', time: '18:00' },
+      applyResults: { outcome: 'I had the conversation.' },
+    });
+
+    await saveSessionLedger('session-1', 'user-1');
+
+    const { create } = prisma.journalEntry.upsert.mock.calls[0][0];
+    expect(create.observations).toContain('What stands out?\nThe shepherd and quiet waters.');
+    expect(create.observations).toContain('Who is speaking?\nDavid speaks.');
+    expect(create.observations).toContain('“For God so loved the world” (John 3:16)');
+    expect(create.observations).toContain('Berean Standard Bible (BSB)');
+    expect(create.observations).toContain('ASV');
+    expect(create.application).toContain('Tuesday · 18:00');
+    expect(create.application).toContain('I had the conversation.');
+    const rendered = [create.observations, create.learnings, create.application].join('\n');
+    expect(rendered).not.toContain('{"');
+    expect(rendered).not.toContain('"0":');
+    expect(rendered).not.toContain('"abbreviation"');
   });
 
   test('updates the linked entry on retry and publishes only on explicit request', async () => {

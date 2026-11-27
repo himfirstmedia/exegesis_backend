@@ -33,6 +33,7 @@ export const requireTier = (minimumTier) => {
         return res.status(403).json({
           returnCode: 403,
           returnMessage: "Subscription expired",
+          requiredTier: minimumTier,
           currentTier: user.subscriptionTier,
           expiresAt: user.accessExpiresAt,
         });

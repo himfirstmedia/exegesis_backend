@@ -59,6 +59,7 @@ const makeEvent = (overrides = {}) => ({
 describe("Stripe webhook idempotency", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    require("../../config/db.js").prisma.systemUser.findUnique.mockReset();
     process.env.STRIPE_SECRET_KEY = "sk_test_dummy";
     mockConstructEvent.mockReturnValue(makeEvent());
     mockReceiptCreate.mockResolvedValue({ id: "evt_123" });
@@ -96,7 +97,7 @@ describe("Stripe webhook idempotency", () => {
 
   it("releases the claim when processing fails so Stripe can retry", async () => {
     const { prisma } = require("../../config/db.js");
-    prisma.systemUser.findFirst.mockRejectedValue(new Error("database down"));
+    prisma.systemUser.findUnique.mockRejectedValue(new Error("database down"));
 
     const res = makeRes();
     await handleStripeWebhook(
@@ -112,7 +113,7 @@ describe("Stripe webhook idempotency", () => {
 
   it("does not release the claim when processing succeeds", async () => {
     const { prisma } = require("../../config/db.js");
-    prisma.systemUser.findFirst.mockResolvedValue(null);
+    prisma.systemUser.findUnique.mockResolvedValue(null);
 
     const res = makeRes();
     await handleStripeWebhook(
@@ -122,5 +123,17 @@ describe("Stripe webhook idempotency", () => {
 
     expect(res.statusCode).toBe(200);
     expect(mockReceiptDelete).not.toHaveBeenCalled();
+  });
+
+  it("does not revoke access when Stripe reports deletion of an unlinked subscription", async () => {
+    const { prisma } = require("../../config/db.js");
+    prisma.systemUser.findUnique.mockResolvedValue(null);
+    const res = makeRes();
+    await handleStripeWebhook({ headers: { "stripe-signature": "sig" }, body: "raw" }, res);
+
+    expect(res.body).toEqual({ received: true });
+    expect(prisma.systemUser.findUnique).toHaveBeenCalledWith({ where: { stripeSubscriptionId: "sub_1" } });
+    expect(prisma.systemUser.findFirst).not.toHaveBeenCalled();
+    expect(prisma.systemUser.update).not.toHaveBeenCalled();
   });
 });

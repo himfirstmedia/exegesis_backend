@@ -13,7 +13,7 @@ jest.mock('../../../middlewares/gating.middleware.js', () => ({
 }));
 jest.mock('../controller.js', () =>
   Object.fromEntries([
-    'startSession', 'getCurrentSession', 'getSessionHistory', 'getSession', 'getCatalog',
+    'startSession', 'getCurrentSession', 'getSessionHistory', 'getSession', 'getCatalog', 'getLabSetupStatus',
     'saveProgress', 'saveLookStage', 'saveListenStage', 'saveLearnStage',
     'saveAbideStage', 'saveApplyStage', 'completeSession', 'saveSessionLedger',
     'abandonSession', 'exportSessionPdf',
@@ -29,7 +29,7 @@ function post(path, user) {
 
 test('a free account can start a session and use the protected Lab routes', () => {
   const user = { id: 'free-reader', subscriptionTier: 'free' };
-  for (const path of ['/start', '/current', '/history', '/catalog', '/s1', '/s1/look', '/s1/listen',
+  for (const path of ['/start', '/current', '/history', '/catalog', '/setup-status', '/s1', '/s1/look', '/s1/listen',
     '/s1/learn', '/s1/abide', '/s1/apply', '/s1/complete', '/s1/ledger', '/s1/pdf']) {
     expect(post(path, user).status).toHaveBeenCalledWith(200);
   }
@@ -38,7 +38,7 @@ test('a free account can start a session and use the protected Lab routes', () =
 });
 
 test('a signed-out guest still cannot start, resume, or save a private study', () => {
-  for (const path of ['/start', '/catalog', '/s1', '/s1/progress', '/s1/ledger']) {
+  for (const path of ['/start', '/catalog', '/setup-status', '/s1', '/s1/progress', '/s1/ledger']) {
     expect(post(path).status).toHaveBeenCalledWith(401);
   }
 });

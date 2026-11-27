@@ -14,7 +14,7 @@ const FRONTEND_URL =
 const APP_SCHEME = process.env.APP_DEEP_LINK_SCHEME || "exegesis://";
 
 const isWebRequest = (req) => {
-  const origin = req.headers.origin || req.headers.referer || "";
+  const origin = req.headers?.origin || req.headers?.referer || "";
   return origin.startsWith("http://") || origin.startsWith("https://");
 };
 
@@ -58,6 +58,13 @@ const getSubscriptionPeriodEnd = (subscription) => {
     : null;
 };
 
+const ACCESS_STATUSES = new Set(["active", "trialing"]);
+const BILLING_STATUSES = new Set([...ACCESS_STATUSES, "past_due", "unpaid", "paused"]);
+const belongsToUser = (subscription, userId) =>
+  !subscription.metadata?.userId || subscription.metadata.userId === userId;
+const subscriptionCustomerId = subscription =>
+  typeof subscription.customer === "object" ? subscription.customer?.id : subscription.customer;
+
 const MONTHLY_PRICE_ENV = {
   legacy_sower: "STRIPE_LEGACY_SOWER_MONTHLY_PRICE_ID",
   covenant_sower: "STRIPE_COVENANT_SOWER_MONTHLY_PRICE_ID",
@@ -94,15 +101,20 @@ const getOrCreateStripeCustomer = async (user) => {
     try {
       const existing = await stripe.customers.retrieve(user.stripeCustomerId);
       if (!existing.deleted) return existing.id;
-    } catch {
-      /* customer may have been deleted on Stripe side — fall through */
+    } catch (error) {
+      if (error.code !== "resource_missing") throw error;
     }
   }
 
   // Search Stripe by email to avoid duplicate customers
-  const list = await stripe.customers.list({ email: user.email, limit: 1 });
-  if (list.data.length > 0) {
-    const customerId = list.data[0].id;
+  const list = await stripe.customers.list({ email: user.email, limit: 5 });
+  for (const candidate of list.data) {
+    if (candidate.metadata?.userId && candidate.metadata.userId !== user.id) continue;
+    const linkedUser = await prisma.systemUser.findUnique({
+      where: { stripeCustomerId: candidate.id }, select: { id: true },
+    });
+    if (linkedUser && linkedUser.id !== user.id) continue;
+    const customerId = candidate.id;
     // Store it so we never look this up again
     await prisma.systemUser.update({
       where: { id: user.id },
@@ -124,7 +136,7 @@ const getOrCreateStripeCustomer = async (user) => {
   return customer.id;
 };
 
-const getActiveStripeSubscription = async (customerId) => {
+const getActiveStripeSubscription = async (customerId, userId) => {
   const subscriptions = await stripe.subscriptions.list({
     customer: customerId,
     status: "all",
@@ -132,7 +144,7 @@ const getActiveStripeSubscription = async (customerId) => {
   });
 
   return subscriptions.data.find((subscription) =>
-    ["active", "trialing", "past_due"].includes(subscription.status),
+    BILLING_STATUSES.has(subscription.status) && belongsToUser(subscription, userId),
   );
 };
 
@@ -163,37 +175,6 @@ export const createCheckoutSession = async (req, res) => {
         .json(formatApiResponse({ status: 404, message: "User not found" }));
     }
 
-    const currentBase = BASE_TIER(user.subscriptionTier);
-    const targetBase = tier;
-
-    // Block downgrade attempts via this endpoint
-    if (
-      user.subscriptionTier !== "free" &&
-      TIER_ORDER[targetBase] < TIER_ORDER[currentBase]
-    ) {
-      return res.status(400).json(
-        formatApiResponse({
-          status: 400,
-          message: "Downgrades must be done through the billing portal",
-        }),
-      );
-    }
-
-    // Legacy Sower cap
-    if (tier === "legacy_sower") {
-      const count = await prisma.systemUser.count({
-        where: { subscriptionTier: { startsWith: "legacy_sower" } },
-      });
-      if (count >= 1000) {
-        return res.status(400).json(
-          formatApiResponse({
-            status: 400,
-            message: "Legacy Sower slots are full (1,000/1,000 claimed)",
-          }),
-        );
-      }
-    }
-
     let priceId = await getPriceId(tier, billingInterval);
     if (!priceId) {
       return res.status(500).json(
@@ -216,14 +197,31 @@ export const createCheckoutSession = async (req, res) => {
 
     // Update the existing Stripe subscription in place. Creating another
     // Checkout subscription here would leave one user paying for two plans.
-    const currentSubscription = user.stripeSubscriptionId
-      ? await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
-      : await getActiveStripeSubscription(customerId);
+    let currentSubscription;
+    if (user.stripeSubscriptionId) {
+      try {
+        currentSubscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+      } catch (error) {
+        if (error.code !== "resource_missing") throw error;
+      }
+    }
+    if (!currentSubscription || !BILLING_STATUSES.has(currentSubscription.status) ||
+        !belongsToUser(currentSubscription, userId) ||
+        (subscriptionCustomerId(currentSubscription) && subscriptionCustomerId(currentSubscription) !== customerId)) {
+      currentSubscription = await getActiveStripeSubscription(customerId, userId);
+    }
 
     if (
       currentSubscription &&
-      ["active", "trialing", "past_due"].includes(currentSubscription.status)
+      BILLING_STATUSES.has(currentSubscription.status)
     ) {
+      if (!ACCESS_STATUSES.has(currentSubscription.status)) {
+        return res.status(409).json(formatApiResponse({
+          status: 409,
+          message: "There is an existing subscription that needs attention in the billing portal.",
+          data: { reason: "billing_action_required" },
+        }));
+      }
       const currentItem = currentSubscription.items?.data?.[0];
       if (!currentItem?.id) {
         return res.status(409).json(
@@ -235,12 +233,34 @@ export const createCheckoutSession = async (req, res) => {
       }
 
       if (currentItem.price?.id === priceId) {
+        const periodEnd = getSubscriptionPeriodEnd(currentSubscription);
+        if (periodEnd && periodEnd > new Date()) {
+          await prisma.systemUser.update({
+            where: { id: userId },
+            data: {
+              subscriptionTier: `${tier}_monthly`,
+              stripeCustomerId: customerId,
+              stripeSubscriptionId: currentSubscription.id,
+              accessExpiresAt: periodEnd,
+            },
+          });
+        }
         return res.status(409).json(
           formatApiResponse({
             status: 409,
             message: "You already have an active subscription to this plan",
+            data: { reason: "already_subscribed" },
           }),
         );
+      }
+
+      const currentTier = await resolveTierFromPriceId(currentItem.price?.id, currentItem.price?.recurring?.interval);
+      if (!currentTier || TIER_ORDER[tier] < TIER_ORDER[currentTier]) {
+        return res.status(409).json(formatApiResponse({
+          status: 409,
+          message: "Please change your current subscription through the billing portal.",
+          data: { reason: "billing_action_required" },
+        }));
       }
 
       await stripe.subscriptions.update(currentSubscription.id, {
@@ -259,6 +279,17 @@ export const createCheckoutSession = async (req, res) => {
           },
         }),
       );
+    }
+
+    if (tier === "legacy_sower") {
+      const count = await prisma.systemUser.count({
+        where: { subscriptionTier: { startsWith: "legacy_sower" } },
+      });
+      if (count >= 1000) {
+        return res.status(400).json(formatApiResponse({
+          status: 400, message: "Legacy Sower slots are full (1,000/1,000 claimed)",
+        }));
+      }
     }
 
     // ── New subscription: create a Checkout session tied to the customer ─
@@ -534,7 +565,7 @@ const resolveTierFromPriceId = async (priceId, interval) => {
   const tier = await prisma.subscriptionTier.findFirst({
     where: { stripePriceId: priceId },
   });
-  if (tier) return tier.id;
+  if (tier && (TIER_ORDER[tier.id] ?? 0) > 0) return tier.id;
 
   // Historical yearly subscriptions still need status reconciliation even
   // though those prices are no longer available for new purchases.
@@ -551,13 +582,13 @@ const resolveTierFromPriceId = async (priceId, interval) => {
     if (product && typeof product === "object" && !product.deleted) {
       if (product.metadata?.tierId) {
         const base = product.metadata.tierId.replace(/_monthly$/, '');
-        return interval === 'month' ? `${base}_monthly` : base;
+        if (Object.hasOwn(MONTHLY_PLAN_CENTS, base)) return interval === 'month' ? `${base}_monthly` : base;
       }
       const slug = product.name
         ?.toLowerCase()
         .replace(/[^a-z0-9]+/g, "_")
         .replace(/^_|_$/g, "");
-      if (slug) return interval === "month" ? `${slug}_monthly` : slug;
+      if (slug && Object.hasOwn(MONTHLY_PLAN_CENTS, slug)) return interval === "month" ? `${slug}_monthly` : slug;
     }
   } catch {
     /* non-fatal */
@@ -565,6 +596,52 @@ const resolveTierFromPriceId = async (priceId, interval) => {
 
   return null;
 };
+
+async function findCustomerEntitlement(customerId, userId, excludedSubscriptionId) {
+  const lists = await Promise.all(["active", "trialing"].map(status =>
+    stripe.subscriptions.list({ customer: customerId, status, limit: 10 }),
+  ));
+  let best = null;
+  for (const subscription of lists.flatMap(list => list.data)) {
+    if (subscription.id === excludedSubscriptionId || !belongsToUser(subscription, userId)) continue;
+    const periodEnd = getSubscriptionPeriodEnd(subscription);
+    if (!periodEnd || periodEnd <= new Date()) continue;
+    const price = subscription.items?.data?.[0]?.price;
+    const tier = await resolveTierFromPriceId(price?.id, price?.recurring?.interval);
+    if (tier && (!best || TIER_ORDER[tier] > TIER_ORDER[best.subscriptionTier])) {
+      best = {
+        subscriptionTier: tier,
+        stripeCustomerId: customerId,
+        stripeSubscriptionId: subscription.id,
+        accessExpiresAt: periodEnd,
+      };
+    }
+  }
+  return best;
+}
+
+async function recoverEntitlement(user, account) {
+  if (user.stripeCustomerId) {
+    try {
+      const linked = await findCustomerEntitlement(user.stripeCustomerId, account.id);
+      if (linked) return linked;
+    } catch (error) {
+      if (error.code !== "resource_missing") throw error;
+    }
+  }
+  if (!account.email) return null;
+  const customers = await stripe.customers.list({ email: account.email, limit: 5 });
+  const matches = await Promise.all(customers.data
+    .filter(customer => customer.id !== user.stripeCustomerId &&
+      (!customer.metadata?.userId || customer.metadata.userId === account.id))
+    .map(async customer => {
+      const linkedUser = await prisma.systemUser.findUnique({
+        where: { stripeCustomerId: customer.id }, select: { id: true },
+      });
+      return linkedUser && linkedUser.id !== account.id ? null : findCustomerEntitlement(customer.id, account.id);
+    }));
+  return matches.filter(Boolean).sort((a, b) => TIER_ORDER[b.subscriptionTier] - TIER_ORDER[a.subscriptionTier])[0] ?? null;
+}
 
 // ─── getSubscriptionStatus ────────────────────────────────────────────────────
 
@@ -588,211 +665,65 @@ export const getSubscriptionStatus = async (req, res) => {
         .json(formatApiResponse({ status: 404, message: "User not found" }));
     }
 
-    // ── Stripe reconciliation ─────────────────────────────────────────────
-    // If DB says free, search Stripe for the user's email to find any
-    // active subscriptions. Handles:
-    //   1. Normal flow: user has stripeCustomerId but webhook missed.
-    //   2. Missing customer: search by email, may find multiple customers.
-    //   3. Multiple subs: pick the highest tier (e.g. covenant_sower > legacy_sower).
-    // Deleted accounts must never be reconciled: their Stripe customer was
-    // anonymized and their email tombstoned, so a fresh signup must not adopt
-    // a subscription from a previous, deleted account.
+    // Recover missed webhooks using the linked customer first. Billing email
+    // can differ from the reader's sign-in email.
+    let recovered = false;
     if (
       user.accountStatus !== "deleted" &&
-      user.subscriptionTier === "free" &&
-      req.user?.email
+      (user.subscriptionTier === "free" || (user.stripeCustomerId && !user.stripeSubscriptionId))
     ) {
+      let timeout;
       try {
-        // Race the Stripe reconciliation against a 12s timeout so a slow
-        // Stripe API never blocks the entire status response.
-        await Promise.race([
-          (async () => {
-            // Find ALL Stripe customers for this email (user may have multiple)
-            const customers = await stripe.customers.list({
-              email: req.user.email,
-              limit: 5,
-            });
-            // No customers — nothing to reconcile. Do NOT respond here: the
-            // single response is sent once by the outer flow after the race,
-            // so returning early with a res.json would double-send headers.
-            if (customers.data.length === 0) return;
-
-            // Collect active subscriptions from all customers
-            const allSubs = [];
-            for (const c of customers.data) {
-              const subs = await stripe.subscriptions.list({
-                customer: c.id,
-                status: "active",
-                limit: 10,
-              });
-              allSubs.push(
-                ...subs.data.map((s) => ({ ...s, _customerId: c.id })),
-              );
-            }
-            if (allSubs.length === 0) return;
-
-            // Pick the highest-tier subscription
-            let bestSub = null;
-            let bestOrder = -1;
-            const TIER_ORDER = { free: 0, legacy_sower: 1, covenant_sower: 2 };
-
-            for (const sub of allSubs) {
-              const priceId = sub.items?.data?.[0]?.price?.id;
-              const interval = sub.items?.data?.[0]?.price?.recurring?.interval;
-              const tierId =
-                (await resolveTierFromPriceId(priceId, interval)) || "free";
-              const order = TIER_ORDER[tierId.replace(/_monthly$/, "")] ?? 0;
-              if (order > bestOrder) {
-                bestOrder = order;
-                bestSub = { sub, tierId };
-              }
-            }
-
-            if (bestSub) {
-              const periodEnd = getSubscriptionPeriodEnd(bestSub.sub);
-
-              await prisma.systemUser.update({
-                where: { id: req.user.id },
-                data: {
-                  subscriptionTier: bestSub.tierId,
-                  stripeCustomerId: bestSub.sub._customerId,
-                  stripeSubscriptionId: bestSub.sub.id,
-                  ...(periodEnd && { accessExpiresAt: periodEnd }),
-                },
-              });
-
-              user = {
-                ...user,
-                subscriptionTier: bestSub.tierId,
-                accessExpiresAt: periodEnd,
-                stripeCustomerId: bestSub.sub._customerId,
-                stripeSubscriptionId: bestSub.sub.id,
-              };
-              console.log(
-                `[StripeReconciliation] Synced user ${req.user.id} → ${bestSub.tierId} (customer: ${bestSub.sub._customerId})`,
-              );
-            }
-          })(),
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error("Stripe reconciliation timed out")),
-              12000,
-            ),
-          ),
+        const entitlement = await Promise.race([
+          recoverEntitlement(user, req.user),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Stripe reconciliation timed out")), 12000);
+          }),
         ]);
+        if (entitlement) {
+          await prisma.systemUser.update({ where: { id: req.user.id }, data: entitlement });
+          user = { ...user, ...entitlement };
+          recovered = true;
+        }
       } catch (stripeErr) {
         console.warn(
           "[StripeReconciliation] Failed to sync from Stripe:",
           stripeErr.message,
         );
+      } finally {
+        clearTimeout(timeout);
       }
     }
 
     // Verify known paid subscriptions too. Webhooks are the primary sync
     // mechanism, but this repairs missed deliveries when the client asks for
     // status after checkout, renewal, cancellation, or a portal change.
-    if (user.stripeSubscriptionId && user.subscriptionTier !== "free") {
+    if (!recovered && user.accountStatus !== "deleted" && user.stripeSubscriptionId && user.subscriptionTier !== "free") {
       try {
-        const retrieveSubscription = stripe.subscriptions.retrieve;
-        if (typeof retrieveSubscription !== "function") {
-          // Test doubles may omit reconciliation-only Stripe methods.
-        } else {
-          const subscription = await retrieveSubscription.call(
-            stripe.subscriptions,
-            user.stripeSubscriptionId,
-          );
-          const activeStatuses = new Set(["active", "trialing"]);
-
-          if (!activeStatuses.has(subscription.status)) {
-            // Re-subscription guard: the user may have renewed by creating a
-            // NEW subscription while the DB still points at this old/cancelled
-            // one. Adopt the newer active sub instead of dropping to free.
-            let adopted = false;
-            try {
-              const customerId = user.stripeCustomerId;
-              if (customerId && typeof stripe.subscriptions.list === "function") {
-                const active = await stripe.subscriptions.list({
-                  customer: customerId,
-                  status: "active",
-                  limit: 10,
-                });
-                const newer = active.data
-                  .filter((s) => s.id !== user.stripeSubscriptionId)
-                  .sort((a, b) => b.created - a.created)[0];
-                if (newer) {
-                  const price = newer.items?.data?.[0]?.price;
-                  const newTier = await resolveTierFromPriceId(
-                    price?.id,
-                    price?.recurring?.interval,
-                  );
-                  const periodEnd = getSubscriptionPeriodEnd(newer);
-                  await prisma.systemUser.update({
-                    where: { id: req.user.id },
-                    data: {
-                      ...(newTier && { subscriptionTier: newTier }),
-                      stripeSubscriptionId: newer.id,
-                      ...(periodEnd && { accessExpiresAt: periodEnd }),
-                    },
-                  });
-                  user = {
-                    ...user,
-                    ...(newTier && { subscriptionTier: newTier }),
-                    stripeSubscriptionId: newer.id,
-                    ...(periodEnd && { accessExpiresAt: periodEnd }),
-                  };
-                  adopted = true;
-                  console.log(
-                    `[StripeReconciliation] adopted newer subscription ${newer.id} for user ${req.user.id}`,
-                  );
-                }
-              }
-            } catch (adoptErr) {
-              console.warn(
-                "[StripeReconciliation] re-subscription adoption failed:",
-                adoptErr.message,
-              );
-            }
-
-            if (!adopted) {
-              await prisma.systemUser.update({
-                where: { id: req.user.id },
-                data: {
-                  subscriptionTier: "free",
-                  stripeSubscriptionId: null,
-                  accessExpiresAt: null,
-                },
-              });
-              user = {
-                ...user,
-                subscriptionTier: "free",
-                stripeSubscriptionId: null,
-                accessExpiresAt: null,
-              };
-            }
-          } else {
-            const price = subscription.items?.data?.[0]?.price;
-            const interval = price?.recurring?.interval;
-            const resolvedTier = await resolveTierFromPriceId(
-              price?.id,
-              interval,
-            );
-            const periodEnd = getSubscriptionPeriodEnd(subscription);
-
-            if (resolvedTier || periodEnd) {
-              await prisma.systemUser.update({
-                where: { id: req.user.id },
-                data: {
-                  ...(resolvedTier && { subscriptionTier: resolvedTier }),
-                  ...(periodEnd && { accessExpiresAt: periodEnd }),
-                },
-              });
-              user = {
-                ...user,
-                ...(resolvedTier && { subscriptionTier: resolvedTier }),
-                ...(periodEnd && { accessExpiresAt: periodEnd }),
-              };
-            }
+        const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId).catch(error => {
+          if (error.code !== "resource_missing") throw error;
+          return null;
+        });
+        let changes;
+        const customer = subscription && subscriptionCustomerId(subscription);
+        if (subscription && ACCESS_STATUSES.has(subscription.status) && belongsToUser(subscription, req.user.id) &&
+            (!customer || !user.stripeCustomerId || customer === user.stripeCustomerId)) {
+          const price = subscription.items?.data?.[0]?.price;
+          const tier = await resolveTierFromPriceId(price?.id, price?.recurring?.interval);
+          const periodEnd = getSubscriptionPeriodEnd(subscription);
+          if (tier && periodEnd && (tier !== user.subscriptionTier || periodEnd.getTime() !== Number(user.accessExpiresAt))) {
+            changes = { subscriptionTier: tier, accessExpiresAt: periodEnd };
           }
+        } else {
+          // A renewal can have a new subscription ID even when its webhook was missed.
+          const replacement = user.stripeCustomerId
+            ? await findCustomerEntitlement(user.stripeCustomerId, req.user.id, user.stripeSubscriptionId)
+            : null;
+          changes = replacement ?? { subscriptionTier: "free", stripeSubscriptionId: null, accessExpiresAt: null };
+        }
+        if (changes) {
+          await prisma.systemUser.update({ where: { id: req.user.id }, data: changes });
+          user = { ...user, ...changes };
         }
       } catch (stripeErr) {
         console.warn(
@@ -815,7 +746,7 @@ export const getSubscriptionStatus = async (req, res) => {
       formatApiResponse({
         status: 200,
         message: "Subscription status retrieved",
-        data: { ...user, tierMeta },
+        data: { ...user, userId: req.user.id, tierMeta },
       }),
     );
   } catch (error) {

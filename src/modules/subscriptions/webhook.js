@@ -299,6 +299,9 @@ export const handleStripeWebhook = async (req, res) => {
           );
           break;
         }
+        if ((user.stripeSubscriptionId && user.stripeSubscriptionId !== subId) ||
+            (data.metadata?.userId && data.metadata.userId !== user.id) ||
+            !["active", "trialing"].includes(data.status)) break;
 
         // Resolve tier from price ID (handles all seeded tiers)
         const priceId = data.items?.data?.[0]?.price?.id;
@@ -350,7 +353,8 @@ export const handleStripeWebhook = async (req, res) => {
 
       // ── Payment succeeded (renewal) ───────────────────────────────────────
       case "invoice.payment_succeeded": {
-        const subscriptionId = data.subscription;
+        const subscription = data.parent?.subscription_details?.subscription ?? data.subscription;
+        const subscriptionId = typeof subscription === "object" ? subscription?.id : subscription;
         if (!subscriptionId) break;
 
         let user = await prisma.systemUser.findUnique({
@@ -437,23 +441,18 @@ export const handleStripeWebhook = async (req, res) => {
       // ── Subscription cancelled ─────────────────────────────────────────────
       case "customer.subscription.deleted": {
         const subId = data.id;
-        let user = await prisma.systemUser.findUnique({
+        const user = await prisma.systemUser.findUnique({
           where: { stripeSubscriptionId: subId },
         });
-        if (!user && data.customer) {
-          user = await prisma.systemUser.findFirst({
-            where: { stripeCustomerId: String(data.customer) },
-          });
-        }
 
         if (user && user.accountStatus === "deleted") {
           // Already cancelled during account deletion — avoid re-touching.
           break;
         }
 
-        if (user) {
+        if (user && user.stripeSubscriptionId === subId) {
           await prisma.systemUser.update({
-            where: { id: user.id },
+            where: { id: user.id, stripeSubscriptionId: subId },
             data: {
               subscriptionTier: "free",
               stripeSubscriptionId: null,

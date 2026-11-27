@@ -5,9 +5,12 @@ export const catalogPassages = study => Array.isArray(study?.sessions) ? study.s
 export async function listLabStudies(userId) {
   const studies = await prisma.labStudy.findMany({ where: { active: true }, orderBy: { id: 'asc' } });
   const [progress, plans] = await Promise.all([prisma.exegesisSession.findMany({
-    where: { userId, labStudyId: { in: studies.map(s => s.id) }, currentStage: 'completed' },
-    distinct: ['labStudyId', 'labStudyPosition'],
-    select: { labStudyId: true, labStudyPosition: true },
+    where: {
+      userId, labStudyId: { in: studies.map(s => s.id) },
+      OR: [{ currentStage: 'completed' }, { completed: false }],
+    },
+    distinct: ['labStudyId', 'labStudyPosition', 'completed'],
+    select: { labStudyId: true, labStudyPosition: true, completed: true },
   }), prisma.readingPlan.findMany({
     where: { planId: { in: studies.filter(study => study.pathway === 'reading-plan').map(study => study.id) }, isActive: true },
     select: { planId: true, title: true, description: true, dailyAssignments: {
@@ -28,8 +31,12 @@ export async function listLabStudies(userId) {
     });
     if (sessions.some(session => !session)) return [];
     if (!sessions.length) return [];
-    const completedPositions = progress.filter(row => row.labStudyId === study.id).map(row => row.labStudyPosition);
+    const studyProgress = progress.filter(row => row.labStudyId === study.id &&
+      Number.isInteger(row.labStudyPosition) && row.labStudyPosition >= 0 && row.labStudyPosition < sessions.length);
+    const completedPositions = studyProgress.filter(row => row.completed).map(row => row.labStudyPosition);
+    const inProgressPositions = studyProgress.filter(row => !row.completed && !completedPositions.includes(row.labStudyPosition))
+      .map(row => row.labStudyPosition);
     return [{ ...study, ...(plan ? { title: plan.title, purpose: plan.description || study.purpose } : {}),
-      sessions, firstPassage: sessions[0], completedPositions }];
+      sessions, firstPassage: sessions[0], completedPositions, inProgressPositions }];
   });
 }

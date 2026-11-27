@@ -111,6 +111,9 @@ const optionalBigInt = value =>
 
 export const startSession = async (userId, body) => {
   const { bookName, chapter, verseStart, verseEnd, createNew = false, labStudyId, labStudyPosition } = body;
+  if (body.expectedUserId !== undefined && body.expectedUserId !== userId) {
+    return { status: 409, message: 'The signed-in account changed' };
+  }
   if (typeof bookName !== 'string' || !bookName.trim() || chapter === undefined || chapter === null || chapter === '') {
     return { status: 400, message: 'bookName and chapter are required' };
   }
@@ -199,6 +202,20 @@ export const startSession = async (userId, body) => {
   };
 };
 
+export const getLabSetupStatus = async (userId, expectedUserId) => {
+  if (expectedUserId !== userId) {
+    return { status: 409, message: 'The signed-in account changed' };
+  }
+  // Successful setup starts the first study. The session already exists for
+  // older clients too, so this does not need a second completion record.
+  const firstSession = await prisma.exegesisSession.findFirst({
+    where: { userId },
+    orderBy: [{ createdOn: 'asc' }, { id: 'asc' }],
+    select: { id: true },
+  });
+  return { status: 200, message: 'Lab setup status', data: { userId, firstSessionId: firstSession?.id ?? null } };
+};
+
 export const getCurrentSession = async (userId, lang = 'en') => {
   const session = await prisma.exegesisSession.findFirst({
     where: { userId, completed: false },
@@ -219,11 +236,12 @@ export const getCurrentSession = async (userId, lang = 'en') => {
 export const getSessionHistory = async (userId, body) => {
   const page = body?.page || 0;
   const pageSize = body?.pageSize || 20;
+  const includePreview = body?.includePreview === true;
 
   const [sessions, total] = await Promise.all([
     prisma.exegesisSession.findMany({
       where: { userId },
-      orderBy: { updatedOn: 'desc' },
+      orderBy: [{ updatedOn: 'desc' }, { id: 'desc' }],
       skip: page * pageSize,
       take: pageSize,
       select: {
@@ -237,6 +255,19 @@ export const getSessionHistory = async (userId, body) => {
         completed: true,
         createdOn: true,
         updatedOn: true,
+        ...(includePreview && {
+          lookNotes: true,
+          observations: true,
+          listenNotes: true,
+          learnSummary: true,
+          learnNotes: true,
+          abideReflection: true,
+          abideTruth: true,
+          abidePrayer: true,
+          abideApplication: true,
+          applyResponse: true,
+          strongsWords: true,
+        }),
       },
     }),
     prisma.exegesisSession.count({ where: { userId } }),
@@ -246,7 +277,15 @@ export const getSessionHistory = async (userId, body) => {
     status: 200,
     message: 'Session history',
     data: {
-      data: sessions.map(s => serializeBigInt(s)),
+      data: sessions.map(session => {
+        if (!includePreview) return serializeBigInt(session);
+        const { lookNotes, observations, listenNotes, learnSummary, learnNotes, abideReflection,
+          abidePrayer, abideApplication, applyResponse, strongsWords, ...summary } = session;
+        return serializeBigInt({ ...summary, preview: {
+          lookNotes, observations, listenNotes, learnSummary, learnNotes, abideReflection,
+          abidePrayer, abideApplication, applyResponse, strongsWords,
+        } });
+      }),
       total,
       hasNext: (page + 1) * pageSize < total,
     },
@@ -452,18 +491,84 @@ export const completeSession = async (sessionId, userId) => {
   return savedSession('Exegesis session completed', updated);
 };
 
+// Lab fields arrive as plain text, JSON strings, or JSON columns. A Ledger
+// entry is read as prose, so structured values must never surface as raw JSON.
+const jsonValue = value => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+};
+
 const artifactText = value => {
-  if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return value;
-  return JSON.stringify(value, null, 2);
+  const parsed = jsonValue(value);
+  if (parsed === undefined || parsed === null) return '';
+  if (typeof parsed === 'string') return parsed;
+  if (typeof parsed === 'number' || typeof parsed === 'boolean') return String(parsed);
+  if (Array.isArray(parsed)) return parsed.map(artifactText).filter(Boolean).join('\n\n');
+  if (typeof parsed === 'object') return Object.values(parsed).map(artifactText).filter(Boolean).join(' · ');
+  return '';
 };
 
 const artifactSection = (label, value) => {
-  const text = artifactText(value);
-  return text && text !== '[]' && text !== '{}' ? `${label}:\n${text}` : '';
+  const text = artifactText(value).trim();
+  return text ? `${label}:\n${text}` : '';
 };
 
 const artifactSections = sections => sections.filter(Boolean).join('\n\n');
+
+const lookPrompts = session => {
+  const prompts = jsonValue(session.lookPromptsJson);
+  return Array.isArray(prompts) ? prompts : [];
+};
+
+// Look answers are keyed by prompt index; pair each answer with its prompt.
+const lookAnswersText = session => {
+  const answers = jsonValue(session.lookNotes);
+  if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
+    return artifactText(session.lookNotes);
+  }
+  const prompts = lookPrompts(session);
+  return Object.entries(answers)
+    .filter(([key, answer]) => /^\d+$/.test(key) && artifactText(answer).trim())
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([key, answer]) => {
+      const prompt = artifactText(prompts[Number(key)]).trim();
+      const text = artifactText(answer).trim();
+      return prompt ? `${prompt}\n${text}` : text;
+    })
+    .join('\n\n');
+};
+
+const highlightText = value => {
+  const highlights = jsonValue(value);
+  if (!Array.isArray(highlights)) return artifactText(highlights);
+  return highlights
+    .map(item => {
+      const text = artifactText(item?.text).trim();
+      if (!text) return '';
+      const chapter = item?.chapter;
+      const verse = item?.verse;
+      const reference =
+        item?.bookName && chapter ? `${item.bookName} ${chapter}${verse ? `:${verse}` : ''}` : '';
+      return reference ? `“${text}” (${reference})` : `“${text}”`;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+};
+
+const selectionText = value => {
+  const selections = jsonValue(value);
+  if (!Array.isArray(selections)) return artifactText(selections);
+  return selections
+    .map(item => artifactText(item?.version).trim() || artifactText(item?.abbreviation).trim())
+    .filter(Boolean)
+    .join('\n');
+};
 
 const ledgerArtifacts = session => ({
   content: artifactSections([
@@ -472,11 +577,11 @@ const ledgerArtifacts = session => ({
     artifactSection('Reflection', session.abideReflection),
   ]),
   observations: artifactSections([
-    artifactSection('Look notes', session.lookNotes),
+    artifactSection('Look notes', lookAnswersText(session)),
     artifactSection('Observations', session.observations),
-    artifactSection('Highlights', session.lookHighlights),
+    artifactSection('Highlights', highlightText(session.lookHighlights)),
     artifactSection('Look questions', session.lookQuestions),
-    artifactSection('Listen selections', session.listenSelections),
+    artifactSection('Listen selections', selectionText(session.listenSelections)),
     artifactSection('Listening notes', session.listenNotes),
     artifactSection('Wording questions', session.listenQuestions),
   ]),

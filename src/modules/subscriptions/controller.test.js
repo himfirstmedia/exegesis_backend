@@ -119,13 +119,13 @@ test('checkout rejects the old $7.78 Stripe price before charging', async () => 
 describe("getSubscriptionStatus — single-response guarantee", () => {
   test("free user with NO Stripe customers gets exactly one response (no double send)", async () => {
     const prisma = getPrisma();
-    prisma.systemUser.findUnique.mockResolvedValue({
+    prisma.systemUser.findUnique.mockResolvedValueOnce({
       subscriptionTier: "free",
       accessExpiresAt: null,
       stripeCustomerId: null,
       stripeSubscriptionId: null,
       legacySowerSlot: null,
-    });
+    }).mockResolvedValue(null);
     prisma.subscriptionTier.findUnique.mockResolvedValue({
       id: "free",
       name: "Free",
@@ -148,13 +148,13 @@ describe("getSubscriptionStatus — single-response guarantee", () => {
 
   test("free user WITH an active Stripe subscription is reconciled and still gets one response", async () => {
     const prisma = getPrisma();
-    prisma.systemUser.findUnique.mockResolvedValue({
+    prisma.systemUser.findUnique.mockResolvedValueOnce({
       subscriptionTier: "free",
       accessExpiresAt: null,
       stripeCustomerId: null,
       stripeSubscriptionId: null,
       legacySowerSlot: null,
-    });
+    }).mockResolvedValue(null);
     prisma.systemUser.update.mockResolvedValue({});
     prisma.subscriptionTier.findFirst.mockResolvedValue(null); // price not in DB → Stripe lookup
     prisma.subscriptionTier.findUnique.mockResolvedValue({
@@ -204,6 +204,31 @@ describe("getSubscriptionStatus — single-response guarantee", () => {
         data: expect.objectContaining({ subscriptionTier: "covenant_sower_monthly" }),
       }),
     );
+  });
+
+  test("recovers an active plan from the linked customer even when the login email differs", async () => {
+    const prisma = getPrisma();
+    prisma.systemUser.findUnique.mockResolvedValueOnce({ subscriptionTier: "free", stripeCustomerId: "cus_linked" });
+    prisma.subscriptionTier.findFirst.mockResolvedValue({ id: "legacy_sower_monthly" });
+    stripeInstance.subscriptions.list.mockResolvedValue({
+      data: [{
+        id: "sub_linked",
+        metadata: { userId: "u1" },
+        items: { data: [{ price: { id: "price_legacy_monthly", recurring: { interval: "month" } }, current_period_end: 2208988800 }] },
+      }],
+    });
+    const res = makeRes();
+    await getSubscriptionStatus({ user: { id: "u1", email: "login@example.com" } }, res);
+
+    expect(stripeInstance.customers.list).not.toHaveBeenCalled();
+    expect(prisma.systemUser.update).toHaveBeenCalledWith({
+      where: { id: "u1" },
+      data: {
+        subscriptionTier: "legacy_sower_monthly", stripeCustomerId: "cus_linked",
+        stripeSubscriptionId: "sub_linked", accessExpiresAt: new Date(2208988800 * 1000),
+      },
+    });
+    expect(res.body.returnData).toMatchObject({ userId: "u1", subscriptionTier: "legacy_sower_monthly" });
   });
 
   test("paid user (non-free) skips reconciliation and gets one response", async () => {
@@ -349,7 +374,7 @@ describe("createCheckoutSession — one subscription per user", () => {
       email: "reader@example.com",
       firstName: "Reader",
       lastName: "Example",
-      subscriptionTier: "legacy_sower_monthly",
+      subscriptionTier: "free",
       stripeCustomerId: "cus_1",
       stripeSubscriptionId: "sub_1",
     });
@@ -363,6 +388,7 @@ describe("createCheckoutSession — one subscription per user", () => {
     stripeInstance.subscriptions.retrieve.mockResolvedValue({
       id: "sub_1",
       status: "active",
+      current_period_end: 2208988800,
       items: { data: [{ id: "si_1", price: { id: "price_legacy_monthly" } }] },
     });
 
@@ -379,6 +405,11 @@ describe("createCheckoutSession — one subscription per user", () => {
     expect(res.body.returnMessage).toMatch(
       /already have an active subscription/i,
     );
+    expect(res.body.returnData.reason).toBe("already_subscribed");
+    expect(prisma.systemUser.update).toHaveBeenCalledWith({
+      where: { id: "u1" },
+      data: expect.objectContaining({ subscriptionTier: "legacy_sower_monthly", stripeSubscriptionId: "sub_1" }),
+    });
     expect(stripeInstance.checkout.sessions.create).not.toHaveBeenCalled();
     expect(stripeInstance.subscriptions.update).not.toHaveBeenCalled();
   });
@@ -398,6 +429,7 @@ describe("createCheckoutSession — one subscription per user", () => {
       id: "covenant_sower_monthly",
       stripePriceId: "price_covenant_monthly",
     });
+    prisma.subscriptionTier.findFirst.mockResolvedValue({ id: "legacy_sower_monthly" });
 
     const stripeInstance = getStripeInstance();
     stripeInstance.customers.retrieve.mockResolvedValue({ id: "cus_1" });

@@ -10,6 +10,7 @@ router.post('/start', exegesisController.startSession);
 router.post('/current', exegesisController.getCurrentSession);
 router.post('/history', exegesisController.getSessionHistory);
 router.post('/catalog', exegesisController.getCatalog);
+router.post('/setup-status', exegesisController.getLabSetupStatus);
 
 // Session retrieval (resume)
 router.post('/:id', exegesisController.getSession);
