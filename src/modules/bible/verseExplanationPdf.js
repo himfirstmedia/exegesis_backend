@@ -1,10 +1,10 @@
 import { parseStringPromise } from 'xml2js';
-import { isBsbCrossReferenceSection, isExplicitBsbHeading } from './verseExplanationImport.js';
+import { isBsbCrossReferenceSection, isExplicitBsbHeading, isPracticalSection, isWordStudySection } from './verseExplanationImport.js';
 
 const divider = /^[_─━]{3,}$/;
 const inheritedVerseHeading = /^[*•●-]\s*.+?\s+\d+:\d+(?:\s*[-–—]\s*\d+)?$/i;
 const studyDetail = /^(?:meaning|biblical significance|contextual meaning|context in [^:]+|spiritual insight):/i;
-const heading = /^(?:section\s+\d|application:|author:|book:|context:|(?:\d+[.)]|\d+\s+(?:practical applications|takeaways))\s*|[*•●]\s*|background$|(?:practical|verse) introduction$|(?:detailed )?strong(?:['’]s)? concordance word study$|(?:biblical )?insights and cross references$|key themes$|cross references$|final thoughts$|insight:)/i;
+const heading = /^(?:section\s+\d|application:|author:|book:|context:|(?:\d+[.)]|\d+\s+takeaways)\s*|[*•●]\s*|-\s+|background$|(?:practical|verse) introduction$|(?:biblical )?insights and cross references$|key themes$|cross references$|final thoughts$|insight:)/i;
 const cleanSpan = text => text.replace(/[\u200B\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
 const textOf = node => node.$$ ? node.$$.map(textOf).join('') : node._ ?? '';
 const hasBold = node => node['#name'] === 'b' || (node.$$?.some(hasBold) ?? false);
@@ -59,7 +59,8 @@ export async function extractExplanationPdfText(xml) {
         crossState = 'insight';
       }
       const wordHeading = /\b[HG]\d+[a-z]?\b/i.test(text) && line.bold;
-      const block = heading.test(text) || isVerse || isCrossSection || studyDetail.test(text) || wordHeading ||
+      const block = heading.test(text) || isVerse || isCrossSection || isPracticalSection(text) || isWordStudySection(text) ||
+        studyDetail.test(text) || wordHeading ||
         /^(?:explanation:|practical introduction to the verse)$/i.test(text);
       const close = previous && line.top - previous.top <= Math.max(line.height, previous.height) * 1.35;
       const inlineLabel = /^(?:application|author|book|context|insight):\s+\S/i.test(previous?.text ?? '') || studyDetail.test(previous?.text ?? '');

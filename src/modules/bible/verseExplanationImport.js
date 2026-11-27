@@ -1,19 +1,26 @@
 import { canonicalBook, parseStrongsIds, same } from '../shared-study/normalization.js';
 import { CANONICAL_BOOK_ORDER } from '../../constants/bible-books.js';
 
-const bsbSuffix = String.raw`[^\S\r\n]+(?:\(BSB\)|BSB)`;
+const space = String.raw`[^\S\r\n]`;
+const bsbName = String.raw`(?:BSB|Berean${space}+Standard${space}+Bible)`;
+const bsbSuffix = String.raw`${space}+(?:[-–—]${space}*)?(?:\(${bsbName}\)|${bsbName})`;
 const referenceCore = String.raw`([^\r\n]+?)[^\S\r\n]+(\d+):(\d+)(?:[^\S\r\n]*[-–—][^\S\r\n]*(\d+))?`;
 const referencePattern = new RegExp(`^${referenceCore}(?:${bsbSuffix})?$`, 'i');
 const explicitBsbHeading = new RegExp(`^${referenceCore}${bsbSuffix}$`, 'i');
-const crossReferenceSection = new RegExp(`^cross references(${bsbSuffix})?$`, 'i');
+const headingReference = new RegExp(`^${referenceCore}(?=${space}|$)`, 'i');
+const crossReferenceSection = new RegExp(String.raw`^cross\s+references?(?:\s+\d+)?(${bsbSuffix})?$`, 'i');
 const bullet = /^[*•●-]\s*/;
 const numberedWord = /^\d+[.)][ \t]+/;
 const numberedSection = String.raw`(?:section\s+\d+\s*[.:\-–—]?\s*)?`;
+const wordStudySection = new RegExp(String.raw`^\.?\s*${numberedSection}(?:detailed\s+)?strong(?:['’]s)?\s+concordance\s+word(?:\s+stud(?:y|ies))?$`, 'i');
+const practicalSection = new RegExp(String.raw`^${numberedSection}(?:\d+\s*[.):\-–—]?\s*)?(?:five\s+)?practical applications?(?: for today)?$`, 'i');
 export const referenceLabel = ({ bookName, chapter, verseNumber, verseEnd }) =>
   `${bookName} ${chapter}:${verseNumber}${verseEnd ? `–${verseEnd}` : ''}`;
 
 export const isExplicitBsbHeading = text => explicitBsbHeading.test(text.trim().replace(bullet, ''));
 export const isBsbCrossReferenceSection = text => crossReferenceSection.test(text.trim());
+export const isWordStudySection = text => wordStudySection.test(text.trim());
+export const isPracticalSection = text => practicalSection.test(text.trim());
 
 export function parseExplanationReference(text) {
   const match = referencePattern.exec(text.trim());
@@ -35,14 +42,31 @@ export function buildVerseIndex(xml) {
     const chapters = new Map();
     books.set(CANONICAL_BOOK_ORDER[Number(book) - 1], chapters);
     for (const [, chapter, text] of contents.matchAll(/<chapter number="(\d+)"[^>]*>([\s\S]*?)<\/chapter>/g)) {
-      chapters.set(Number(chapter), new Set([...text.matchAll(/<verse number="(\d+)"/g)].map(match => Number(match[1]))));
+      chapters.set(Number(chapter), new Map([...text.matchAll(/<verse number="(\d+)"[^>]*>([\s\S]*?)<\/verse>/g)]
+        .map(([, number, value]) => [Number(number), value])));
     }
   }
   if (books.size !== CANONICAL_BOOK_ORDER.length || books.has(undefined)) throw new Error('Could not read the bundled BSB verse index.');
-  return ({ bookName, chapter, verseNumber, verseEnd }) => {
+  const isVerse = ({ bookName, chapter, verseNumber, verseEnd }) => {
     const numbers = books.get(bookName)?.get(chapter);
     return numbers?.has(verseNumber) && numbers.has(verseEnd ?? verseNumber);
   };
+  isVerse.quotation = ({ bookName, chapter, verseNumber }) => books.get(bookName)?.get(chapter)?.get(verseNumber);
+  return isVerse;
+}
+
+function parseCrossReference(heading, referenceText, isVerse) {
+  const match = referencePattern.exec(heading);
+  if (!match || canonicalBook(match[1])) return parseExplanationReference(heading);
+  // Recover a missing book number only when exactly one edition quotation
+  // matches the source. Otherwise the author must supply the number.
+  const candidates = CANONICAL_BOOK_ORDER
+    .filter(book => /^\d+ /.test(book) && book.replace(/^\d+ /, '').toLowerCase() === match[1].toLowerCase())
+    .map(book => parseExplanationReference(`${book}${heading.slice(match[1].length)}`))
+    .filter(passage => referenceText && passage.verseEnd === null &&
+      normalizeWhitespace(isVerse.quotation?.(passage)) === normalizeWhitespace(referenceText));
+  if (candidates.length === 1) return candidates[0];
+  return parseExplanationReference(heading);
 }
 
 function clean(text) {
@@ -60,18 +84,51 @@ function labeledItems(text, pattern, parse, label) {
   });
 }
 
-const numbered = (text, label) => labeledItems(text, /^(\d+)[.)][ \t]+([^\n]+)$/gm, ([, n, title], body, i) => {
-  if (Number(n) !== i + 1) throw new Error(`Unexpected ${label} item number ${n}.`);
-  return `${title.trim()}\n\n${body}`;
-}, label);
+function parseList(text, label) {
+  const markedHeading = /^(?:\d+[.)]|[*•●-])[ \t]+(\S[^\n]*)$/gm;
+  const titleCaseHeading = /^(\p{Lu}[\p{L}’'-]*(?:[ \t]+(?:\p{Lu}[\p{L}’'-]*|a|an|and|as|at|by|for|from|in|of|on|or|the|to|with))+)$/gmu;
+  // Bullets and numbers mark boundaries without constraining the count or order.
+  return labeledItems(text, text.search(markedHeading) !== -1 ? markedHeading : titleCaseHeading,
+    ([, title], body) => `${title.trim()}\n\n${body}`, label);
+}
 
 const strongIdList = String.raw`[HG]\d+[a-z]?(?:\s*(?:[/+,;&]|\band\b)\s*[HG]\d+[a-z]?)*`;
 const idThenName = new RegExp(String.raw`^(?:strong['’]s\s+)?(${strongIdList})\s*[-–—]\s*(.+)$`, 'i');
+const surfaceIdName = new RegExp(String.raw`^(.+?)\s+[-–—]\s+(${strongIdList})(?:\s+[-–—]\s+|\s*:\s*|\s*,(?!\s*[HG]\d)\s*)(.+)$`, 'i');
 const nameThenId = new RegExp(String.raw`^(.+?)\s+[-–—]\s+(.+?)\s+(?:[-–—]\s+)?\(?strong['’]s\s+(${strongIdList})\)?$`, 'i');
 const originalLanguageHeading = new RegExp(String.raw`^(Hebrew|Greek):\s*(.+),\s*strong['’]s\s+(${strongIdList})$`, 'i');
+const annotatedName = new RegExp(String.raw`^(.+?)\s+\(strong['’]s\s+(${strongIdList})\)$`, 'i');
+const contextualNote = /^(.+?)\s+[-–—]\s+((?:though\s+)?not represented by a single (?:Hebrew|Greek) word\b.*)$/i;
+const strongId = /\b[HG]\d+[a-z]?\b/i;
 
 function wordHeading(title) {
   const name = title.replace(bullet, '').replace(numberedWord, '');
+  if (bullet.test(title) || numberedWord.test(title)) {
+    const note = contextualNote.exec(name);
+    if (note) return [note[1], null, '', undefined, note[2]];
+  }
+  const components = name.split(/(?<=\))\s*(\/|\band\b)\s*/i);
+  if (components.length > 1) {
+    const first = /^(.+?)\s+[-–—]\s+(.+)$/.exec(components[0]);
+    if (first) {
+      const words = [first[2], ...components.slice(2).filter((_, index) => index % 2 === 0)]
+        .map(part => annotatedName.exec(part));
+      if (words[0]) {
+        if (!words.every(Boolean)) return null;
+        const names = words.map((word, index) =>
+          index === 0 ? word[1] : ` ${components[index * 2 - 1].toLowerCase()} ${word[1]}`).join('');
+        return [first[1], words.map(word => word[2]).join(', '), names];
+      }
+    }
+  }
+  const middleId = surfaceIdName.exec(name);
+  if (middleId) {
+    const [, surface, ids, tail] = middleId;
+    const inline = /^([^:]+):[ \t]*(meaning|definition|context|explanation|biblical significance|contextual meaning|spiritual insight):[ \t]*(.*)$/i.exec(tail);
+    if (!inline) return [surface, ids, tail];
+    const [, transliteration, label, definition] = inline;
+    return [surface, ids, transliteration, undefined, `${label}: ${definition}`];
+  }
   const parenthesized = /^(.+?)\s*\((.+)\)$/.exec(name);
   if (parenthesized) {
     const [, surface, metadata] = parenthesized;
@@ -90,30 +147,37 @@ function wordHeading(title) {
 }
 
 function parseWordStudies(text) {
-  const pattern = /^(?:[*•●-]\s*)?[^\n]*\b[HG]\d+[a-z]?\b[^\n]*$/gmi;
-  // Only exact heading formats are boundaries. A Strong’s ID in a definition
-  // must not split that entry; bullets which cannot be parsed require review.
+  // Only exact heading formats are boundaries. Parenthesized IDs also appear
+  // in prose; malformed list entries or explicit language labels still fail.
   const matches = [];
-  for (const match of text.matchAll(pattern)) {
-    const heading = wordHeading(match[0]);
-    if (heading) matches.push({ match, heading });
-    else if (/^[*•●]\s+\S/.test(match[0]) || numberedWord.test(match[0]) || /\((?:Hebrew:|Greek:|[HG]\d)/i.test(match[0])) {
-      throw new Error(`Unrecognized Strong’s heading: ${match[0]}`);
+  for (const match of text.matchAll(/^.+$/gm)) {
+    const line = match[0];
+    const heading = wordHeading(line);
+    if (heading) {
+      matches.push({ match, heading });
+      continue;
+    }
+    const bulleted = /^[*•●]\s+\S/.test(line);
+    const numbered = numberedWord.test(line);
+    if (strongId.test(line)) {
+      if (bulleted || numbered || /\((?:Hebrew|Greek):[^()]+\)$/i.test(line)) {
+        throw new Error(`Unrecognized Strong’s heading: ${line}`);
+      }
+    } else if (bulleted || (numbered && /\bstrong['’]s\b/i.test(line))) {
+      throw new Error(`A Strong’s heading is missing its ID: ${line}`);
     }
   }
-  const missingId = text.split('\n').find(line => (/^[*•●]\s+\S/.test(line) ||
-    (numberedWord.test(line) && /\bstrong['’]s\b/i.test(line))) && !/\b[HG]\d+[a-z]?\b/i.test(line));
-  if (missingId) throw new Error(`A Strong’s heading is missing its ID: ${missingId}`);
   if (!matches.length || text.slice(0, matches[0].match.index).trim()) throw new Error('Expected Strong’s word studies.');
-  return matches.map(({ match, heading: [surface, ids, transliteration, original] }, sortOrder) => {
-    const strongsIds = parseStrongsIds(ids);
-    const body = clean(text.slice(match.index + match[0].length, matches[sortOrder + 1]?.match.index));
-    if (!strongsIds.length || !body) throw new Error(`Incomplete word study: ${surface}.`);
+  return matches.map(({ match, heading: [surface, ids, transliteration, original, inline] }, sortOrder) => {
+    const strongsIds = ids === null ? [] : parseStrongsIds(ids);
+    const continuation = text.slice(match.index + match[0].length, matches[sortOrder + 1]?.match.index);
+    const body = clean(`${inline ?? ''}${continuation}`);
+    if ((ids !== null && !strongsIds.length) || !body) throw new Error(`Incomplete word study: ${surface}.`);
     const label = surface.trim();
     const name = transliteration.trim();
     return {
-      surfaceText: `${label.charAt(0).toUpperCase()}${label.slice(1)} - ${name}`,
-      strongsId: strongsIds.join('/'),
+      surfaceText: `${label.charAt(0).toUpperCase()}${label.slice(1)}${name ? ` - ${name}` : ''}`,
+      strongsId: strongsIds.length ? strongsIds.join('/') : null,
       customDefinition: [original, /^Meaning:/i.test(body) ? name : null, body].filter(Boolean).join('\n'),
       sortOrder,
     };
@@ -124,64 +188,104 @@ function parseEntry(reference, lines, isVerse) {
   // Match headings on separate lines so words like "Application" within the
   // explanation are never mistaken for a field boundary.
   const headings = [
-    ['explanation', /^section\s*2\s*[.:\-–—]?\s*(?:explanation|explain the verse)$/i],
+    ['explanation', /^(?:section\s+)?section\s*2\s*[.:\-–—]?\s*(?:explanati?on|explain the verse)$/i],
     ['application', /^application(?:\s*:\s*(.*))?$/i],
     ['learnMore', /^section\s*3\s*[.:\-–—]?\s*learn more$/i],
-    ['introduction', /^(?:practical|verse) introduction(?: to the verse)?$/i],
-    ['background', /^background$/i],
-    ['backgroundAuthor', /^(?:[*•●-]\s*)?author(?:\s*:\s*(.*))?$/i],
-    ['backgroundBook', /^(?:[*•●-]\s*)?book(?:\s*:\s*(.*))?$/i],
-    ['backgroundContext', /^(?:[*•●-]\s*)?context(?:\s*:\s*(.*))?$/i],
-    ['words', new RegExp(`^${numberedSection}(?:detailed )?strong(?:['’]s)? concordance word study$`, 'i')],
-    ['practical', new RegExp(`^${numberedSection}(?:(\\d+) )?practical applications(?: for today)?$`, 'i')],
-    ['insights', /^(?:biblical )?insights and cross references$/i],
-    ['themes', /^key themes$/i],
+    ['introduction', /^(?:practical|verse)\s*introduction(?: to the verse)?$/i],
+    ['background', /^\.?[ \t]*background$/i],
+    ['backgroundAuthor', /^(?:[*•●-]\s*)?(?:author(?:\s*[:;]|$)|autho[:;]r(?=\s|[:;]|$)(?:\s*[:;])?)\s*(.*)$/i],
+    ['backgroundBook', /^(?:[*•●-]\s*)?book(?:\s*[:;]\s*(.*))?$/i],
+    ['backgroundContext', /^(?:[*•●-]\s*)?context(?:\s*[:;]\s*(.*))?$/i],
+    ['words', wordStudySection],
+    ['practical', practicalSection],
+    ['insights', /^(?:biblical )?insights and cross references?$/i],
+    ['themes', /^key themes?$/i],
     ['crossReferences', crossReferenceSection],
-    ['finalThoughts', /^final thoughts$/i],
-    ['takeaways', /^(?:\d+ )?takeaways$/i],
+    ['finalThoughts', /^\.?[ \t]*final thoughts?$/i],
+    ['takeaways', /^(?:\d+[.)]?\s*)?takeaways?$/i],
   ];
   let previous = 0;
+  let implicitWords = false;
+  const missingSections = [];
   const positions = headings.map(([key, pattern]) => {
-    const index = lines.findIndex((line, i) => i > previous && pattern.test(line.trim()));
-    if (index === -1) throw new Error(`Missing or out-of-order section: ${key}.`);
+    let index = lines.findIndex((line, i) => i > previous && pattern.test(line.trim()));
+    if (key === 'words' && index === -1) {
+      const start = lines.findIndex((line, i) => i > previous && wordHeading(line));
+      if (start !== -1) {
+        implicitWords = true;
+        index = start;
+      }
+    }
+    if (key === 'themes') {
+      const crossIndex = lines.findIndex((line, i) => i > previous && crossReferenceSection.test(line));
+      if (crossIndex !== -1 && (index === -1 || index > crossIndex)) return null;
+    }
+    if (index === -1) {
+      missingSections.push(key);
+      return null;
+    }
     previous = index;
     return index;
   });
+  if (missingSections.length) {
+    const label = missingSections.length === 1 ? 'section' : 'sections';
+    throw new Error(`Missing or out-of-order ${label}: ${missingSections.join(', ')}.`);
+  }
   const fields = Object.fromEntries(headings.map(([key, pattern], i) => {
+    if (positions[i] === null) return [key, ''];
     const inline = key === 'practical' || key === 'crossReferences' ? undefined : pattern.exec(lines[positions[i]].trim())?.[1];
-    return [key, clean([inline, ...lines.slice(positions[i] + 1, positions[i + 1])].join('\n'))];
+    const end = positions[i + 1] === null ? positions[i + 2] : positions[i + 1];
+    const start = positions[i] + (key === 'words' && implicitWords ? 0 : 1);
+    return [key, clean([inline, ...lines.slice(start, end)].join('\n'))];
   }));
   const sourceVerseText = clean(lines.slice(1, positions[0]).join('\n'));
-  if (!sourceVerseText) throw new Error('Missing the verse quotation.');
+  const fieldErrors = sourceVerseText ? [] : ['Missing the verse quotation.'];
   for (const key of ['application', 'introduction', 'backgroundAuthor', 'backgroundBook', 'backgroundContext', 'finalThoughts']) {
-    if (!fields[key]) throw new Error(`Empty section: ${key}.`);
+    if (!fields[key]) fieldErrors.push(`Empty section: ${key}.`);
   }
-  if (fields.explanation.length < 20) throw new Error('Explanation must contain at least 20 characters.');
+  if (fields.explanation.length < 20) fieldErrors.push('Explanation must contain at least 20 characters.');
+  if (fieldErrors.length) throw new Error(fieldErrors.join(' '));
   const wordStudies = parseWordStudies(fields.words);
-  const practicalApps = numbered(fields.practical, 'practical applications').map((applicationText, sortOrder) => ({ applicationText, sortOrder }));
-  const themes = fields.themes.split('\n').filter(Boolean).map((theme, sortOrder) => ({
+  const practicalApps = parseList(fields.practical, 'practical applications')
+    .map((applicationText, sortOrder) => ({ applicationText, sortOrder }));
+  const themeText = positions[11] === null ? fields.insights : fields.themes;
+  const themeItems = positions[11] === null && !bullet.test(themeText)
+    ? themeText.split(/\n\n+/) : themeText.split('\n');
+  const themes = themeItems.filter(Boolean).map((theme, sortOrder) => ({
     themeName: theme.replace(bullet, '').trim(), sortOrder,
   }));
-  if (!themes.length || themes.some(t => !t.themeName)) throw new Error('Add at least one key theme.');
+  if (positions[11] !== null && (!themes.length || themes.some(t => !t.themeName))) {
+    throw new Error('Add at least one key theme.');
+  }
   const inheritedEdition = Boolean(crossReferenceSection.exec(lines[positions[12]].trim())?.[1]);
-  const edition = inheritedEdition ? `(?:${bsbSuffix})?` : bsbSuffix;
-  const crossHeading = new RegExp(`^(?:[*•●-][ \\t]*)?(${referenceCore}${edition})$`, 'gmi');
+  // An unlabeled cross reference inherits the explicitly declared study edition.
+  const crossHeading = new RegExp(`^(?:[.*•●-][ \\t]*)?(${referenceCore}(?:${bsbSuffix})?)$`, 'gmi');
   const crossReferences = labeledItems(fields.crossReferences, crossHeading,
     ([, heading], body, sortOrder) => {
-      const passage = parseExplanationReference(heading);
       const boundary = /^(?:Insight|Explanation):[ \t]*/mi.exec(body);
+      let referenceText = '';
+      let commentary = body;
+      if (boundary) {
+        referenceText = body.slice(0, boundary.index).trim().replace(/^(?:BSB|Berean Standard Bible):[ \t]*/i, '').trim();
+        commentary = body.slice(boundary.index + boundary[0].length).trim();
+        if (!referenceText || !commentary) throw new Error(`Incomplete cross reference: ${heading}.`);
+      } else if (!inheritedEdition && !isExplicitBsbHeading(heading)) {
+        // Some text exports glue the end of the quotation to the first word
+        // of commentary. Split only when there is one clear joined boundary.
+        const joins = [...body.matchAll(/[.!?][”’"')\]]*(?=\p{Lu}\p{Ll})/gu)];
+        if (joins.length === 1) {
+          const offset = joins[0].index + joins[0][0].length;
+          referenceText = body.slice(0, offset).trim().replace(/^(?:BSB|Berean Standard Bible):[ \t]*/i, '').trim();
+          commentary = body.slice(offset).trim();
+        }
+      } else {
+        throw new Error(`Missing cross-reference insight: ${heading}.`);
+      }
+      const passage = parseCrossReference(heading, referenceText, isVerse);
       if (!isVerse(passage)) throw new Error(`Cross reference does not exist in BSB: ${heading}.`);
-      if (!boundary) throw new Error(`Missing cross-reference insight: ${heading}.`);
-      const referenceText = body.slice(0, boundary.index).trim();
-      const commentary = body.slice(boundary.index + boundary[0].length).trim();
-      if (!referenceText || !commentary) throw new Error(`Incomplete cross reference: ${heading}.`);
       return { ...passage, referenceText, commentary, sortOrder };
     }, 'BSB cross references');
-  const takeaways = numbered(fields.takeaways, 'takeaways');
-  for (const [name, count, i] of [['practical applications', practicalApps.length, 9], ['takeaways', takeaways.length, 14]]) {
-    const declared = /^\d+/.exec(lines[positions[i]].trim());
-    if (declared && Number(declared[0]) !== count) throw new Error(`Expected ${declared[0]} ${name}, found ${count}.`);
-  }
+  const takeaways = parseList(fields.takeaways, 'takeaways');
   return {
     ...reference, bibleVersion: 'BSB', createOnly: true, sourceVerseText,
     exegesis: { explanationText: fields.explanation, applicationText: fields.application },
@@ -208,6 +312,10 @@ export function parseExplanationDocument(text, { isVerse, range, onWarning, skip
   const headings = [...source.matchAll(/^[ \t]*section[ \t]*1[ \t]*[.:\-–—]?[ \t]*mention the verse[ \t]*\r?$/gmi)];
   if (!headings.length) throw new Error('No “Section 1. Mention the Verse” headings found.');
   const entries = [];
+  let firstError;
+  const repeated = [];
+  const covered = new Set();
+  const missingVerses = [];
   const seen = new Map();
   let previousIndex = 0;
   let sectionLine = 1;
@@ -216,39 +324,59 @@ export function parseExplanationDocument(text, { isVerse, range, onWarning, skip
     previousIndex = heading.index;
     const block = source.slice(heading.index + heading[0].length, headings[index + 1]?.index);
     const lines = clean(block).split('\n');
-    if (!isExplicitBsbHeading(lines[0])) {
-      throw new Error(`Expected a BSB verse heading (e.g. Numbers 5:1 BSB or Numbers 5:1 (BSB)), got: ${lines[0] || '(empty)'}`);
-    }
-    const reference = parseExplanationReference(lines[0].replace(bullet, ''));
-    if (selected && (reference.bookName !== selected.bookName || reference.chapter !== selected.chapter ||
-      reference.verseNumber < selected.verseNumber || (reference.verseEnd ?? reference.verseNumber) > (selected.verseEnd ?? selected.verseNumber))) continue;
-    const label = referenceLabel(reference);
-    if (!isVerse(reference)) throw new Error(`${label} does not exist in BSB.`);
-    const key = `${reference.bookName}:${reference.chapter}:${reference.verseNumber}`;
-    let entry;
-    try { entry = parseEntry(reference, lines, isVerse); }
-    catch (error) { throw new Error(`${label}: ${error.message}`); }
-    const prior = seen.get(key);
-    if (prior) {
-      if (!same(normalizeWhitespace(prior.entry), normalizeWhitespace(entry))) {
-        throw new Error(`Conflicting duplicate explanation starting at ${label} (sections at source lines ${prior.sectionLine} and ${sectionLine}). Correct the document or select a range that excludes this verse.`);
+    let label;
+    try {
+      const headingText = lines[0].replace(bullet, '');
+      const explicitEdition = isExplicitBsbHeading(headingText);
+      const referenceText = explicitEdition ? headingText : headingReference.exec(headingText)?.[0];
+      const headingError = `Expected a BSB verse heading ending in BSB, (BSB), or Berean Standard Bible, got: ${lines[0] || '(empty)'}`;
+      if (!referenceText) throw new Error(headingError);
+      const reference = parseExplanationReference(referenceText);
+      if (selected && (reference.bookName !== selected.bookName || reference.chapter !== selected.chapter ||
+        reference.verseNumber < selected.verseNumber || (reference.verseEnd ?? reference.verseNumber) > (selected.verseEnd ?? selected.verseNumber))) continue;
+      label = referenceLabel(reference);
+      if (!isVerse(reference)) {
+        firstError ??= `${label} does not exist in BSB.`;
+        continue;
       }
-      onWarning?.(`Ignored a repeated copy of ${label}; extracted content matches apart from spacing.`);
-      continue;
+      if (selected) {
+        for (let number = reference.verseNumber; number <= (reference.verseEnd ?? reference.verseNumber); number++) covered.add(number);
+      }
+      if (!explicitEdition) throw new Error(headingError);
+      // After the first validation error, only keep scanning verse headings
+      // so the range check can still report every absent explanation.
+      if (firstError) continue;
+      const key = `${reference.bookName}:${reference.chapter}:${reference.verseNumber}`;
+      const entry = parseEntry(reference, lines, isVerse);
+      const prior = seen.get(key);
+      if (prior) {
+        if (!same(normalizeWhitespace(prior.entry), normalizeWhitespace(entry))) {
+          firstError = `Conflicting duplicate explanation starting at ${label} (sections at source lines ${prior.sectionLine} and ${sectionLine}). Correct the document or select a range that excludes this verse.`;
+        } else {
+          repeated.push(label);
+        }
+        continue;
+      }
+      seen.set(key, { entry, sectionLine });
+      entries.push(entry);
+    } catch (error) {
+      firstError ??= label ? `${label}: ${error.message}` : `Source line ${sectionLine}: ${error.message}`;
     }
-    seen.set(key, { entry, sectionLine });
-    entries.push(entry);
   }
-  if (!entries.length) throw new Error('No matching explanations found.');
   if (selected) {
     for (let number = selected.verseNumber; number <= (selected.verseEnd ?? selected.verseNumber); number++) {
-      if (isVerse({ ...selected, verseNumber: number, verseEnd: null }) && !entries.some(row =>
-        row.verseNumber <= number && (row.verseEnd ?? row.verseNumber) >= number)) {
+      if (isVerse({ ...selected, verseNumber: number, verseEnd: null }) && !covered.has(number)) {
         const label = referenceLabel({ ...selected, verseNumber: number, verseEnd: null });
-        if (!skipMissing) throw new Error(`The document is missing ${label}. Add its source content or use --skip-missing to import only the verses present.`);
-        onWarning?.(`Skipping ${label}: no explanation in the source document.`);
+        if (!skipMissing) missingVerses.push(label);
+        else onWarning?.(`Skipping ${label}: no explanation in the source document.`);
       }
     }
   }
+  if (missingVerses.length) {
+    throw new Error(`The document is missing ${missingVerses.join(', ')}. Add the source content or use --skip-missing to omit absent verses.`);
+  }
+  if (firstError) throw new Error(firstError);
+  if (!entries.length) throw new Error('No matching explanations found.');
+  for (const label of repeated) onWarning?.(`Ignored a repeated copy of ${label}; extracted content matches apart from spacing.`);
   return entries;
 }

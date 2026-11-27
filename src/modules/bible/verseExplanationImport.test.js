@@ -65,6 +65,175 @@ test('extracts the editor fields, Strong’s labels and cross-reference ranges',
   ]);
 });
 
+test.each(['BSB', '(BSB)', '— Berean Standard Bible'])('accepts mixed document headings with the %s edition label', edition => {
+  const judges = document().replace('Ecclesiastes 6:10 (BSB)', `Judges 1:1 ${edition}`)
+    .replace('Section2. Explanation', 'Section Section 2. Explanation')
+    .replace('Author\nSolomon', 'Author; Solomon')
+    .replace('Named (H7121 – Qara)', 'LORD — H3068 — YHWH')
+    .replace(/Psalm 115:3 \(BSB\)[\s\S]+?(?=\nFinal Thoughts)/,
+      'Psalm 115:3\nOur God is in heaven; He does as He pleases.This describes God’s authority.\n' +
+      'Job 9:32–33\nJob describes the need for a mediator.');
+  const [entry] = parseExplanationDocument(judges, { isVerse, range: 'Judges 1:1' });
+  expect(entry).toMatchObject({
+    bibleVersion: 'BSB',
+    studyMetadata: { backgroundAuthor: 'Solomon reflects on wisdom.' },
+    wordStudies: [{ surfaceText: 'LORD - YHWH', strongsId: 'H3068' }],
+    crossReferences: [
+      { referenceText: 'Our God is in heaven; He does as He pleases.', commentary: 'This describes God’s authority.' },
+      { referenceText: '', commentary: 'Job describes the need for a mediator.' },
+    ],
+  });
+});
+
+test.each(['Cross Reference', 'Cross References', 'Cross Reference 1'])('parses the %s heading with labeled BSB quotations', heading => {
+  const text = document()
+    .replace('Practical Introduction', 'VerseIntroduction')
+    .replace('1 Practical Applications for Today', '1. Practical Application')
+    .replace('Key Themes', 'Key Theme')
+    .replace('\nCross References\n', `\n${heading}\n`)
+    .replace('Psalm 115:3 (BSB)\nOur', 'Psalm 115:3\nBSB: Our')
+    .replace('Final Thoughts', '.Final Thought')
+    .replace('1 Takeaways', '1 Takeaway');
+  const [entry] = parseExplanationDocument(text, { isVerse });
+  expect(entry.crossReferences[0]).toMatchObject({
+    referenceText: 'Our God is in heaven; He does as He pleases.',
+    commentary: 'God is sovereign.',
+  });
+});
+
+test('recovers a misplaced Author delimiter and retains both IDs in a slash-separated heading', () => {
+  const text = document()
+    .replace('Ecclesiastes 6:10 (BSB)', 'Genesis 7:13 (BSB)')
+    .replace('Author\nSolomon reflects on wisdom.', '• Autho:r Moses wrote the Book of Genesis.')
+    .replace('Named (H7121 – Qara)', "• Living Thing — remes (Strong's H7431) / chayyah (Strong's H2416)");
+  const [entry] = parseExplanationDocument(text, { isVerse });
+  expect(entry.studyMetadata.backgroundAuthor).toBe('Moses wrote the Book of Genesis.');
+  expect(entry.wordStudies[0]).toMatchObject({
+    surfaceText: 'Living Thing - remes / chayyah', strongsId: 'H7431/H2416',
+  });
+});
+
+test('accepts both Genesis edition labels and preserves Strong’s IDs mentioned in prose', () => {
+  const definition = 'Ben (H1121) means "son." Elohim (H430) refers to God.';
+  const first = document().replace('Ecclesiastes 6:10 (BSB)', 'Genesis 6:1 (BSB)');
+  const second = document()
+    .replace('Ecclesiastes 6:10 (BSB)', 'Genesis 6:2 BSB')
+    .replace('Detailed Strong’s Concordance Word Study', 'Strong Concordance Word Study')
+    .replace(/Named \(H7121[^]*?(?=1 Practical Applications)/,
+      `• Sons of God — benê hāʾĕlōhîm (Strong's H1121, H430)\n${definition}\nSee also Elohim (H430)\n` +
+      "• One Hundred Twenty — mēʾâ (Strong's H3967) and ʿeśrîm (Strong's H6242)\nThe number reflects an appointed limit.\n")
+    .replace('1 Practical Applications for Today', '5 – Practical Applications for Today');
+  const entries = parseExplanationDocument(`${first}\n\n${second}`, { isVerse, range: 'Genesis 6:1–2' });
+  expect(entries.map(({ verseNumber, bibleVersion }) => [verseNumber, bibleVersion])).toEqual([[1, 'BSB'], [2, 'BSB']]);
+  expect(entries[1].practicalApps).toHaveLength(1);
+  expect(entries[1].wordStudies).toEqual([
+    { surfaceText: 'Sons of God - benê hāʾĕlōhîm', strongsId: 'H1121/H430', sortOrder: 0,
+      customDefinition: `${definition}\nSee also Elohim (H430)` },
+    { surfaceText: 'One Hundred Twenty - mēʾâ and ʿeśrîm', strongsId: 'H3967/H6242', sortOrder: 1,
+      customDefinition: 'The number reflects an appointed limit.' },
+  ]);
+});
+
+test('preserves a word-study concept explicitly identified as having no single original-language word', () => {
+  const note = "Though not represented by a single Hebrew word in this verse, the concept reflects God's deliverance.";
+  const text = document().replace('1 Practical Applications', `• Escape — ${note}\nGod provides refuge.\n1 Practical Applications`);
+  const [entry] = parseExplanationDocument(text, { isVerse });
+  expect(entry.wordStudies[1]).toEqual({
+    surfaceText: 'Escape', strongsId: null, customDefinition: `${note}\nGod provides refuge.`, sortOrder: 1,
+  });
+  expect(formatExplanationPreview([entry])).not.toContain('Escape (null)');
+  expect(() => parseExplanationDocument(text.replace(note, 'A word without metadata.'), { isVerse }))
+    .toThrow('A Strong’s heading is missing its ID: • Escape');
+});
+
+test('keeps numbered comma-separated Strong’s data in the correct fields', () => {
+  const text = document().replace('Ecclesiastes 6:10 (BSB)', 'Judges 3:17 — Berean Standard Bible')
+    .replace('Named (H7121 – Qara)', '1. Brought — H7126, Qarab')
+    .replace('Meaning: To call or name.', 'To bring near or present.')
+    .replace('1 Practical Applications for Today', '2. Named — H7121, H8034, Qara Shem\nA second definition.\n1 Practical Applications for Today');
+  const [entry] = parseExplanationDocument(text, { isVerse });
+  expect(entry.wordStudies).toEqual([
+    { surfaceText: 'Brought - Qarab', strongsId: 'H7126', customDefinition: expect.stringContaining('To bring near or present.'), sortOrder: 0 },
+    { surfaceText: 'Named - Qara Shem', strongsId: 'H7121/H8034', customDefinition: 'A second definition.', sortOrder: 1 },
+  ]);
+});
+
+test('keeps an inline Strong’s definition separate from the transliteration', () => {
+  const text = document().replace(
+    /Named \(H7121[^]*?(?=1 Practical Applications)/,
+    "* Strong — H2388 — chazaq: Meaning: To be strong. Context: Israel gained strength.\n" +
+    "* Drive Out — H3423 — yarash: Meaning: To dispossess.\nExplanation: They did not remove the inhabitants.\n",
+  );
+  const [entry] = parseExplanationDocument(text, { isVerse });
+  expect(entry.wordStudies).toEqual([
+    { surfaceText: 'Strong - chazaq', strongsId: 'H2388', sortOrder: 0,
+      customDefinition: 'chazaq\nMeaning: To be strong. Context: Israel gained strength.' },
+    { surfaceText: 'Drive Out - yarash', strongsId: 'H3423', sortOrder: 1,
+      customDefinition: 'yarash\nMeaning: To dispossess.\nExplanation: They did not remove the inhabitants.' },
+  ]);
+});
+
+test('recovers a missing book number only when the quotation matches an exact BSB verse', () => {
+  const text = document().replace(/Psalm 115:3 \(BSB\)[\s\S]+?(?=\nJob 9:32)/,
+    'Corinthians 10:12\nSo the one who thinks he is standing firm should be careful not to fall.This verse warns about overconfidence.');
+  const [entry] = parseExplanationDocument(text, { isVerse });
+  expect(entry.crossReferences[0]).toMatchObject({
+    bookName: '1 Corinthians', chapter: 10, verseNumber: 12, commentary: 'This verse warns about overconfidence.',
+  });
+  expect(() => parseExplanationDocument(text.replace('So the one who thinks he is standing firm should be careful not to fall.', 'Be careful.'), { isVerse }))
+    .toThrow('Invalid Bible reference: Corinthians 10:12');
+});
+
+test('imports clearly titled unnumbered lists regardless of the count in the section title', () => {
+  const text = document().replace('1 Practical Applications', '5 Practical Applications')
+    .replace('1. Act with humility', 'Act With Humility')
+    .replace('1. Trust God', 'Trust God');
+  const [entry] = parseExplanationDocument(text, { isVerse });
+  expect(entry.practicalApps[0].applicationText).toBe('Act With Humility\n\nAsk for help instead of relying on yourself.');
+  expect(entry.studyMetadata.takeaways[0]).toBe('Trust God\n\nHis wisdom is greater than ours.');
+});
+
+test('preserves sentence-case practical applications with mixed bullets and numbers', () => {
+  const text = document().replace('Ecclesiastes 6:10 (BSB)', 'Genesis 7:1 (BSB)')
+    .replace('1 Practical Applications for Today', '5 Practical Applications for Today')
+    .replace('1. Act with humility', "* Respond immediately to God's invitation.")
+    .replace('Biblical Insights and Cross References',
+      '• Pursue righteousness through faith.\nLet faith shape your choices.\n' +
+      '4) Stand faithfully in your generation.\nEncourage others by example.\nBiblical Insights and Cross References');
+  const [entry] = parseExplanationDocument(text, { isVerse });
+  expect(entry.practicalApps).toEqual([
+    { applicationText: "Respond immediately to God's invitation.\n\nAsk for help instead of relying on yourself.", sortOrder: 0 },
+    { applicationText: 'Pursue righteousness through faith.\n\nLet faith shape your choices.', sortOrder: 1 },
+    { applicationText: 'Stand faithfully in your generation.\n\nEncourage others by example.', sortOrder: 2 },
+  ]);
+  expect(() => parseExplanationDocument(text.replace('Let faith shape your choices.\n', ''), { isVerse }))
+    .toThrow('Missing text for practical applications item 2.');
+});
+
+test('keeps all practical applications and takeaways in source order even when numbering skips', () => {
+  const text = document().replace('1 Practical Applications', '5 Practical Applications')
+    .replace('Biblical Insights and Cross References', '3. Keep going\nStay faithful.\nBiblical Insights and Cross References')
+    .replace('1 Takeaways', '3 Takeaways').replace('1. Trust God', '2. Trust God');
+  const [entry] = parseExplanationDocument(text, { isVerse });
+  expect(entry.practicalApps).toEqual([
+    { applicationText: 'Act with humility\n\nAsk for help instead of relying on yourself.', sortOrder: 0 },
+    { applicationText: 'Keep going\n\nStay faithful.', sortOrder: 1 },
+  ]);
+  expect(entry.studyMetadata.takeaways).toEqual(['Trust God\n\nHis wisdom is greater than ours.']);
+  expect(() => parseExplanationDocument(text.replace('Stay faithful.\n', ''), { isVerse }))
+    .toThrow('Missing text for practical applications item 2.');
+});
+
+test('preserves word studies and themes when their section titles are omitted', () => {
+  const text = document()
+    .replace('Detailed Strong’s Concordance Word Study\nNamed (H7121 – Qara)', 'Named — H7121: Qara')
+    .replace('Key Themes\n', '');
+  const [entry] = parseExplanationDocument(text, { isVerse });
+  expect(entry.studyMetadata.backgroundContext).toBe('The chapter describes human limitations.');
+  expect(entry.wordStudies[0]).toMatchObject({ surfaceText: 'Named - Qara', strongsId: 'H7121' });
+  expect(entry.themes.map(theme => theme.themeName)).toEqual(['Trust', 'Wisdom']);
+});
+
 test('rejects invalid BSB references, including the requested range and cross references', () => {
   expect(() => parseExplanationDocument(document(13), { isVerse })).toThrow('Ecclesiastes 6:13 does not exist in BSB');
   expect(() => parseExplanationDocument(document(), { isVerse, range: 'Ecclesiastes 6:10-15' })).toThrow('does not exist in BSB');
@@ -97,6 +266,21 @@ test('does not silently ignore incomplete, duplicate, or missing requested entri
     .toThrow(/Conflicting duplicate.*source lines 1 and \d+/);
   expect(() => parseExplanationDocument(document(), { isVerse, range: 'Ecclesiastes 6:10-11' })).toThrow('missing Ecclesiastes 6:11');
   expect(parseExplanationDocument(`${document()}\n\n${document(11)}`, { isVerse, range: 'Ecclesiastes 6:11' }).map(row => row.verseNumber)).toEqual([11]);
+});
+
+test('lists only absent verses when coverage is incomplete without treating malformed entries as absent', () => {
+  const source = [
+    document(8).replace('1 Practical Applications for Today', 'Applications').replace('Final Thoughts', 'Closing'),
+    document(10).replace('Insight: God is sovereign.', 'God is sovereign.'),
+    document(12).replace('Ecclesiastes 6:12 (BSB)', 'Ecclesiastes 6:12 KJV'),
+  ].join('\n\n');
+  expect(() => parseExplanationDocument(source, { isVerse, range: 'Ecclesiastes 6:8–12' })).toThrow(
+    /^The document is missing Ecclesiastes 6:9, Ecclesiastes 6:11\. Add the source content or use --skip-missing to omit absent verses\.$/,
+  );
+  const onWarning = jest.fn();
+  expect(() => parseExplanationDocument(source, { isVerse, range: 'Ecclesiastes 6:8–12', skipMissing: true, onWarning }))
+    .toThrow('Ecclesiastes 6:8: Missing or out-of-order sections: practical, finalThoughts.');
+  expect(onWarning).toHaveBeenCalledTimes(2);
 });
 
 test('ignores identical repeated verses with different line wrapping and keeps later verses', () => {
@@ -167,7 +351,7 @@ test('preserves each Strong’s entry, Hebrew spelling and all IDs in mixed chap
   expect(entry.wordStudies[1].customDefinition).not.toContain('Sad Countenance');
 });
 
-test.each(['(BSB)', 'BSB'])('joins wrapped PDF lines with %s and separates bold scripture from commentary', async edition => {
+test.each(['(BSB)', 'BSB', '— Berean Standard Bible'])('joins wrapped PDF lines with %s and separates bold scripture from commentary', async edition => {
   const text = await extractExplanationPdfText(`<pdf2xml><page>
     <text top="10" left="100" height="20"><b>Cross References</b></text>
     <text top="35" left="120" height="20"><b>●</b></text>

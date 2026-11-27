@@ -14,7 +14,7 @@ Strong’s headings may use `Name (H8034 – Shem)`, `Overturn - Nahaphakh - Str
 
 After reviewing the preview, add `--apply`. The default is `admin@gmail.com`, which must be an existing active admin in the target database. Override it with `--admin-email`. `DATABASE_URL` (from the shell or `backend/.env`) determines the database; a localhost web page does not establish that the database is local.
 
-If a selected range has gaps, the default is to stop and report the first missing verse. Add `--skip-missing` to preview or import only the verses present in the source. This does not skip malformed explanations or allow invalid BSB references.
+If explanations are absent from the selected range, validation lists all absent verses together before reporting formatting problems. An explanation with a recognizable verse heading can be present even if its content is invalid. Add `--skip-missing` to omit absent verses; it does not skip malformed explanations or conflicting duplicates. If validation fails, no database connection is opened.
 
 ```bash
 # Local PostgreSQL

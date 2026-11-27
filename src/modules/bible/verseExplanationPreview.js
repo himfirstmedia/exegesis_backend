@@ -50,13 +50,18 @@ export function formatExplanationPreview(entries, columns = 88) {
     field('Background — Book', meta.backgroundBook);
     field('Background — Context', meta.backgroundContext);
     output.push('', `    Strong’s Concordance word studies (${entry.wordStudies.length})`);
-    entry.wordStudies.forEach((word, i) => field(`${i + 1}. ${word.surfaceText} (${word.strongsId})`, word.customDefinition, 6));
+    entry.wordStudies.forEach((word, i) => {
+      const id = word.strongsId ? ` (${word.strongsId})` : '';
+      field(`${i + 1}. ${word.surfaceText}${id}`, word.customDefinition, 6);
+    });
     items('Practical applications', entry.practicalApps.map(row => row.applicationText));
     section(4, 'INSIGHTS AND CROSS REFERENCES');
     output.push('', `    Key themes (${entry.themes.length})`, ...entry.themes.map(t => wrap(`- ${t.themeName}`, 6, width)));
     output.push('', `    Cross references (${entry.crossReferences.length})`);
     entry.crossReferences.forEach((reference, i) => {
-      field(`${i + 1}. ${referenceLabel(reference)} (BSB)`, reference.referenceText, 6);
+      const label = `${i + 1}. ${referenceLabel(reference)} (BSB)`;
+      if (reference.referenceText) field(label, reference.referenceText, 6);
+      else output.push('', wrap(label, 6, width));
       output.push(wrap(`Insight: ${reference.commentary}`, 8, width));
     });
     field('Final thoughts', meta.finalThoughts);
